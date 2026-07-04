@@ -1,0 +1,10 @@
+# Binaries
+design-compare
+
+# OS files
+.DS_Store
+
+# Go build & test artifacts
+*.test
+*.out
+*.prof

@@ -1,0 +1,5 @@
+name: design-compare
+version: 1.0.0
+description: Design comparison MCP server with structural, perceptual, and strict modes
+provides_skills:
+  - design-compare

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "design-compare-marketplace",
+  "description": "Local Design Compare MCP Marketplace",
+  "interface": {
+    "displayName": "Design Compare Local Marketplace"
+  },
+  "plugins": [
+    {
+      "name": "design-compare",
+      "version": "1.0.0",
+      "description": "Design comparison MCP server with structural, perceptual, and strict modes",
+      "installType": "local",
+      "source": {
+        "source": "local",
+        "path": "."
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      }
+    }
+  ]
+}

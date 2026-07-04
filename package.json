@@ -1,0 +1,10 @@
+{
+  "name": "design-compare",
+  "version": "1.0.0",
+  "description": "Design comparison MCP plugin for Codex",
+  "keywords": ["opencode-plugin", "skills"],
+  "license": "MIT",
+  "pi": {
+    "skills": ["./skills"]
+  }
+}
