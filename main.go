@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 
 	"design-compare/comparator"
 
@@ -41,7 +42,10 @@ func main() {
 			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' mode)"),
 		),
 		mcp.WithNumber("threshold",
-			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'perceptual' mode, minimum match % (default 90.0). For 'layout_tree', BoundingBox tolerance % (default 15.0)."),
+			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'perceptual' mode, minimum match % (default 98.0). For 'layout_tree', BoundingBox tolerance % (default 15.0)."),
+		),
+		mcp.WithString("ignore_nodes",
+			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode)."),
 		),
 	)
 	s.AddTool(compareDesignTool, compareDesignHandler)
@@ -78,7 +82,21 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		tolerance := request.GetFloat("threshold", 0.15) // デフォルト許容差 15%
 
-		treeResult, err := comparator.CompareLayoutTrees(figmaLayout, webLayout, tolerance)
+		ignoreNodesStr := request.GetString("ignore_nodes", "")
+		var ignoreList []string
+		if ignoreNodesStr != "" {
+			for _, s := range strings.Split(ignoreNodesStr, ", ") {
+				// 最初は ", " でスプリットを試みるが、カンマのみの場合も考慮してカンマ単体で再度スプリット
+				for _, part := range strings.Split(s, ",") {
+					trimmed := strings.TrimSpace(part)
+					if trimmed != "" {
+						ignoreList = append(ignoreList, trimmed)
+					}
+				}
+			}
+		}
+
+		treeResult, err := comparator.CompareLayoutTrees(figmaLayout, webLayout, tolerance, ignoreList)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout Tree comparison failed: %v", err)), nil
 		}
@@ -103,7 +121,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError("image_path_b is required for perceptual mode"), nil
 		}
 
-		minMatchRate := request.GetFloat("threshold", 90.0)
+		minMatchRate := request.GetFloat("threshold", 98.0)
 
 		fileA, err := os.Open(imgPathA)
 		if err != nil {

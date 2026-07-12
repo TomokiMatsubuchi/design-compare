@@ -33,7 +33,7 @@ type LayoutTreeResult struct {
 }
 
 // CompareLayoutTrees performs structural layout comparison on element hierarchies
-func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64) (*LayoutTreeResult, error) {
+func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, ignoreList []string) (*LayoutTreeResult, error) {
 	if tolerance <= 0 {
 		tolerance = 0.15 // デフォルト許容差 15%
 	}
@@ -46,6 +46,33 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64) (*LayoutTr
 	var wNodes []WebNode
 	if err := json.Unmarshal([]byte(webJSON), &wNodes); err != nil {
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
+	}
+
+	// ignoreList に基づいてノードを除外
+	if len(ignoreList) > 0 {
+		ignoreMap := make(map[string]bool)
+		for _, item := range ignoreList {
+			ignoreMap[item] = true
+			ignoreMap[cleanNodeName(item)] = true
+		}
+
+		var filteredFNodes []FigmaNode
+		for _, fn := range fNodes {
+			if ignoreMap[fn.ID] || ignoreMap[fn.Name] || ignoreMap[cleanNodeName(fn.ID)] || ignoreMap[cleanNodeName(fn.Name)] {
+				continue
+			}
+			filteredFNodes = append(filteredFNodes, fn)
+		}
+		fNodes = filteredFNodes
+
+		var filteredWNodes []WebNode
+		for _, wn := range wNodes {
+			if ignoreMap[wn.Selector] || ignoreMap[cleanNodeName(wn.Selector)] {
+				continue
+			}
+			filteredWNodes = append(filteredWNodes, wn)
+		}
+		wNodes = filteredWNodes
 	}
 
 	if len(fNodes) == 0 || len(wNodes) == 0 {
@@ -104,7 +131,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64) (*LayoutTr
 
 	matchRate := (float64(matchedCount) / float64(totalCompared)) * 100.0
 	status := "success"
-	if matchRate < 90.0 { // 合格ライン 90%
+	if matchRate < 98.0 { // 合格ライン 98%
 		status = "mismatch"
 	}
 
@@ -196,4 +223,11 @@ func getWebRelativeCoords(n WebNode, parent *WebNode) (x, y, w, h float64) {
 		return 0, 0, 0, 0
 	}
 	return (n.X - parent.X) / parent.W, (n.Y - parent.Y) / parent.H, n.W / parent.W, n.H / parent.H
+}
+
+func cleanNodeName(s string) string {
+	if len(s) > 0 && (s[0] == '.' || s[0] == '#') {
+		return s[1:]
+	}
+	return s
 }

@@ -133,6 +133,50 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultMismatch["status"] != "mismatch" {
 			t.Errorf("Expected LayoutTree mismatch, got status=%v", resultMismatch["status"])
 		}
+
+		// C: 除外項目を指定して一致させるケース (Figma node名 "nav" または Web selector ".nav" を除外)
+		reqIgnore := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"ignore_nodes": "nav", // Figma node name "nav"
+				},
+			},
+		}
+		resIgnore, err := compareDesignHandler(context.Background(), reqIgnore)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultIgnore map[string]interface{}
+		json.Unmarshal([]byte(resIgnore.Content[0].(mcp.TextContent).Text), &resultIgnore)
+		if resultIgnore["status"] != "success" || resultIgnore["match_rate"] != "100.00%" {
+			t.Errorf("Expected LayoutTree success and 100%% match after ignoring 'nav', got status=%v, rate=%v", resultIgnore["status"], resultIgnore["match_rate"])
+		}
+
+		// C2: Web selector ".nav" を除外して一致させるケース
+		reqIgnoreWeb := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"ignore_nodes": ".nav", // Web selector ".nav"
+				},
+			},
+		}
+		resIgnoreWeb, err := compareDesignHandler(context.Background(), reqIgnoreWeb)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultIgnoreWeb map[string]interface{}
+		json.Unmarshal([]byte(resIgnoreWeb.Content[0].(mcp.TextContent).Text), &resultIgnoreWeb)
+		if resultIgnoreWeb["status"] != "success" || resultIgnoreWeb["match_rate"] != "100.00%" {
+			t.Errorf("Expected LayoutTree success and 100%% match after ignoring '.nav', got status=%v, rate=%v", resultIgnoreWeb["status"], resultIgnoreWeb["match_rate"])
+		}
 	})
 
 	// =================================================================
