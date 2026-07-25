@@ -45,7 +45,20 @@ Call the `compare_design` tool from **design-compare** using the appropriate mod
     *   Use when checking exact visual styles (color matches, border widths, exact layouts) using Pixelmatch.
     *   Parameters: `mode: "strict"`, `image_path_a: "/tmp/figma.png"`, `image_path_b: "/tmp/web.png"`
 
-### Step 4: Analyze Results and Fix Code
+### Step 4: Verify Interaction States (Scroll & Button Interactions)
+Static rendering alone is not enough. You **MUST** also confirm that the UI/UX does not break (no layout collapse, overlap, clipping, or overflow) after user interactions such as scrolling and pressing buttons.
+
+For each meaningful interactive state, re-run the capture → compare cycle:
+1. **Trigger the interaction** with your browser tools (e.g. `chrome-devtools-mcp` / `playwright-cli`): scroll the page/containers to top, middle, and bottom, and click buttons or controls that change the view (modals, dropdowns, accordions, tabs, drawers, sticky headers, etc.).
+2. **Re-capture** the resulting screenshot and DOM bounding boxes for that post-interaction state.
+3. **Re-compare** against the matching Figma state using `compare_design`:
+    *   Use `layout_tree` to confirm elements keep their correct hierarchy and alignment (nothing overlaps, shifts unexpectedly, or escapes its container) after the interaction.
+    *   Use `perceptual` or `strict` when a Figma mock exists for that specific state (e.g. an "open modal" or "scrolled" frame) to verify the visuals still match.
+4. **Watch for breakage signals**: sudden large drops in `match_rate`, nodes appearing far outside the parent's bounding box, or diff regions concentrated around the elements you just interacted with usually indicate a broken interaction state.
+
+If any interaction state fails the threshold, fix the CSS/HTML (e.g. overflow handling, z-index, sticky/fixed positioning, responsive breakpoints) and re-run this step until every state passes.
+
+### Step 5: Analyze Results and Fix Code
 - Check the output `status` and `match_rate`.
 - If discrepancies exist, inspect the output details or the generated magenta diff image (for `strict` mode), correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
 
@@ -54,3 +67,4 @@ Call the `compare_design` tool from **design-compare** using the appropriate mod
 1. **Mandatory Execution**: You are strictly prohibited from submitting a final response or claiming success until you have successfully executed `compare_design` and confirmed the match rate meets the required threshold.
 2. **Match Threshold & Exclusions**: The default passing threshold is **98.0%**. If the match rate is below 98.0%, you must analyze the diff details, fix the implementation, and run the comparison again until it passes. You can exclude specific elements (e.g., dynamic placeholders or elements requested by the user) using the `ignore_nodes` parameter to prevent false negatives.
 3. **Viewport Matching**: Always ensure your browser viewport width/height configuration matches the Figma mockup frame size when gathering layout or screenshot data.
+4. **Interaction Integrity**: Verification is not complete until you confirm the UI/UX stays intact **after** interactions. You **MUST** exercise scrolling (top/middle/bottom) and press interactive controls (buttons, tabs, modals, dropdowns, accordions, drawers), then re-run `compare_design` on the resulting states to prove nothing overlaps, clips, overflows, or collapses.
