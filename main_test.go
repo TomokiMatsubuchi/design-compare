@@ -240,6 +240,52 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.5. layout_tree モード: 重複マッチ防止のテスト
+	// =================================================================
+	t.Run("LayoutTree_NoDuplicateMatch", func(t *testing.T) {
+		// Figma側に3ノードあるが、Web側には実質2ノードしかない（childA と childB が同じ位置を指す）。
+		// 従来は複数のFigmaノードが同一Webノードにマッチし一致率が水増しされていた。
+		// 修正後は1対1対応が保証され、一致率が正しく下がるはず。
+		figmaLayout := `[
+			{"id": "1", "name": "container", "x": 0, "y": 0, "w": 500, "h": 500},
+			{"id": "2", "name": "childA", "x": 10, "y": 10, "w": 480, "h": 480, "parent": "1"},
+			{"id": "3", "name": "childB", "x": 10, "y": 10, "w": 480, "h": 480, "parent": "1"}
+		]`
+
+		// Web側: container と childA の2ノードのみ（childB に対応するノードがない）
+		webLayoutDuplicate := `[
+			{"selector": "#container", "x": 0, "y": 0, "w": 500, "h": 500},
+			{"selector": ".childA", "x": 10, "y": 10, "w": 480, "h": 480, "parent": "#container"}
+		]`
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutDuplicate,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+
+		// Figma 3ノード中、Webノードは2つしかないため、1ノードはマッチできない。
+		// 重複マッチが防止されていれば一致率は 66.67% 以下になるはず。
+		if result["match_rate"] == "100.00%" {
+			t.Errorf("Expected match rate to be less than 100%% (duplicate match prevention), got %v", result["match_rate"])
+		}
+		if result["status"] != "mismatch" {
+			t.Errorf("Expected mismatch status due to unmatched node, got status=%v, rate=%v", result["status"], result["match_rate"])
+		}
+	})
+
+	// =================================================================
 	// 2. perceptual モード (知覚的画像比較) のテスト
 	// =================================================================
 	t.Run("Perceptual_Layout_Match", func(t *testing.T) {
