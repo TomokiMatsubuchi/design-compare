@@ -91,7 +91,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
    AIが `chrome-devtools` MCP等を使ってWebページを自動操作（必要なら自動ログイン）し、実装された要素のスクショやDOM座標（JSON）を取得。
 3. **比較の実行:**
    AIが本ツールの `compare_design` を呼び出して比較を実行。
-   * 例: `compare_design(mode="layout_tree", figma_layout="...", web_layout="...")`
+   * 例: `compare_design(mode="layout_tree", figma_layout="...", web_layout="...", pass_rate=95.0)`
 4. **結果の分析とコード修正:**
    AIが一致率や差分を分析し、レイアウトがズレているCSSやHTMLを自動で修正・再検証します。
 

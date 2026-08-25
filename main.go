@@ -47,6 +47,9 @@ func main() {
 		mcp.WithString("ignore_nodes",
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode)."),
 		),
+		mcp.WithNumber("pass_rate",
+			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass in 'layout_tree' mode. Default 98.0."),
+		),
 	)
 	s.AddTool(compareDesignTool, compareDesignHandler)
 
@@ -81,6 +84,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		tolerance := request.GetFloat("threshold", 0.15) // デフォルト許容差 15%
+		passRate := request.GetFloat("pass_rate", 98.0) // デフォルト合格ライン 98%
 
 		ignoreNodesStr := request.GetString("ignore_nodes", "")
 		var ignoreList []string
@@ -96,7 +100,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		treeResult, err := comparator.CompareLayoutTrees(figmaLayout, webLayout, tolerance, ignoreList)
+		treeResult, err := comparator.CompareLayoutTrees(figmaLayout, webLayout, tolerance, passRate, ignoreList)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout Tree comparison failed: %v", err)), nil
 		}
