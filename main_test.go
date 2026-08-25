@@ -330,6 +330,26 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	t.Run("Perceptual_Threshold_Too_Low", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+					"threshold":    0.1, // strict モードと同じ感覚で 0.1 を渡す誤用
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Errorf("Expected error result for perceptual threshold below 1.0, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+	})
+
 	// =================================================================
 	// 3. strict モード (厳密ピクセル比較) のテスト
 	// =================================================================
