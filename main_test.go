@@ -179,6 +179,66 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// D: pass_rate を下げて不一致ケースを成功に切り替えるテスト
+	t.Run("LayoutTree_PassRate", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"},
+			{"id": "3", "name": "nav", "x": 600, "y": 10, "w": 380, "h": 80, "parent": "1"}
+		]`
+
+		// nav の位置がズレている (一致率 66.67%)
+		webLayoutIncorrect := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".nav", "x": 200, "y": 10, "w": 380, "h": 80, "parent": "#header"}
+		]`
+
+		// pass_rate を 50% に下げれば成功になるはず
+		reqPass := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"pass_rate":    50.0,
+				},
+			},
+		}
+		resPass, err := compareDesignHandler(context.Background(), reqPass)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultPass map[string]interface{}
+		json.Unmarshal([]byte(resPass.Content[0].(mcp.TextContent).Text), &resultPass)
+		if resultPass["status"] != "success" {
+			t.Errorf("Expected success with pass_rate=50, got status=%v, rate=%v", resultPass["status"], resultPass["match_rate"])
+		}
+
+		// pass_rate を 70% に上げれば不一致になるはず
+		reqFail := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"pass_rate":    70.0,
+				},
+			},
+		}
+		resFail, err := compareDesignHandler(context.Background(), reqFail)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultFail map[string]interface{}
+		json.Unmarshal([]byte(resFail.Content[0].(mcp.TextContent).Text), &resultFail)
+		if resultFail["status"] != "mismatch" {
+			t.Errorf("Expected mismatch with pass_rate=70, got status=%v, rate=%v", resultFail["status"], resultFail["match_rate"])
+		}
+	})
+
 	// =================================================================
 	// 2. perceptual モード (知覚的画像比較) のテスト
 	// =================================================================
