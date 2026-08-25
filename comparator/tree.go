@@ -91,6 +91,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var totalCompared int
 	var details []string
 
+	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
+	usedWeb := make(map[int]bool)
+
 	// 各Figmaノードと、Webの対応する要素を探して比較
 	// 簡単のため、Figmaの各要素と、Web側で最も「幾何学的位置（相対位置）が近いもの」を対応付ける
 	for _, fn := range fNodes {
@@ -102,9 +105,15 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		relX_f, relY_f, relW_f, relH_f := getFigmaRelativeCoords(fn, parentF)
 
 		var bestMatchSelector string
+		var bestMatchIdx int = -1
 		var minDiff float64 = math.MaxFloat64
 
-		for _, wn := range wNodes {
+		for wi, wn := range wNodes {
+			// 使用済みのWebノードは候補から除外（1対1対応の保証）
+			if usedWeb[wi] {
+				continue
+			}
+
 			parentW := getWebParent(wn, wNodes)
 			relX_w, relY_w, relW_w, relH_w := getWebRelativeCoords(wn, parentW)
 
@@ -118,6 +127,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			if diff < minDiff {
 				minDiff = diff
 				bestMatchSelector = wn.Selector
+				bestMatchIdx = wi
 			}
 		}
 
@@ -125,6 +135,10 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		if minDiff <= tolerance {
 			matchedCount++
 			foundMatch = true
+			// マッチしたWebノードを使用済みとしてマーク
+			if bestMatchIdx >= 0 {
+				usedWeb[bestMatchIdx] = true
+			}
 		} else {
 			details = append(details, fmt.Sprintf("Figma Node '%s' (type config mismatch or position shifted) did not match closest Web element '%s' (diff: %.2f)", fn.Name, bestMatchSelector, minDiff))
 		}
