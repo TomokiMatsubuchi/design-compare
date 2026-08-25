@@ -42,7 +42,7 @@ func main() {
 			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' mode)"),
 		),
 		mcp.WithNumber("threshold",
-			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'perceptual' mode, minimum match % (default 98.0). For 'layout_tree', BoundingBox tolerance % (default 15.0)."),
+			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'perceptual' mode, minimum match percentage (1.0 to 100.0, default 98.0; values below 1.0 are rejected to prevent confusion with the strict 0.0–1.0 scale). For 'layout_tree', BoundingBox tolerance % (default 15.0)."),
 		),
 		mcp.WithString("ignore_nodes",
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode)."),
@@ -126,6 +126,18 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		minMatchRate := request.GetFloat("threshold", 98.0)
+
+		// perceptual モードの threshold は 0〜100（百分比）。
+		// strict モードと同じ感覚で 0〜1 を渡すと minMatchRate が極端に低くなり、
+		// 常に success になる静かな偽陽性を防ぐため、1 未満の値は即座にエラーにする。
+		if args := request.GetArguments(); args != nil {
+			if _, ok := args["threshold"]; ok && minMatchRate < 1.0 {
+				return mcp.NewToolResultError(
+					"threshold for perceptual mode must be 1.0–100.0 (match percentage). " +
+						"A value below 1.0 is likely mistaken for the strict mode scale (0.0–1.0), " +
+						"which would make nearly every comparison pass silently."), nil
+			}
+		}
 
 		fileA, err := os.Open(imgPathA)
 		if err != nil {
