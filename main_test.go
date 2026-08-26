@@ -7,7 +7,6 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,7 +47,7 @@ func saveTempImage(t *testing.T, dir, filename string, img image.Image) string {
 }
 
 func TestVRTUnifiedCompare(t *testing.T) {
-	tmpDir, err := ioutil.TempDir("", "vrt-test-*")
+	tmpDir, err := os.MkdirTemp("", "vrt-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
