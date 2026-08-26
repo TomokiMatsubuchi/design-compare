@@ -307,6 +307,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "success" || result["match_rate"] != "100.00%" {
 			t.Errorf("Expected perceptual layout success, got status=%v, rate=%v", result["status"], result["match_rate"])
 		}
+		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath == "" {
+			t.Errorf("Expected non-empty diff_image_path, got %v", result["diff_image_path"])
+		}
 	})
 
 	t.Run("Perceptual_Layout_Mismatch", func(t *testing.T) {
@@ -327,6 +330,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected perceptual layout mismatch, got status=%v", result["status"])
+		}
+		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath == "" {
+			t.Errorf("Expected non-empty diff_image_path, got %v", result["diff_image_path"])
 		}
 	})
 

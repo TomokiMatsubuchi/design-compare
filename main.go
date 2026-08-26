@@ -161,17 +161,21 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v", err)), nil
 		}
 
-		matchRate := comparator.CalculateLayoutSimilarity(imgA, imgB)
+		matchRate, diffImagePath, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
+		}
 		status := "success"
 		if matchRate < minMatchRate {
 			status = "mismatch"
 		}
 
 		responseMap = map[string]interface{}{
-			"status":     status,
-			"mode":       "perceptual",
-			"match_rate": fmt.Sprintf("%.2f%%", matchRate),
-			"details":    fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate),
+			"status":          status,
+			"mode":            "perceptual",
+			"match_rate":      fmt.Sprintf("%.2f%%", matchRate),
+			"details":         fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate),
+			"diff_image_path": diffImagePath,
 		}
 
 	case "strict":
