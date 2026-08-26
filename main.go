@@ -86,6 +86,16 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		tolerance := request.GetFloat("threshold", 0.15) // デフォルト許容差 15%
 		passRate := request.GetFloat("pass_rate", 98.0) // デフォルト合格ライン 98%
 
+		// 範囲バリデーション: threshold は 0.0–1.0、pass_rate は 0.0–100.0
+		if args := request.GetArguments(); args != nil {
+			if _, ok := args["threshold"]; ok && (tolerance < 0.0 || tolerance > 1.0) {
+				return mcp.NewToolResultError("threshold for layout_tree mode must be between 0.0 and 1.0 (BoundingBox tolerance)."), nil
+			}
+			if _, ok := args["pass_rate"]; ok && (passRate < 0.0 || passRate > 100.0) {
+				return mcp.NewToolResultError("pass_rate for layout_tree mode must be between 0.0 and 100.0."), nil
+			}
+		}
+
 		ignoreNodesStr := request.GetString("ignore_nodes", "")
 		var ignoreList []string
 		if ignoreNodesStr != "" {
@@ -127,11 +137,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		minMatchRate := request.GetFloat("threshold", 98.0)
 
-		// perceptual モードの threshold は 0〜100（百分比）。
+		// perceptual モードの threshold は 1.0〜100.0（百分比）。
 		// strict モードと同じ感覚で 0〜1 を渡すと minMatchRate が極端に低くなり、
 		// 常に success になる静かな偽陽性を防ぐため、1 未満の値は即座にエラーにする。
+		// 100 を超える値は到達不可能なため誤用として拒否する。
 		if args := request.GetArguments(); args != nil {
-			if _, ok := args["threshold"]; ok && minMatchRate < 1.0 {
+			if _, ok := args["threshold"]; ok && (minMatchRate < 1.0 || minMatchRate > 100.0) {
 				return mcp.NewToolResultError(
 					"threshold for perceptual mode must be 1.0–100.0 (match percentage). " +
 						"A value below 1.0 is likely mistaken for the strict mode scale (0.0–1.0), " +
@@ -192,6 +203,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		threshold := request.GetFloat("threshold", 0.1)
+
+		// 範囲バリデーション: threshold は 0.0–1.0
+		if args := request.GetArguments(); args != nil {
+			if _, ok := args["threshold"]; ok && (threshold < 0.0 || threshold > 1.0) {
+				return mcp.NewToolResultError("threshold for strict mode must be between 0.0 and 1.0 (color diff tolerance)."), nil
+			}
+		}
 
 		// B画像を読み込みバイト列に
 		fileB, err := os.Open(imgPathB)
