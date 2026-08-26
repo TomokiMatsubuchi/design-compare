@@ -33,10 +33,10 @@ type LayoutTreeResult struct {
 
 // CompareLayoutTrees performs structural layout comparison on element hierarchies
 func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string) (*LayoutTreeResult, error) {
-	if tolerance <= 0 {
+	if tolerance < 0 {
 		tolerance = 0.15 // デフォルト許容差 15%
 	}
-	if passRate <= 0 {
+	if passRate < 0 {
 		passRate = 98.0 // デフォルト合格ライン 98%
 	}
 
