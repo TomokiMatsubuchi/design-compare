@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -44,6 +46,15 @@ func saveTempImage(t *testing.T, dir, filename string, img image.Image) string {
 		t.Fatalf("failed to encode image: %v", err)
 	}
 	return path
+}
+
+// 画像をPNG base64文字列に変換するヘルパー
+func encodePNGBase64(t *testing.T, img image.Image) string {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("failed to encode image: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
 func TestVRTUnifiedCompare(t *testing.T) {
@@ -473,6 +484,71 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected mismatch (min_match=98.0 should be used, not threshold=0.1), got status=%v", result["status"])
+		}
+	})
+
+	// =================================================================
+	// base64 入力のテスト (perceptual / strict モード)
+	// =================================================================
+	t.Run("Perceptual_Base64_Input", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "perceptual",
+					"image_a_base64": encodePNGBase64(t, imgA),
+					"image_b_base64": encodePNGBase64(t, imgC),
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" || result["match_rate"] != "100.00%" {
+			t.Errorf("Expected perceptual base64 success, got status=%v, rate=%v", result["status"], result["match_rate"])
+		}
+	})
+
+	t.Run("Strict_Base64_Input", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "strict",
+					"image_a_base64": encodePNGBase64(t, imgA),
+					"image_b_base64": encodePNGBase64(t, imgC),
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Errorf("Expected strict base64 mismatch, got status=%v", result["status"])
+		}
+	})
+
+	t.Run("Perceptual_Base64_Path_Exclusive", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "perceptual",
+					"image_path_a":    pathA,
+					"image_a_base64": encodePNGBase64(t, imgA),
+					"image_b_base64": encodePNGBase64(t, imgC),
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Errorf("Expected error when both path and base64 are specified, got content=%v", res.Content[0].(mcp.TextContent).Text)
 		}
 	})
 
