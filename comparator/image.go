@@ -16,14 +16,8 @@ import (
 )
 
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch
-func RunPixelMatch(imgAPath string, imgBBytes []byte, threshold float64) (float64, int, int, string, error) {
-	fileA, err := os.Open(imgAPath)
-	if err != nil {
-		return 0, 0, 0, "", fmt.Errorf("failed to open design image: %w", err)
-	}
-	defer fileA.Close()
-
-	imgA, _, err := image.Decode(fileA)
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64) (float64, int, int, string, error) {
+	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
 		return 0, 0, 0, "", fmt.Errorf("failed to decode design image: %w", err)
 	}

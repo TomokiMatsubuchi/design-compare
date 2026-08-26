@@ -1,14 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
 	"log"
 	"os"
 	"strings"
@@ -30,10 +31,16 @@ func main() {
 			mcp.Description("Comparison mode: 'layout_tree' (DOM/Figma hierarchy comparison), 'perceptual' (aHash image template check), or 'strict' (pixelmatch VRT)"),
 		),
 		mcp.WithString("image_path_a",
-			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes)"),
+			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes unless image_a_base64 is given; mutually exclusive with image_a_base64)"),
 		),
 		mcp.WithString("image_path_b",
-			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes)"),
+			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64)"),
+		),
+		mcp.WithString("image_a_base64",
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a)"),
+		),
+		mcp.WithString("image_b_base64",
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b)"),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode)"),
@@ -60,6 +67,29 @@ func main() {
 	log.Println("VRT Unified Compare MCP Server starting...")
 	if err := server.ServeStdio(s); err != nil {
 		log.Fatalf("Server error: %v", err)
+	}
+}
+
+// resolveImageInput returns the raw bytes of a comparison image from either a
+// local file path or a base64-encoded string (exactly one must be provided).
+func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
+	switch {
+	case pathValue != "" && base64Value != "":
+		return nil, fmt.Errorf("only one of %s and %s can be specified", pathParam, base64Param)
+	case base64Value != "":
+		data, err := base64.StdEncoding.DecodeString(base64Value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w", base64Param, err)
+		}
+		return data, nil
+	case pathValue != "":
+		data, err := os.ReadFile(pathValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", pathParam, err)
+		}
+		return data, nil
+	default:
+		return nil, fmt.Errorf("either %s or %s is required", pathParam, base64Param)
 	}
 }
 
@@ -129,13 +159,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// =================================================================
 		// 2. 知覚的画像比較（aHashによる大まかなテンプレート検証）
 		// =================================================================
-		imgPathA, err := request.RequireString("image_path_a")
+		imgABytes, err := resolveImageInput(
+			request.GetString("image_path_a", ""), request.GetString("image_a_base64", ""),
+			"image_path_a", "image_a_base64")
 		if err != nil {
-			return mcp.NewToolResultError("image_path_a is required for perceptual mode"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
-		imgPathB, err := request.RequireString("image_path_b")
+		imgBBytes, err := resolveImageInput(
+			request.GetString("image_path_b", ""), request.GetString("image_b_base64", ""),
+			"image_path_b", "image_b_base64")
 		if err != nil {
-			return mcp.NewToolResultError("image_path_b is required for perceptual mode"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
 
 		// min_match を優先使用し、threshold は後方互換エイリアスとして扱う。
@@ -166,24 +200,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		fileA, err := os.Open(imgPathA)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to open image A: %v", err)), nil
-		}
-		defer fileA.Close()
-
-		imgA, _, err := image.Decode(fileA)
+		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image A: %v", err)), nil
 		}
 
-		fileB, err := os.Open(imgPathB)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to open image B: %v", err)), nil
-		}
-		defer fileB.Close()
-
-		imgB, _, err := image.Decode(fileB)
+		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v", err)), nil
 		}
@@ -209,13 +231,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// =================================================================
 		// 3. 厳密ピクセル比較（Pixelmatch VRT）
 		// =================================================================
-		imgPathA, err := request.RequireString("image_path_a")
+		imgABytes, err := resolveImageInput(
+			request.GetString("image_path_a", ""), request.GetString("image_a_base64", ""),
+			"image_path_a", "image_a_base64")
 		if err != nil {
-			return mcp.NewToolResultError("image_path_a is required for strict mode"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
-		imgPathB, err := request.RequireString("image_path_b")
+		imgBBytes, err := resolveImageInput(
+			request.GetString("image_path_b", ""), request.GetString("image_b_base64", ""),
+			"image_path_b", "image_b_base64")
 		if err != nil {
-			return mcp.NewToolResultError("image_path_b is required for strict mode"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
 		threshold := request.GetFloat("threshold", 0.1)
@@ -227,19 +253,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		// B画像を読み込みバイト列に
-		fileB, err := os.Open(imgPathB)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to open image B: %v", err)), nil
-		}
-		defer fileB.Close()
-
-		imgBBytes, err := io.ReadAll(fileB)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to read image B: %v", err)), nil
-		}
-
-		matchRate, totalPixels, diffPixels, diffImage, err := comparator.RunPixelMatch(imgPathA, imgBBytes, threshold)
+		matchRate, totalPixels, diffPixels, diffImage, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
