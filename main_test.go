@@ -358,6 +358,101 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	// =================================================================
 	// 3. strict モード (厳密ピクセル比較) のテスト
 	// =================================================================
+	// =================================================================
+	// 4. 範囲バリデーションのテスト
+	// =================================================================
+	t.Run("LayoutTree_Threshold_OutOfRange", func(t *testing.T) {
+		figmaLayout := `[{"id":"1","name":"a","x":0,"y":0,"w":100,"h":100}]`
+		webLayout := `[{"selector":".a","x":0,"y":0,"w":100,"h":100}]`
+
+		for _, val := range []float64{-0.1, 1.5, 100.0} {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    val,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("Expected error for layout_tree threshold=%.1f, got content=%v", val, res.Content[0].(mcp.TextContent).Text)
+			}
+		}
+	})
+
+	t.Run("LayoutTree_PassRate_OutOfRange", func(t *testing.T) {
+		figmaLayout := `[{"id":"1","name":"a","x":0,"y":0,"w":100,"h":100}]`
+		webLayout := `[{"selector":".a","x":0,"y":0,"w":100,"h":100}]`
+
+		for _, val := range []float64{-1.0, 101.0, 200.0} {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"pass_rate":    val,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("Expected error for layout_tree pass_rate=%.1f, got content=%v", val, res.Content[0].(mcp.TextContent).Text)
+			}
+		}
+	})
+
+	t.Run("Perceptual_Threshold_Above100", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+					"threshold":    150.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Errorf("Expected error for perceptual threshold=150.0, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+	})
+
+	t.Run("Strict_Threshold_OutOfRange", func(t *testing.T) {
+		for _, val := range []float64{-0.1, 1.5, 50.0} {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "strict",
+						"image_path_a": pathA,
+						"image_path_b": pathC,
+						"threshold":    val,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("Expected error for strict threshold=%.1f, got content=%v", val, res.Content[0].(mcp.TextContent).Text)
+			}
+		}
+	})
+
 	t.Run("StrictMode_MismatchColor", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
