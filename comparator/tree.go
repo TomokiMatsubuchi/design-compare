@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
 )
 
 type FigmaNode struct {
@@ -98,8 +97,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 簡単のため、Figmaの各要素と、Web側で最も「幾何学的位置（相対位置）が近いもの」を対応付ける
 	for _, fn := range fNodes {
 		totalCompared++
-		foundMatch := false
-
 		// 親要素に対する相対サイズと相対座標を計算
 		parentF := getFigmaParent(fn, fNodes)
 		relX_f, relY_f, relW_f, relH_f := getFigmaRelativeCoords(fn, parentF)
@@ -134,7 +131,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		// 許容誤差（tolerance）以内なら「テンプレートとして同じ位置・サイズで配置されている」と判定
 		if minDiff <= tolerance {
 			matchedCount++
-			foundMatch = true
 			// マッチしたWebノードを使用済みとしてマーク
 			if bestMatchIdx >= 0 {
 				usedWeb[bestMatchIdx] = true
@@ -142,8 +138,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		} else {
 			details = append(details, fmt.Sprintf("Figma Node '%s' (type config mismatch or position shifted) did not match closest Web element '%s' (diff: %.2f)", fn.Name, bestMatchSelector, minDiff))
 		}
-
-		_ = foundMatch
 	}
 
 	matchRate := (float64(matchedCount) / float64(totalCompared)) * 100.0
@@ -161,39 +155,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		Status:    status,
 		Details:   details,
 	}, nil
-}
-
-func groupFigmaByParent(nodes []FigmaNode) map[string][]FigmaNode {
-	g := make(map[string][]FigmaNode)
-	for _, n := range nodes {
-		g[n.Parent] = append(g[n.Parent], n)
-	}
-	// ソートして順序を決定論的に
-	for k := range g {
-		sort.Slice(g[k], func(i, j int) bool {
-			if g[k][i].Y == g[k][j].Y {
-				return g[k][i].X < g[k][j].X
-			}
-			return g[k][i].Y < g[k][j].Y
-		})
-	}
-	return g
-}
-
-func groupWebByParent(nodes []WebNode) map[string][]WebNode {
-	g := make(map[string][]WebNode)
-	for _, n := range nodes {
-		g[n.Parent] = append(g[n.Parent], n)
-	}
-	for k := range g {
-		sort.Slice(g[k], func(i, j int) bool {
-			if g[k][i].Y == g[k][j].Y {
-				return g[k][i].X < g[k][j].X
-			}
-			return g[k][i].Y < g[k][j].Y
-		})
-	}
-	return g
 }
 
 func getFigmaParent(node FigmaNode, list []FigmaNode) *FigmaNode {
