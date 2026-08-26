@@ -42,7 +42,10 @@ func main() {
 			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' mode)"),
 		),
 		mcp.WithNumber("threshold",
-			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'perceptual' mode, minimum match percentage (1.0 to 100.0, default 98.0; values below 1.0 are rejected to prevent confusion with the strict 0.0–1.0 scale). For 'layout_tree', BoundingBox tolerance % (default 15.0)."),
+			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0); prefer 'min_match' instead to avoid confusion with the 0.0–1.0 tolerance scale."),
+		),
+		mcp.WithNumber("min_match",
+			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass in 'perceptual' mode. Default 98.0. Use this instead of 'threshold' for perceptual mode, since 'threshold' uses a 0.0–1.0 scale in other modes."),
 		),
 		mcp.WithString("ignore_nodes",
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode)."),
@@ -135,18 +138,31 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError("image_path_b is required for perceptual mode"), nil
 		}
 
-		minMatchRate := request.GetFloat("threshold", 98.0)
+		// min_match を優先使用し、threshold は後方互換エイリアスとして扱う。
+		// threshold は layout_tree / strict では 0.0–1.0 の許容差だが、perceptual では
+		// 一致率% (1.0–100.0) と意味が異なる。専用パラメータ min_match を使うことで
+		// モード間の意味の不一致による誤用を防ぐ。
+		args := request.GetArguments()
+		_, hasMinMatch := args["min_match"]
+		_, hasThreshold := args["threshold"]
 
-		// perceptual モードの threshold は 1.0〜100.0（百分比）。
-		// strict モードと同じ感覚で 0〜1 を渡すと minMatchRate が極端に低くなり、
-		// 常に success になる静かな偽陽性を防ぐため、1 未満の値は即座にエラーにする。
-		// 100 を超える値は到達不可能なため誤用として拒否する。
-		if args := request.GetArguments(); args != nil {
-			if _, ok := args["threshold"]; ok && (minMatchRate < 1.0 || minMatchRate > 100.0) {
+		var minMatchRate float64
+		if hasMinMatch {
+			minMatchRate = request.GetFloat("min_match", 98.0)
+			if minMatchRate < 0.0 || minMatchRate > 100.0 {
+				return mcp.NewToolResultError("min_match for perceptual mode must be between 0.0 and 100.0 (match percentage)."), nil
+			}
+		} else {
+			// 後方互換: threshold を min_match のエイリアスとして受け付ける。
+			// 1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐため拒否し、
+			// 100 を超える値は到達不可能なため誤用として拒否する。
+			minMatchRate = request.GetFloat("threshold", 98.0)
+			if hasThreshold && (minMatchRate < 1.0 || minMatchRate > 100.0) {
 				return mcp.NewToolResultError(
 					"threshold for perceptual mode must be 1.0–100.0 (match percentage). " +
 						"A value below 1.0 is likely mistaken for the strict mode scale (0.0–1.0), " +
-						"which would make nearly every comparison pass silently."), nil
+						"which would make nearly every comparison pass silently. " +
+						"Prefer using the 'min_match' parameter for perceptual mode."), nil
 			}
 		}
 
