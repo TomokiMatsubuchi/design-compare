@@ -2,6 +2,7 @@ package comparator
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
@@ -48,19 +49,14 @@ func RunPixelMatch(imgAPath string, imgBBytes []byte, threshold float64) (float6
 		return 0, 0, 0, "", fmt.Errorf("pixelmatch error: %w", err)
 	}
 
-	tmpDir := os.TempDir()
-	diffFile, err := os.CreateTemp(tmpDir, "vrt-diff-*.png")
-	if err != nil {
-		return 0, 0, 0, "", fmt.Errorf("failed to create diff file: %w", err)
-	}
-	defer diffFile.Close()
-
-	if err := png.Encode(diffFile, diffImg); err != nil {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, diffImg); err != nil {
 		return 0, 0, 0, "", fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
+	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
 	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
-	return matchRate, totalPixels, diffCount, diffFile.Name(), nil
+	return matchRate, totalPixels, diffCount, diffDataURI, nil
 }
 
 // CalculateLayoutSimilarity calculates structural template matching using aHash (16x16)

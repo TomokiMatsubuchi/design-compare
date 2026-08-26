@@ -205,7 +205,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to read image B: %v", err)), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImagePath, err := comparator.RunPixelMatch(imgPathA, imgBBytes, threshold)
+		matchRate, totalPixels, diffPixels, diffImage, err := comparator.RunPixelMatch(imgPathA, imgBBytes, threshold)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -216,12 +216,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		responseMap = map[string]interface{}{
-			"status":          status,
-			"mode":            "strict",
-			"match_rate":      fmt.Sprintf("%.2f%%", matchRate),
-			"total_pixels":    totalPixels,
-			"diff_pixels":     diffPixels,
-			"diff_image_path": diffImagePath,
+			"status":       status,
+			"mode":         "strict",
+			"match_rate":   fmt.Sprintf("%.2f%%", matchRate),
+			"total_pixels": totalPixels,
+			"diff_pixels":  diffPixels,
+			"diff_image":   diffImage,
 		}
 
 	default:
