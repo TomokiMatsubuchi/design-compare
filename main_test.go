@@ -494,7 +494,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
-					"mode":            "perceptual",
+					"mode":           "perceptual",
 					"image_a_base64": encodePNGBase64(t, imgA),
 					"image_b_base64": encodePNGBase64(t, imgC),
 				},
@@ -515,7 +515,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
-					"mode":            "strict",
+					"mode":           "strict",
 					"image_a_base64": encodePNGBase64(t, imgA),
 					"image_b_base64": encodePNGBase64(t, imgC),
 				},
@@ -536,8 +536,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
-					"mode":            "perceptual",
-					"image_path_a":    pathA,
+					"mode":           "perceptual",
+					"image_path_a":   pathA,
 					"image_a_base64": encodePNGBase64(t, imgA),
 					"image_b_base64": encodePNGBase64(t, imgC),
 				},

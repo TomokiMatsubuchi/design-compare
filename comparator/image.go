@@ -123,10 +123,10 @@ func resizeTo16x16Gray(img image.Image) []byte {
 
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
-			startX := bounds.Min.X + (x * w) / 16
-			endX := bounds.Min.X + ((x + 1) * w) / 16
-			startY := bounds.Min.Y + (y * h) / 16
-			endY := bounds.Min.Y + ((y + 1) * h) / 16
+			startX := bounds.Min.X + (x*w)/16
+			endX := bounds.Min.X + ((x+1)*w)/16
+			startY := bounds.Min.Y + (y*h)/16
+			endY := bounds.Min.Y + ((y+1)*h)/16
 
 			if endX <= startX {
 				endX = startX + 1

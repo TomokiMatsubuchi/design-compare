@@ -117,7 +117,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		tolerance := request.GetFloat("threshold", 0.15) // デフォルト許容差 15%
-		passRate := request.GetFloat("pass_rate", 98.0) // デフォルト合格ライン 98%
+		passRate := request.GetFloat("pass_rate", 98.0)  // デフォルト合格ライン 98%
 
 		// 範囲バリデーション: threshold は 0.0–1.0、pass_rate は 0.0–100.0
 		if args := request.GetArguments(); args != nil {
