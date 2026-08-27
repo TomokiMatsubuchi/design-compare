@@ -104,6 +104,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		var bestMatchSelector string
 		var bestMatchIdx int = -1
 		var minDiff float64 = math.MaxFloat64
+		var bestDiffX, bestDiffY, bestDiffW, bestDiffH float64
 
 		for wi, wn := range wNodes {
 			// 使用済みのWebノードは候補から除外（1対1対応の保証）
@@ -123,6 +124,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 			if diff < minDiff {
 				minDiff = diff
+				bestDiffX, bestDiffY, bestDiffW, bestDiffH = diffX, diffY, diffW, diffH
 				bestMatchSelector = wn.Selector
 				bestMatchIdx = wi
 			}
@@ -136,7 +138,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				usedWeb[bestMatchIdx] = true
 			}
 		} else {
-			details = append(details, fmt.Sprintf("Figma Node '%s' (type config mismatch or position shifted) did not match closest Web element '%s' (diff: %.2f)", fn.Name, bestMatchSelector, minDiff))
+			details = append(details, fmt.Sprintf("Figma Node '%s' (type config mismatch or position shifted) did not match closest Web element '%s' (diff: %.2f, dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
 		}
 	}
 
