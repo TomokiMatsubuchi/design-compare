@@ -27,7 +27,10 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64) (float64, int
 		return 0, 0, 0, "", fmt.Errorf("failed to decode web screenshot: %w", err)
 	}
 
-	normA, normB := EnsureSameSize(imgA, imgB)
+	normA, normB, err := EnsureSameSize(imgA, imgB)
+	if err != nil {
+		return 0, 0, 0, "", err
+	}
 	bounds := normA.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
 	totalPixels := w * h
@@ -159,32 +162,17 @@ func resizeTo16x16Gray(img image.Image) []byte {
 	return gray
 }
 
-func EnsureSameSize(imgA, imgB image.Image) (image.Image, image.Image) {
+// EnsureSameSize verifies that both images have identical dimensions and returns
+// them unchanged. Size differences are reported as an error instead of being
+// silently padded, so that strict pixel comparison never counts padding as matches.
+func EnsureSameSize(imgA, imgB image.Image) (image.Image, image.Image, error) {
 	boundsA := imgA.Bounds()
 	boundsB := imgB.Bounds()
 	wA, hA := boundsA.Dx(), boundsA.Dy()
 	wB, hB := boundsB.Dx(), boundsB.Dy()
 
-	if wA == wB && hA == hB {
-		return imgA, imgB
+	if wA != wB || hA != hB {
+		return nil, nil, fmt.Errorf("image size mismatch: image A is %dx%d, image B is %dx%d; strict comparison requires identical sizes", wA, hA, wB, hB)
 	}
-
-	maxW := wA
-	if wB > maxW {
-		maxW = wB
-	}
-	maxH := hA
-	if hB > maxH {
-		maxH = hB
-	}
-
-	newA := image.NewRGBA(image.Rect(0, 0, maxW, maxH))
-	draw.Draw(newA, newA.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
-	draw.Draw(newA, boundsA, imgA, boundsA.Min, draw.Over)
-
-	newB := image.NewRGBA(image.Rect(0, 0, maxW, maxH))
-	draw.Draw(newB, newB.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
-	draw.Draw(newB, boundsB, imgB, boundsB.Min, draw.Over)
-
-	return newA, newB
+	return imgA, imgB, nil
 }

@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -668,6 +669,33 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected strict mode mismatch, got status=%v", result["status"])
+		}
+	})
+
+	// サイズの異なる画像ペアは白埋めで吸収せず、エラーとして明示的に報告する
+	// (白埋め領域が一致として数えられ一致率が水増しされるのを防ぐ)
+	t.Run("StrictMode_SizeMismatch_Error", func(t *testing.T) {
+		imgSmall := generateSolidImage(100, 100, color.White)
+		pathSmall := saveTempImage(t, tmpDir, "imageSmall.png", imgSmall)
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathA,     // 200x200
+					"image_path_b": pathSmall, // 100x100
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Errorf("Expected error for strict mode with different image sizes, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+		if msg := res.Content[0].(mcp.TextContent).Text; !strings.Contains(msg, "size mismatch") {
+			t.Errorf("Expected size mismatch error message, got %v", msg)
 		}
 	})
 }
