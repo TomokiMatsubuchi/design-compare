@@ -60,6 +60,9 @@ func main() {
 		mcp.WithNumber("pass_rate",
 			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass in 'layout_tree' mode. Default 98.0."),
 		),
+		mcp.WithNumber("max_diff_pixels",
+			mcp.Description("Maximum number of differing pixels allowed to still report success in 'strict' mode. Default 0 (any pixel difference causes mismatch). Useful to tolerate a few pixels of anti-aliasing or environment differences."),
+		),
 	)
 	s.AddTool(compareDesignTool, compareDesignHandler)
 
@@ -245,11 +248,15 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		threshold := request.GetFloat("threshold", 0.1)
+		maxDiffPixels := request.GetInt("max_diff_pixels", 0)
 
-		// 範囲バリデーション: threshold は 0.0–1.0
+		// 範囲バリデーション: threshold は 0.0–1.0、max_diff_pixels は 0 以上
 		if args := request.GetArguments(); args != nil {
 			if _, ok := args["threshold"]; ok && (threshold < 0.0 || threshold > 1.0) {
 				return mcp.NewToolResultError("threshold for strict mode must be between 0.0 and 1.0 (color diff tolerance)."), nil
+			}
+			if _, ok := args["max_diff_pixels"]; ok && maxDiffPixels < 0 {
+				return mcp.NewToolResultError("max_diff_pixels for strict mode must be 0 or greater (maximum allowed number of differing pixels)."), nil
 			}
 		}
 
@@ -259,7 +266,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		status := "success"
-		if diffPixels > 0 {
+		if diffPixels > maxDiffPixels {
 			status = "mismatch"
 		}
 

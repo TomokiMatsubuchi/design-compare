@@ -672,6 +672,81 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// max_diff_pixels: 差分ピクセル数が許容値以下なら success と判定する
+	t.Run("StrictMode_MaxDiffPixels", func(t *testing.T) {
+		baseArgs := map[string]any{
+			"mode":         "strict",
+			"image_path_a": pathA,
+			"image_path_b": pathC, // 色の差があるため不一致
+		}
+
+		// まずデフォルト (max_diff_pixels=0) で差分ピクセル数を取得する
+		req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: baseArgs}}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Errorf("Expected mismatch with default max_diff_pixels=0, got status=%v", result["status"])
+		}
+		diffPixels := int(result["diff_pixels"].(float64))
+		if diffPixels <= 0 {
+			t.Fatalf("Expected positive diff_pixels, got %d", diffPixels)
+		}
+
+		// diff_pixels ちょうどを許容すると success (diffPixels > maxDiffPixels のときだけ mismatch)
+		argsOK := map[string]any{
+			"mode": "strict", "image_path_a": pathA, "image_path_b": pathC,
+			"max_diff_pixels": float64(diffPixels),
+		}
+		resOK, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: argsOK}})
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOK map[string]interface{}
+		json.Unmarshal([]byte(resOK.Content[0].(mcp.TextContent).Text), &resultOK)
+		if resultOK["status"] != "success" {
+			t.Errorf("Expected success with max_diff_pixels=%d, got status=%v", diffPixels, resultOK["status"])
+		}
+
+		// 許容数を 1 でも下回ると mismatch のまま
+		argsNG := map[string]any{
+			"mode": "strict", "image_path_a": pathA, "image_path_b": pathC,
+			"max_diff_pixels": float64(diffPixels - 1),
+		}
+		resNG, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: argsNG}})
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNG map[string]interface{}
+		json.Unmarshal([]byte(resNG.Content[0].(mcp.TextContent).Text), &resultNG)
+		if resultNG["status"] != "mismatch" {
+			t.Errorf("Expected mismatch with max_diff_pixels=%d, got status=%v", diffPixels-1, resultNG["status"])
+		}
+	})
+
+	t.Run("StrictMode_MaxDiffPixels_Negative", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "strict",
+					"image_path_a":    pathA,
+					"image_path_b":    pathC,
+					"max_diff_pixels": -1.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Errorf("Expected error for negative max_diff_pixels, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+	})
+
 	// サイズの異なる画像ペアは白埋めで吸収せず、エラーとして明示的に報告する
 	// (白埋め領域が一致として数えられ一致率が水増しされるのを防ぐ)
 	t.Run("StrictMode_SizeMismatch_Error", func(t *testing.T) {
