@@ -154,6 +154,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"match_rate": fmt.Sprintf("%.2f%%", treeResult.MatchRate),
 			"details":    treeResult.Details,
 		}
+		// ignore_nodes 指定時のみ、適用結果のフィードバックを返す
+		if len(ignoreList) > 0 {
+			responseMap["ignored_count"] = treeResult.IgnoredCount
+			if len(treeResult.UnmatchedIgnores) > 0 {
+				responseMap["unmatched_ignores"] = treeResult.UnmatchedIgnores
+			}
+		}
 
 	case "perceptual":
 		// =================================================================

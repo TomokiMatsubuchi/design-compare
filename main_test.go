@@ -166,6 +166,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultIgnore["status"] != "success" || resultIgnore["match_rate"] != "100.00%" {
 			t.Errorf("Expected LayoutTree success and 100%% match after ignoring 'nav', got status=%v, rate=%v", resultIgnore["status"], resultIgnore["match_rate"])
 		}
+		// Figma "nav" と Web ".nav" の2ノードが除外されたことを報告する
+		if got := resultIgnore["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 after ignoring 'nav', got %v", got)
+		}
+		if _, ok := resultIgnore["unmatched_ignores"]; ok {
+			t.Errorf("Expected no unmatched_ignores for valid entry 'nav', got %v", resultIgnore["unmatched_ignores"])
+		}
 
 		// C2: Web selector ".nav" を除外して一致させるケース
 		reqIgnoreWeb := mcp.CallToolRequest{
@@ -187,6 +194,69 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(resIgnoreWeb.Content[0].(mcp.TextContent).Text), &resultIgnoreWeb)
 		if resultIgnoreWeb["status"] != "success" || resultIgnoreWeb["match_rate"] != "100.00%" {
 			t.Errorf("Expected LayoutTree success and 100%% match after ignoring '.nav', got status=%v, rate=%v", resultIgnoreWeb["status"], resultIgnoreWeb["match_rate"])
+		}
+		if got := resultIgnoreWeb["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 after ignoring '.nav', got %v", got)
+		}
+
+		// C3: 有効なエントリと無効なエントリ（スペルミス）を混在させたケース。
+		// 有効分は除外され、無効分は unmatched_ignores として報告される。
+		reqIgnoreMixed := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"ignore_nodes": "nav, .does_not_exist",
+				},
+			},
+		}
+		resIgnoreMixed, err := compareDesignHandler(context.Background(), reqIgnoreMixed)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultIgnoreMixed map[string]interface{}
+		json.Unmarshal([]byte(resIgnoreMixed.Content[0].(mcp.TextContent).Text), &resultIgnoreMixed)
+		if resultIgnoreMixed["status"] != "success" {
+			t.Errorf("Expected success with mixed ignore entries, got status=%v, rate=%v", resultIgnoreMixed["status"], resultIgnoreMixed["match_rate"])
+		}
+		if got := resultIgnoreMixed["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 with mixed ignore entries, got %v", got)
+		}
+		unmatched, ok := resultIgnoreMixed["unmatched_ignores"].([]interface{})
+		if !ok || len(unmatched) != 1 || unmatched[0] != ".does_not_exist" {
+			t.Errorf("Expected unmatched_ignores=[.does_not_exist], got %v", resultIgnoreMixed["unmatched_ignores"])
+		}
+
+		// C4: どのノードにも一致しない ignore エントリのみ指定したケース。
+		// 除外は1件も発生せず、エントリが unmatched_ignores で報告される。
+		reqIgnoreNothing := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"ignore_nodes": "nope",
+				},
+			},
+		}
+		resIgnoreNothing, err := compareDesignHandler(context.Background(), reqIgnoreNothing)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultIgnoreNothing map[string]interface{}
+		json.Unmarshal([]byte(resIgnoreNothing.Content[0].(mcp.TextContent).Text), &resultIgnoreNothing)
+		if resultIgnoreNothing["status"] != "mismatch" {
+			t.Errorf("Expected mismatch when ignore entry matches nothing, got status=%v, rate=%v", resultIgnoreNothing["status"], resultIgnoreNothing["match_rate"])
+		}
+		if got := resultIgnoreNothing["ignored_count"]; got != float64(0) {
+			t.Errorf("Expected ignored_count=0 when ignore entry matches nothing, got %v", got)
+		}
+		unmatchedNothing, ok := resultIgnoreNothing["unmatched_ignores"].([]interface{})
+		if !ok || len(unmatchedNothing) != 1 || unmatchedNothing[0] != "nope" {
+			t.Errorf("Expected unmatched_ignores=[nope], got %v", resultIgnoreNothing["unmatched_ignores"])
 		}
 	})
 
