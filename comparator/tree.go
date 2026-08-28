@@ -26,9 +26,11 @@ type WebNode struct {
 }
 
 type LayoutTreeResult struct {
-	MatchRate float64  `json:"match_rate"`
-	Status    string   `json:"status"`
-	Details   []string `json:"details"`
+	MatchRate        float64  `json:"match_rate"`
+	Status           string   `json:"status"`
+	Details          []string `json:"details"`
+	IgnoredCount     int      `json:"ignored_count"`
+	UnmatchedIgnores []string `json:"unmatched_ignores,omitempty"`
 }
 
 // CompareLayoutTrees performs structural layout comparison on element hierarchies
@@ -50,7 +52,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
 	}
 
-	// ignoreList に基づいてノードを除外
+	// ignoreList に基づいてノードを除外し、適用結果（除外数・無効なエントリ）を集計する
+	var ignoredCount int
+	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
 		ignoreMap := make(map[string]bool)
 		for _, item := range ignoreList {
@@ -58,9 +62,24 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			ignoreMap[cleanNodeName(item)] = true
 		}
 
+		// ノード側の識別値（raw + clean）を集め、ignore エントリが実際に
+		// どれかのノードに一致したかの判定に使う
+		nodeValues := make(map[string]bool)
+		for _, fn := range fNodes {
+			nodeValues[fn.ID] = true
+			nodeValues[fn.Name] = true
+			nodeValues[cleanNodeName(fn.ID)] = true
+			nodeValues[cleanNodeName(fn.Name)] = true
+		}
+		for _, wn := range wNodes {
+			nodeValues[wn.Selector] = true
+			nodeValues[cleanNodeName(wn.Selector)] = true
+		}
+
 		var filteredFNodes []FigmaNode
 		for _, fn := range fNodes {
 			if ignoreMap[fn.ID] || ignoreMap[fn.Name] || ignoreMap[cleanNodeName(fn.ID)] || ignoreMap[cleanNodeName(fn.Name)] {
+				ignoredCount++
 				continue
 			}
 			filteredFNodes = append(filteredFNodes, fn)
@@ -70,18 +89,28 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		var filteredWNodes []WebNode
 		for _, wn := range wNodes {
 			if ignoreMap[wn.Selector] || ignoreMap[cleanNodeName(wn.Selector)] {
+				ignoredCount++
 				continue
 			}
 			filteredWNodes = append(filteredWNodes, wn)
 		}
 		wNodes = filteredWNodes
+
+		// どのノードにも一致しなかった ignore エントリ（スペルミス等）を検出する
+		for _, item := range ignoreList {
+			if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
+				unmatchedIgnores = append(unmatchedIgnores, item)
+			}
+		}
 	}
 
 	if len(fNodes) == 0 || len(wNodes) == 0 {
 		return &LayoutTreeResult{
-			MatchRate: 0,
-			Status:    "mismatch",
-			Details:   []string{"Empty layout node data provided"},
+			MatchRate:        0,
+			Status:           "mismatch",
+			Details:          []string{"Empty layout node data provided"},
+			IgnoredCount:     ignoredCount,
+			UnmatchedIgnores: unmatchedIgnores,
 		}, nil
 	}
 
@@ -153,9 +182,11 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	details = append([]string{summaryDetail}, details...)
 
 	return &LayoutTreeResult{
-		MatchRate: matchRate,
-		Status:    status,
-		Details:   details,
+		MatchRate:        matchRate,
+		Status:           status,
+		Details:          details,
+		IgnoredCount:     ignoredCount,
+		UnmatchedIgnores: unmatchedIgnores,
 	}, nil
 }
 
