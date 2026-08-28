@@ -135,13 +135,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		ignoreNodesStr := request.GetString("ignore_nodes", "")
 		var ignoreList []string
 		if ignoreNodesStr != "" {
-			for _, s := range strings.Split(ignoreNodesStr, ", ") {
-				// 最初は ", " でスプリットを試みるが、カンマのみの場合も考慮してカンマ単体で再度スプリット
-				for _, part := range strings.Split(s, ",") {
-					trimmed := strings.TrimSpace(part)
-					if trimmed != "" {
-						ignoreList = append(ignoreList, trimmed)
-					}
+			for _, part := range strings.Split(ignoreNodesStr, ",") {
+				trimmed := strings.TrimSpace(part)
+				if trimmed != "" {
+					ignoreList = append(ignoreList, trimmed)
 				}
 			}
 		}
