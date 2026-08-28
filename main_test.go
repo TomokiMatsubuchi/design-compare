@@ -58,6 +58,24 @@ func encodePNGBase64(t *testing.T, img image.Image) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+// perceptual モードの応答に含まれる差分画像が base64 data URI であることを検証する
+func assertDiffDataURI(t *testing.T, result map[string]interface{}) {
+	t.Helper()
+	diffImage, ok := result["diff_image"].(string)
+	if !ok || !strings.HasPrefix(diffImage, "data:image/png;base64,") {
+		t.Errorf("Expected diff_image as PNG data URI, got %v", result["diff_image"])
+	}
+}
+
+// /tmp 内の差分PNG一時ファイル（perceptual-diff-*.png）の数を数える
+func countDiffTempFiles() (int, error) {
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "perceptual-diff-*.png"))
+	if err != nil {
+		return 0, err
+	}
+	return len(matches), nil
+}
+
 func TestVRTUnifiedCompare(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vrt-test-*")
 	if err != nil {
@@ -388,9 +406,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "success" || result["match_rate"] != "100.00%" {
 			t.Errorf("Expected perceptual layout success, got status=%v, rate=%v", result["status"], result["match_rate"])
 		}
-		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath == "" {
-			t.Errorf("Expected non-empty diff_image_path, got %v", result["diff_image_path"])
-		}
+		assertDiffDataURI(t, result)
 	})
 
 	t.Run("Perceptual_Layout_Mismatch", func(t *testing.T) {
@@ -412,8 +428,39 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected perceptual layout mismatch, got status=%v", result["status"])
 		}
-		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath == "" {
-			t.Errorf("Expected non-empty diff_image_path, got %v", result["diff_image_path"])
+		assertDiffDataURI(t, result)
+	})
+
+	// 差分PNG一時ファイルが /tmp に蓄積しないことを確認する（Issue #32）。
+	t.Run("Perceptual_NoDiffTempFiles", func(t *testing.T) {
+		before, err := countDiffTempFiles()
+		if err != nil {
+			t.Fatalf("failed to list temp dir: %v", err)
+		}
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathD,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		assertDiffDataURI(t, result)
+
+		after, err := countDiffTempFiles()
+		if err != nil {
+			t.Fatalf("failed to list temp dir: %v", err)
+		}
+		if after != before {
+			t.Errorf("expected no new perceptual-diff-*.png files in %s, before=%d after=%d", os.TempDir(), before, after)
 		}
 	})
 

@@ -10,7 +10,6 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
-	"os"
 
 	"github.com/orisano/pixelmatch"
 )
@@ -62,10 +61,12 @@ func CalculateLayoutSimilarity(imgA, imgB image.Image) float64 {
 	return rate
 }
 
-// CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and writes a
-// diff-visualization PNG to a temp file. Each cell is rendered as a 16x16 pixel block
-// (256x256 total): matching cells show the grayscale value from image A; mismatching
-// cells are highlighted in red. Returns the match rate, diff file path, and error.
+// CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and returns a
+// diff-visualization PNG as a base64 data URI. Each cell is rendered as a 16x16 pixel
+// block (256x256 total): matching cells show the grayscale value from image A; mismatching
+// cells are highlighted in red. Returns the match rate, diff image data URI, and error.
+// The diff image is kept in memory, so repeated comparisons never accumulate PNG files
+// in the temp directory.
 func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image) (float64, string, error) {
 	grayA := resizeTo16x16Gray(imgA)
 	grayB := resizeTo16x16Gray(imgB)
@@ -104,19 +105,14 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image) (float64, string,
 		}
 	}
 
-	tmpDir := os.TempDir()
-	diffFile, err := os.CreateTemp(tmpDir, "perceptual-diff-*.png")
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to create diff file: %w", err)
-	}
-	defer diffFile.Close()
-
-	if err := png.Encode(diffFile, diffImg); err != nil {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, diffImg); err != nil {
 		return 0, "", fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
+	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
 	similarity := float64(256-diffBits) / 256.0 * 100.0
-	return similarity, diffFile.Name(), nil
+	return similarity, diffDataURI, nil
 }
 
 func resizeTo16x16Gray(img image.Image) []byte {
