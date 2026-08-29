@@ -149,10 +149,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		responseMap = map[string]interface{}{
-			"status":     treeResult.Status,
-			"mode":       "layout_tree",
-			"match_rate": fmt.Sprintf("%.2f%%", treeResult.MatchRate),
-			"details":    treeResult.Details,
+			"status":           treeResult.Status,
+			"mode":             "layout_tree",
+			"match_rate":       fmt.Sprintf("%.2f%%", treeResult.MatchRate),
+			"match_rate_value": treeResult.MatchRate,
+			"details":          treeResult.Details,
 		}
 		// ignore_nodes 指定時のみ、適用結果のフィードバックを返す
 		if len(ignoreList) > 0 {
@@ -227,11 +228,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		responseMap = map[string]interface{}{
-			"status":          status,
-			"mode":            "perceptual",
-			"match_rate":      fmt.Sprintf("%.2f%%", matchRate),
-			"details":         fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate),
-			"diff_image_path": diffImagePath,
+			"status":           status,
+			"mode":             "perceptual",
+			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
+			"match_rate_value": matchRate,
+			"details":          fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate),
+			"diff_image_path":  diffImagePath,
 		}
 
 	case "strict":
@@ -275,12 +277,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		responseMap = map[string]interface{}{
-			"status":       status,
-			"mode":         "strict",
-			"match_rate":   fmt.Sprintf("%.2f%%", matchRate),
-			"total_pixels": totalPixels,
-			"diff_pixels":  diffPixels,
-			"diff_image":   diffImage,
+			"status":           status,
+			"mode":             "strict",
+			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
+			"match_rate_value": matchRate,
+			"total_pixels":     totalPixels,
+			"diff_pixels":      diffPixels,
+			"diff_image":       diffImage,
 		}
 
 	default:

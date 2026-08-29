@@ -843,4 +843,197 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Errorf("Expected size mismatch error message, got %v", msg)
 		}
 	})
+
+	// =================================================================
+	// 5. match_rate_value (数値フィールド) のテスト
+	// =================================================================
+	// 各モードの応答に、表示用 match_rate (文字列) に加えて 0〜100 の実数
+	// match_rate_value が含まれ、pass_rate 等の閾値と直接大小比較できることを確認する。
+	t.Run("MatchRateValue_Numeric", func(t *testing.T) {
+		// layout_tree: nav の位置がズレている (一致率 66.67%)
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"},
+			{"id": "3", "name": "nav", "x": 600, "y": 10, "w": 380, "h": 80, "parent": "1"}
+		]`
+		webLayoutNavShifted := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".nav", "x": 200, "y": 10, "w": 380, "h": 80, "parent": "#header"}
+		]`
+
+		// pass_rate=50 なら一致率 (66.67%) 以上なので success
+		reqTreePass := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutNavShifted,
+					"threshold":    0.15,
+					"pass_rate":    50.0,
+				},
+			},
+		}
+		resTreePass, err := compareDesignHandler(context.Background(), reqTreePass)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultTreePass map[string]interface{}
+		json.Unmarshal([]byte(resTreePass.Content[0].(mcp.TextContent).Text), &resultTreePass)
+		if resultTreePass["status"] != "success" {
+			t.Errorf("Expected layout_tree success with pass_rate=50, got status=%v", resultTreePass["status"])
+		}
+		treePassValue, ok := resultTreePass["match_rate_value"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric match_rate_value for layout_tree, got %T: %v", resultTreePass["match_rate_value"], resultTreePass["match_rate_value"])
+		}
+		if treePassValue < 0.0 || treePassValue > 100.0 {
+			t.Errorf("Expected match_rate_value within 0.0-100.0, got %v", treePassValue)
+		}
+		// pass_rate (50.0) と直接大小比較でき、status と整合する
+		if treePassValue < 50.0 {
+			t.Errorf("Expected match_rate_value >= pass_rate=50.0 on success, got %v", treePassValue)
+		}
+		if _, ok := resultTreePass["match_rate"].(string); !ok {
+			t.Errorf("Expected display match_rate to remain a string, got %T", resultTreePass["match_rate"])
+		}
+
+		// pass_rate=70 なら一致率 (66.67%) 未満なので mismatch
+		reqTreeFail := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutNavShifted,
+					"threshold":    0.15,
+					"pass_rate":    70.0,
+				},
+			},
+		}
+		resTreeFail, err := compareDesignHandler(context.Background(), reqTreeFail)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultTreeFail map[string]interface{}
+		json.Unmarshal([]byte(resTreeFail.Content[0].(mcp.TextContent).Text), &resultTreeFail)
+		if resultTreeFail["status"] != "mismatch" {
+			t.Errorf("Expected layout_tree mismatch with pass_rate=70, got status=%v", resultTreeFail["status"])
+		}
+		treeFailValue, ok := resultTreeFail["match_rate_value"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric match_rate_value for layout_tree, got %T: %v", resultTreeFail["match_rate_value"], resultTreeFail["match_rate_value"])
+		}
+		// pass_rate (70.0) と直接大小比較でき、status と整合する
+		if treeFailValue >= 70.0 {
+			t.Errorf("Expected match_rate_value < pass_rate=70.0 on mismatch, got %v", treeFailValue)
+		}
+
+		// perceptual: 微小な輝度差なら default min_match (98.0) 以上で success
+		reqPerceptualPass := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+				},
+			},
+		}
+		resPerceptualPass, err := compareDesignHandler(context.Background(), reqPerceptualPass)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultPerceptualPass map[string]interface{}
+		json.Unmarshal([]byte(resPerceptualPass.Content[0].(mcp.TextContent).Text), &resultPerceptualPass)
+		if resultPerceptualPass["status"] != "success" {
+			t.Errorf("Expected perceptual success with default min_match, got status=%v", resultPerceptualPass["status"])
+		}
+		perceptualPassValue, ok := resultPerceptualPass["match_rate_value"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric match_rate_value for perceptual, got %T: %v", resultPerceptualPass["match_rate_value"], resultPerceptualPass["match_rate_value"])
+		}
+		// min_match (デフォルト 98.0) と直接大小比較でき、status と整合する
+		if perceptualPassValue < 98.0 {
+			t.Errorf("Expected match_rate_value >= 98.0 (default min_match) on success, got %v", perceptualPassValue)
+		}
+		if _, ok := resultPerceptualPass["match_rate"].(string); !ok {
+			t.Errorf("Expected display match_rate to remain a string, got %T", resultPerceptualPass["match_rate"])
+		}
+
+		// perceptual: 配置が異なる (左右 vs 上下) ため mismatch
+		reqPerceptualFail := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathD, // 配置が異なる (左右 vs 上下)
+				},
+			},
+		}
+		resPerceptualFail, err := compareDesignHandler(context.Background(), reqPerceptualFail)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultPerceptualFail map[string]interface{}
+		json.Unmarshal([]byte(resPerceptualFail.Content[0].(mcp.TextContent).Text), &resultPerceptualFail)
+		if resultPerceptualFail["status"] != "mismatch" {
+			t.Errorf("Expected perceptual mismatch, got status=%v", resultPerceptualFail["status"])
+		}
+		perceptualFailValue, ok := resultPerceptualFail["match_rate_value"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric match_rate_value for perceptual, got %T: %v", resultPerceptualFail["match_rate_value"], resultPerceptualFail["match_rate_value"])
+		}
+		// min_match (デフォルト 98.0) と直接大小比較でき、status と整合する
+		if perceptualFailValue >= 98.0 {
+			t.Errorf("Expected match_rate_value < 98.0 (default min_match) on mismatch, got %v", perceptualFailValue)
+		}
+		if _, ok := resultPerceptualFail["match_rate"].(string); !ok {
+			t.Errorf("Expected display match_rate to remain a string, got %T", resultPerceptualFail["match_rate"])
+		}
+
+		// strict: 全画素に色差があるため diff_pixels > 0、一致率は 100% 未満
+		reqStrict := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathA,
+					"image_path_b": pathC, // 色の差があるため不一致
+				},
+			},
+		}
+		resStrict, err := compareDesignHandler(context.Background(), reqStrict)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultStrict map[string]interface{}
+		json.Unmarshal([]byte(resStrict.Content[0].(mcp.TextContent).Text), &resultStrict)
+		if resultStrict["status"] != "mismatch" {
+			t.Errorf("Expected strict mismatch, got status=%v", resultStrict["status"])
+		}
+		strictValue, ok := resultStrict["match_rate_value"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric match_rate_value for strict, got %T: %v", resultStrict["match_rate_value"], resultStrict["match_rate_value"])
+		}
+		totalPixels, ok := resultStrict["total_pixels"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric total_pixels, got %T", resultStrict["total_pixels"])
+		}
+		diffPixels, ok := resultStrict["diff_pixels"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric diff_pixels, got %T", resultStrict["diff_pixels"])
+		}
+		if diffPixels <= 0 {
+			t.Fatalf("Expected positive diff_pixels, got %v", diffPixels)
+		}
+		// total_pixels / diff_pixels から算出される実数値と一致すること (文字列をパースしていない)
+		expectedStrict := (totalPixels - diffPixels) / totalPixels * 100.0
+		if strictValue != expectedStrict {
+			t.Errorf("Expected match_rate_value=%v from total/diff pixels, got %v", expectedStrict, strictValue)
+		}
+		if strictValue >= 100.0 {
+			t.Errorf("Expected match_rate_value < 100.0 when diff_pixels > 0, got %v", strictValue)
+		}
+		if _, ok := resultStrict["match_rate"].(string); !ok {
+			t.Errorf("Expected display match_rate to remain a string, got %T", resultStrict["match_rate"])
+		}
+	})
 }
