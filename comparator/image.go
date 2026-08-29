@@ -56,12 +56,6 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64) (float64, int
 	return matchRate, totalPixels, diffCount, diffDataURI, nil
 }
 
-// CalculateLayoutSimilarity calculates structural template matching using aHash (16x16)
-func CalculateLayoutSimilarity(imgA, imgB image.Image) float64 {
-	rate, _, _ := CalculateLayoutSimilarityWithDiff(imgA, imgB)
-	return rate
-}
-
 // CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and writes a
 // diff-visualization PNG to a temp file. Each cell is rendered as a 16x16 pixel block
 // (256x256 total): matching cells show the grayscale value from image A; mismatching
