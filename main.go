@@ -149,10 +149,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		responseMap = map[string]interface{}{
-			"status":     treeResult.Status,
-			"mode":       "layout_tree",
-			"match_rate": fmt.Sprintf("%.2f%%", treeResult.MatchRate),
-			"details":    treeResult.Details,
+			"status":        treeResult.Status,
+			"mode":          "layout_tree",
+			"match_rate":    fmt.Sprintf("%.2f%%", treeResult.MatchRate),
+			"matched_nodes": treeResult.MatchedNodes,
+			"total_nodes":   treeResult.TotalNodes,
+			"details":       treeResult.Details,
 		}
 		// ignore_nodes 指定時のみ、適用結果のフィードバックを返す
 		if len(ignoreList) > 0 {
