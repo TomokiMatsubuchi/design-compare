@@ -63,6 +63,9 @@ func main() {
 		mcp.WithNumber("max_diff_pixels",
 			mcp.Description("Maximum number of differing pixels allowed to still report success in 'strict' mode. Default 0 (any pixel difference causes mismatch). Useful to tolerate a few pixels of anti-aliasing or environment differences."),
 		),
+		mcp.WithBoolean("generate_diff",
+			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image_path' (perceptual) / 'diff_image' (strict) are empty. Useful for long-running servers to avoid temp file growth."),
+		),
 	)
 	s.AddTool(compareDesignTool, compareDesignHandler)
 
@@ -219,7 +222,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v", err)), nil
 		}
 
-		matchRate, diffImagePath, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB)
+		matchRate, diffImagePath, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
@@ -266,7 +269,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold)
+		matchRate, totalPixels, diffPixels, diffImage, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}

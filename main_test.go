@@ -488,6 +488,32 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// generate_diff=false で差分画像の生成を省略し、temp ファイルを作らない
+	t.Run("Perceptual_GenerateDiff_False", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathA,
+					"image_path_b":  pathD,
+					"generate_diff": false,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] == "" {
+			t.Errorf("Expected a comparison result with generate_diff=false, got %v", result)
+		}
+		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath != "" {
+			t.Errorf("Expected empty diff_image_path with generate_diff=false, got %v", result["diff_image_path"])
+		}
+	})
+
 	t.Run("Perceptual_Threshold_Too_Low", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -810,6 +836,35 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected strict mode mismatch, got status=%v", result["status"])
+		}
+		if diffImage, ok := result["diff_image"].(string); !ok || diffImage == "" {
+			t.Errorf("Expected non-empty diff_image, got %v", result["diff_image"])
+		}
+	})
+
+	// generate_diff=false で差分画像 (base64) を返さない
+	t.Run("StrictMode_GenerateDiff_False", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "strict",
+					"image_path_a":  pathA,
+					"image_path_b":  pathC,
+					"generate_diff": false,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Errorf("Expected strict mode mismatch, got status=%v", result["status"])
+		}
+		if diffImage, ok := result["diff_image"].(string); !ok || diffImage != "" {
+			t.Errorf("Expected empty diff_image with generate_diff=false, got %v", result["diff_image"])
 		}
 	})
 
