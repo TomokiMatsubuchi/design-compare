@@ -15,8 +15,10 @@ import (
 	"github.com/orisano/pixelmatch"
 )
 
-// RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64) (float64, int, int, string, error) {
+// RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
+// generateDiff is false, the diff image is not rendered and an empty string
+// is returned instead of its base64 data URI.
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool) (float64, int, int, string, error) {
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
 		return 0, 0, 0, "", fmt.Errorf("failed to decode design image: %w", err)
@@ -35,15 +37,24 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64) (float64, int
 	w, h := bounds.Dx(), bounds.Dy()
 	totalPixels := w * h
 
-	var diffImg image.Image = image.NewRGBA(bounds)
-
-	diffCount, err := pixelmatch.MatchPixel(normA, normB,
+	opts := []pixelmatch.MatchOption{
 		pixelmatch.Threshold(threshold),
-		pixelmatch.WriteTo(&diffImg),
 		pixelmatch.IncludeAntiAlias,
-	)
+	}
+	var diffImg image.Image
+	if generateDiff {
+		diffImg = image.NewRGBA(bounds)
+		opts = append(opts, pixelmatch.WriteTo(&diffImg))
+	}
+
+	diffCount, err := pixelmatch.MatchPixel(normA, normB, opts...)
 	if err != nil {
 		return 0, 0, 0, "", fmt.Errorf("pixelmatch error: %w", err)
+	}
+
+	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
+	if !generateDiff {
+		return matchRate, totalPixels, diffCount, "", nil
 	}
 
 	var buf bytes.Buffer
@@ -52,15 +63,15 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64) (float64, int
 	}
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
 	return matchRate, totalPixels, diffCount, diffDataURI, nil
 }
 
-// CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and writes a
-// diff-visualization PNG to a temp file. Each cell is rendered as a 16x16 pixel block
-// (256x256 total): matching cells show the grayscale value from image A; mismatching
-// cells are highlighted in red. Returns the match rate, diff file path, and error.
-func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image) (float64, string, error) {
+// CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and, when
+// generateDiff is true, writes a diff-visualization PNG to a temp file. Each cell is
+// rendered as a 16x16 pixel block (256x256 total): matching cells show the grayscale
+// value from image A; mismatching cells are highlighted in red. Returns the match
+// rate and an empty diff file path when generateDiff is false.
+func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool) (float64, string, error) {
 	grayA := resizeTo16x16Gray(imgA)
 	grayB := resizeTo16x16Gray(imgB)
 
@@ -73,7 +84,10 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image) (float64, string,
 	avgB := byte(sumB / 256)
 
 	const cellScale = 16 // each aHash cell rendered as 16x16 px → 256x256 image
-	diffImg := image.NewRGBA(image.Rect(0, 0, 16*cellScale, 16*cellScale))
+	var diffImg *image.RGBA
+	if generateDiff {
+		diffImg = image.NewRGBA(image.Rect(0, 0, 16*cellScale, 16*cellScale))
+	}
 
 	diffBits := 0
 	for y := 0; y < 16; y++ {
@@ -86,31 +100,36 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image) (float64, string,
 				diffBits++
 			}
 
-			var clr color.Color
-			if diff {
-				clr = color.RGBA{255, 0, 0, 255} // red highlight for mismatched cells
-			} else {
-				v := grayA[i]
-				clr = color.RGBA{v, v, v, 255} // grayscale from image A
+			if generateDiff {
+				var clr color.Color
+				if diff {
+					clr = color.RGBA{255, 0, 0, 255} // red highlight for mismatched cells
+				} else {
+					v := grayA[i]
+					clr = color.RGBA{v, v, v, 255} // grayscale from image A
+				}
+				rect := image.Rect(x*cellScale, y*cellScale, (x+1)*cellScale, (y+1)*cellScale)
+				draw.Draw(diffImg, rect, &image.Uniform{clr}, image.Point{}, draw.Src)
 			}
-			rect := image.Rect(x*cellScale, y*cellScale, (x+1)*cellScale, (y+1)*cellScale)
-			draw.Draw(diffImg, rect, &image.Uniform{clr}, image.Point{}, draw.Src)
 		}
 	}
 
-	tmpDir := os.TempDir()
-	diffFile, err := os.CreateTemp(tmpDir, "perceptual-diff-*.png")
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to create diff file: %w", err)
-	}
-	defer diffFile.Close()
+	var diffPath string
+	if generateDiff {
+		diffFile, err := os.CreateTemp(os.TempDir(), "perceptual-diff-*.png")
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to create diff file: %w", err)
+		}
+		defer diffFile.Close()
 
-	if err := png.Encode(diffFile, diffImg); err != nil {
-		return 0, "", fmt.Errorf("failed to encode diff PNG: %w", err)
+		if err := png.Encode(diffFile, diffImg); err != nil {
+			return 0, "", fmt.Errorf("failed to encode diff PNG: %w", err)
+		}
+		diffPath = diffFile.Name()
 	}
 
 	similarity := float64(256-diffBits) / 256.0 * 100.0
-	return similarity, diffFile.Name(), nil
+	return similarity, diffPath, nil
 }
 
 func resizeTo16x16Gray(img image.Image) []byte {
