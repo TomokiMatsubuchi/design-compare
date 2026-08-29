@@ -173,6 +173,13 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 	}
 
+	// 1対1マッチング後に使用されなかったWebノード（実装側の余分な要素）を報告する
+	for wi, wn := range wNodes {
+		if !usedWeb[wi] {
+			details = append(details, fmt.Sprintf("Web Node '%s' did not match any Figma node (extra element in implementation)", wn.Selector))
+		}
+	}
+
 	matchRate := (float64(matchedCount) / float64(totalCompared)) * 100.0
 	status := "success"
 	if matchRate < passRate { // 合格ライン（パラメータ化）

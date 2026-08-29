@@ -381,6 +381,63 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.6. layout_tree モード: Web側未マッチノードの報告テスト
+	// =================================================================
+	t.Run("LayoutTree_UnmatchedWebNode", func(t *testing.T) {
+		// Figma側に2ノード、Web側に3ノード（余分な .banner がある）。
+		// Figmaノードはすべてマッチするが、.banner はどのFigmaノードにも
+		// 対応付けられないため、details に報告されるはず。
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"}
+		]`
+
+		webLayoutExtra := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".banner", "x": 400, "y": 300, "w": 200, "h": 100, "parent": "#header"}
+		]`
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutExtra,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+
+		// Figma側のノードはすべてマッチするため一致率は100%
+		if result["status"] != "success" || result["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match (all Figma nodes matched), got status=%v, rate=%v", result["status"], result["match_rate"])
+		}
+
+		// 余分な .banner が未マッチWebノードとして details に報告されるはず
+		details, ok := result["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array in result, got %v", result["details"])
+		}
+		found := false
+		for _, d := range details {
+			if s, ok := d.(string); ok && strings.Contains(s, ".banner") && strings.Contains(s, "did not match any Figma node") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected details to report unmatched Web node '.banner', got %v", details)
+		}
+	})
+
+	// =================================================================
 	// 2. perceptual モード (知覚的画像比較) のテスト
 	// =================================================================
 	t.Run("Perceptual_Layout_Match", func(t *testing.T) {
