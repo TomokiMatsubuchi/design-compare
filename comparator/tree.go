@@ -29,6 +29,8 @@ type LayoutTreeResult struct {
 	MatchRate        float64  `json:"match_rate"`
 	Status           string   `json:"status"`
 	Details          []string `json:"details"`
+	MatchedNodes     int      `json:"matched_nodes"`
+	TotalNodes       int      `json:"total_nodes"`
 	IgnoredCount     int      `json:"ignored_count"`
 	UnmatchedIgnores []string `json:"unmatched_ignores,omitempty"`
 }
@@ -185,6 +187,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		MatchRate:        matchRate,
 		Status:           status,
 		Details:          details,
+		MatchedNodes:     matchedCount,
+		TotalNodes:       totalCompared,
 		IgnoredCount:     ignoredCount,
 		UnmatchedIgnores: unmatchedIgnores,
 	}, nil

@@ -123,6 +123,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultMatch["status"] != "success" || resultMatch["match_rate"] != "100.00%" {
 			t.Errorf("Expected LayoutTree success and 100%% match, got status=%v, rate=%v", resultMatch["status"], resultMatch["match_rate"])
 		}
+		// 構造化されたノード数フィールドの検証
+		if got := resultMatch["matched_nodes"]; got != float64(3) {
+			t.Errorf("Expected matched_nodes=3, got %v", got)
+		}
+		if got := resultMatch["total_nodes"]; got != float64(3) {
+			t.Errorf("Expected total_nodes=3, got %v", got)
+		}
 
 		// B: 不一致になるはずのケース
 		reqMismatch := mcp.CallToolRequest{
@@ -143,6 +150,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(resMismatch.Content[0].(mcp.TextContent).Text), &resultMismatch)
 		if resultMismatch["status"] != "mismatch" {
 			t.Errorf("Expected LayoutTree mismatch, got status=%v", resultMismatch["status"])
+		}
+		// nav が不一致で、header と logo の2ノードのみ一致
+		if got := resultMismatch["matched_nodes"]; got != float64(2) {
+			t.Errorf("Expected matched_nodes=2, got %v", got)
+		}
+		if got := resultMismatch["total_nodes"]; got != float64(3) {
+			t.Errorf("Expected total_nodes=3, got %v", got)
 		}
 
 		// C: 除外項目を指定して一致させるケース (Figma node名 "nav" または Web selector ".nav" を除外)
