@@ -107,3 +107,13 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
    Retinaディスプレイ環境と非Retina環境では、スクリーンショットの画素数や縮小処理時のブレンドピクセルが変化します。
 3. **GPUハードウェアアクセラレーションの差:**
    ブラウザのGPUレンダリングによって、グラデーションや色の境界部分で数カラー値の微差が生じることがあります。
+
+---
+
+## 6. 破壊的変更 (Breaking Changes)
+
+### `diff_image_path` → `diff_image` （フィールド名変更）
+
+`perceptual` モードのレスポンスにおいて、差分画像のフィールド名を `diff_image_path` から `diff_image` に変更しました。`strict` モードと命名を統一し、いずれのモードでも base64 data URI 形式で返却するようになりました。
+
+**影響:** 既存クライアントが `diff_image_path` を参照している場合、フィールド名の更新が必要です。
