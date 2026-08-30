@@ -462,6 +462,14 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath == "" {
 			t.Errorf("Expected non-empty diff_image_path, got %v", result["diff_image_path"])
 		}
+		// details は全モードで文字列配列に統一されている (perceptual は単一要素)
+		details, ok := result["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array in perceptual result, got %v", result["details"])
+		}
+		if len(details) != 1 {
+			t.Errorf("Expected 1 detail entry in perceptual result, got %d: %v", len(details), details)
+		}
 	})
 
 	t.Run("Perceptual_Layout_Mismatch", func(t *testing.T) {
@@ -839,6 +847,14 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if diffImage, ok := result["diff_image"].(string); !ok || diffImage == "" {
 			t.Errorf("Expected non-empty diff_image, got %v", result["diff_image"])
+		}
+		// details は全モードで文字列配列に統一されている (strict も配列で返す)
+		details, ok := result["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array in strict result, got %v", result["details"])
+		}
+		if len(details) != 1 {
+			t.Errorf("Expected 1 detail entry in strict result, got %d: %v", len(details), details)
 		}
 	})
 
