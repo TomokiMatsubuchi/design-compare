@@ -35,13 +35,15 @@ type LayoutTreeResult struct {
 	UnmatchedIgnores []string `json:"unmatched_ignores,omitempty"`
 }
 
-// CompareLayoutTrees performs structural layout comparison on element hierarchies
-func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string) (*LayoutTreeResult, error) {
+// CompareLayoutTrees performs structural layout comparison on element hierarchies.
+// countExtraWeb が true の場合、どの Figma ノードにもマッチしなかった Web ノード
+// （実装側の余分な要素）を一致率の分母 (totalCompared) に加算する。
+func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool) (*LayoutTreeResult, error) {
 	if tolerance < 0 {
-		tolerance = 0.15 // デフォルト許容差 15%
+		tolerance = 0.15 // デフォルト許容差 15% (0 は有効値: 完全一致を要求)
 	}
 	if passRate < 0 {
-		passRate = 98.0 // デフォルト合格ライン 98%
+		passRate = 98.0 // デフォルト合格ライン 98% (0 は有効値: 常に合格)
 	}
 
 	var fNodes []FigmaNode
@@ -107,10 +109,38 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	}
 
 	if len(fNodes) == 0 || len(wNodes) == 0 {
+		// ignore_nodes により比較対象が全件除外された場合は、実装不一致と区別して
+		// skipped ステータスで「比較できなかった」ことを明示する。
+		if ignoredCount > 0 {
+			side := "Figma and Web"
+			switch {
+			case len(fNodes) == 0 && len(wNodes) != 0:
+				side = "Figma"
+			case len(fNodes) != 0 && len(wNodes) == 0:
+				side = "Web"
+			}
+			return &LayoutTreeResult{
+				MatchRate:        0,
+				Status:           "skipped",
+				Details:          []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
+				IgnoredCount:     ignoredCount,
+				UnmatchedIgnores: unmatchedIgnores,
+			}, nil
+		}
+		// どちら側の入力が空かを明示する。
+		var emptyDetail string
+		switch {
+		case len(fNodes) == 0 && len(wNodes) == 0:
+			emptyDetail = "Both Figma and Web layout node data are empty"
+		case len(fNodes) == 0:
+			emptyDetail = "Figma layout node data is empty"
+		default:
+			emptyDetail = "Web layout node data is empty"
+		}
 		return &LayoutTreeResult{
 			MatchRate:        0,
 			Status:           "mismatch",
-			Details:          []string{"Empty layout node data provided"},
+			Details:          []string{emptyDetail},
 			IgnoredCount:     ignoredCount,
 			UnmatchedIgnores: unmatchedIgnores,
 		}, nil
@@ -119,7 +149,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 2. マッチング処理
 	var matchedCount int
 	var totalCompared int
-	var details []string
+	var matchedPairDetails []string
+	var mismatchDetails []string
+	var extraWebDetails []string
 
 	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
 	usedWeb := make(map[int]bool)
@@ -168,15 +200,27 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			if bestMatchIdx >= 0 {
 				usedWeb[bestMatchIdx] = true
 			}
+			// 一致したペア（Figmaノード名 ↔ Webセレクタ）を details に出力する。
+			matchedPairDetails = append(matchedPairDetails, fmt.Sprintf("Matched: '%s' ↔ '%s'", fn.Name, bestMatchSelector))
 		} else {
-			details = append(details, fmt.Sprintf("Figma Node '%s' (type config mismatch or position shifted) did not match closest Web element '%s' (diff: %.2f, dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' (type config mismatch or position shifted) did not match closest Web element '%s' (diff: %.2f, dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
 		}
 	}
 
 	// 1対1マッチング後に使用されなかったWebノード（実装側の余分な要素）を報告する
 	for wi, wn := range wNodes {
 		if !usedWeb[wi] {
-			details = append(details, fmt.Sprintf("Web Node '%s' did not match any Figma node (extra element in implementation)", wn.Selector))
+			extraWebDetails = append(extraWebDetails, fmt.Sprintf("Web Node '%s' did not match any Figma node (extra element in implementation)", wn.Selector))
+		}
+	}
+
+	// countExtraWeb=true の場合、未マッチのWebノード（実装側の余分な要素）を一致率の
+	// 分母 (totalCompared) に加算し、余分な要素が一致率に反映されるようにする。
+	if countExtraWeb {
+		for wi := range wNodes {
+			if !usedWeb[wi] {
+				totalCompared++
+			}
 		}
 	}
 
@@ -188,7 +232,11 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 	// 構造化ディテール作成
 	summaryDetail := fmt.Sprintf("Matched %d out of %d layout nodes.", matchedCount, totalCompared)
-	details = append([]string{summaryDetail}, details...)
+
+	details := []string{summaryDetail}
+	details = append(details, matchedPairDetails...)
+	details = append(details, mismatchDetails...)
+	details = append(details, extraWebDetails...)
 
 	return &LayoutTreeResult{
 		MatchRate:        matchRate,
@@ -231,7 +279,10 @@ func getFigmaRelativeCoords(n FigmaNode, parent *FigmaNode) (x, y, w, h float64)
 		return n.X, n.Y, n.W, n.H
 	}
 	if parent.W == 0 || parent.H == 0 {
-		return 0, 0, 0, 0
+		// サイズ0の親に対する相対比率は定義できない（0除算相当）。
+		// 従来は (0,0,0,0) を返すため両側が常に一致扱いになり一致率が水増しされていた。
+		// 絶対座標にフォールバックして誤一致を防ぐ。
+		return n.X, n.Y, n.W, n.H
 	}
 	// 親に対する相対比率（比率を統一することで、レスポンシブなサイズ違いを吸収）
 	return (n.X - parent.X) / parent.W, (n.Y - parent.Y) / parent.H, n.W / parent.W, n.H / parent.H
@@ -242,7 +293,9 @@ func getWebRelativeCoords(n WebNode, parent *WebNode) (x, y, w, h float64) {
 		return n.X, n.Y, n.W, n.H
 	}
 	if parent.W == 0 || parent.H == 0 {
-		return 0, 0, 0, 0
+		// サイズ0の親に対する相対比率は定義できない（0除算相当）。
+		// 絶対座標にフォールバックして誤一致を防ぐ。
+		return n.X, n.Y, n.W, n.H
 	}
 	return (n.X - parent.X) / parent.W, (n.Y - parent.Y) / parent.H, n.W / parent.W, n.H / parent.H
 }
