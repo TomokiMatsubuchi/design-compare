@@ -235,7 +235,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"status":          status,
 			"mode":            "perceptual",
 			"match_rate":      fmt.Sprintf("%.2f%%", matchRate),
-			"details":         fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate),
+			"details":         []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate)},
 			"diff_image_path": diffImagePath,
 		}
 
@@ -285,6 +285,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"match_rate":   fmt.Sprintf("%.2f%%", matchRate),
 			"total_pixels": totalPixels,
 			"diff_pixels":  diffPixels,
+			"details":      []string{fmt.Sprintf("Strict pixel comparison. %d of %d pixels differ (max allowed: %d).", diffPixels, totalPixels, maxDiffPixels)},
 			"diff_image":   diffImage,
 		}
 
