@@ -627,6 +627,170 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.9.1. layout_tree モード: 片側だけ絶対座標モードの場合の対称な比較
+	// =================================================================
+	// 親なし（またはサイズ0の親）のノードは絶対座標モード、通常の親を持つノードは
+	// 相対比率 (0-1) モードで比較される。従来はペアの片側だけ絶対座標モードの場合に
+	// 絶対px値と比率を直接比較して常に不一致になっていたが、両側を絶対座標にそろえる
+	// ことで対称化されることを検証する。
+	t.Run("LayoutTree_MixedModeSymmetricCompare", func(t *testing.T) {
+		// ケース1: Figma側の親参照がリスト内に存在しない（親なし扱い = 絶対座標モード）、
+		// Web側は通常の親（相対比率モード）。絶対座標が同一なら一致する。
+		// 修正前は (100,100,50,50) vs 比率 (0.2,0.2,0.1,0.1) の非対称比較で必ず不一致だった。
+		figmaOrphanParent := `[
+			{"id": "2", "name": "child", "x": 100, "y": 100, "w": 50, "h": 50, "parent": "1"}
+		]`
+		webNormalParent := `[
+			{"selector": "#wrapper", "x": 0, "y": 0, "w": 500, "h": 500},
+			{"selector": ".child", "x": 100, "y": 100, "w": 50, "h": 50, "parent": "#wrapper"}
+		]`
+		req1 := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaOrphanParent,
+					"web_layout":   webNormalParent,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res1, err := compareDesignHandler(context.Background(), req1)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result1 map[string]interface{}
+		json.Unmarshal([]byte(res1.Content[0].(mcp.TextContent).Text), &result1)
+		if result1["status"] != "success" || result1["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match for symmetric absolute compare, got status=%v, rate=%v", result1["status"], result1["match_rate"])
+		}
+		if got := result1["matched_nodes"]; got != float64(1) {
+			t.Errorf("Expected matched_nodes=1, got %v", got)
+		}
+
+		// ケース2: 同じ構成だが絶対座標が実際に異なる場合は不一致のまま
+		// （対称化によって誤一致が生まれないことの保証）
+		webShifted := `[
+			{"selector": "#wrapper", "x": 0, "y": 0, "w": 500, "h": 500},
+			{"selector": ".child", "x": 300, "y": 200, "w": 50, "h": 50, "parent": "#wrapper"}
+		]`
+		req2 := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaOrphanParent,
+					"web_layout":   webShifted,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res2, err := compareDesignHandler(context.Background(), req2)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result2 map[string]interface{}
+		json.Unmarshal([]byte(res2.Content[0].(mcp.TextContent).Text), &result2)
+		if result2["status"] != "mismatch" {
+			t.Errorf("Expected mismatch when absolute coords differ, got status=%v, rate=%v", result2["status"], result2["match_rate"])
+		}
+		if got := result2["matched_nodes"]; got != float64(0) {
+			t.Errorf("Expected matched_nodes=0, got %v", got)
+		}
+
+		// ケース3: Figma側だけサイズ0の親（絶対座標モード）、Web側は通常の親。
+		// 子の絶対座標が同じなら一致ペアが作られる（0x0のcollapsed自体は不一致のまま）。
+		figmaZeroParent := `[
+			{"id": "1", "name": "collapsed", "x": 0, "y": 0, "w": 0, "h": 0},
+			{"id": "2", "name": "child", "x": 100, "y": 100, "w": 50, "h": 50, "parent": "1"}
+		]`
+		req3 := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaZeroParent,
+					"web_layout":   webNormalParent,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res3, err := compareDesignHandler(context.Background(), req3)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result3 map[string]interface{}
+		json.Unmarshal([]byte(res3.Content[0].(mcp.TextContent).Text), &result3)
+		if got := result3["matched_nodes"]; got != float64(1) {
+			t.Errorf("Expected matched_nodes=1 (child pair), got %v", got)
+		}
+		if got := result3["total_nodes"]; got != float64(2) {
+			t.Errorf("Expected total_nodes=2, got %v", got)
+		}
+		if result3["match_rate"] != "50.00%" {
+			t.Errorf("Expected match_rate=50.00%% (1 of 2), got %v", result3["match_rate"])
+		}
+		details3, ok := result3["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array in result, got %v", result3["details"])
+		}
+		foundPair3 := false
+		for _, d := range details3 {
+			if s, ok := d.(string); ok && strings.Contains(s, "Matched: 'child' ↔ '.child'") {
+				foundPair3 = true
+				break
+			}
+		}
+		if !foundPair3 {
+			t.Errorf("Expected details to contain matched pair \"Matched: 'child' ↔ '.child'\", got %v", details3)
+		}
+
+		// ケース4: 逆向き - Figma側は通常の親（相対比率モード）、Web側だけサイズ0の親
+		// （絶対座標モード）。子の絶対座標が同じなら一致ペアが作られる。
+		figmaNormalParent := `[
+			{"id": "1", "name": "frame", "x": 0, "y": 0, "w": 500, "h": 500},
+			{"id": "2", "name": "child", "x": 100, "y": 100, "w": 50, "h": 50, "parent": "1"}
+		]`
+		webZeroParent := `[
+			{"selector": "#collapsed", "x": 0, "y": 0, "w": 0, "h": 0},
+			{"selector": ".child", "x": 100, "y": 100, "w": 50, "h": 50, "parent": "#collapsed"}
+		]`
+		req4 := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaNormalParent,
+					"web_layout":   webZeroParent,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res4, err := compareDesignHandler(context.Background(), req4)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result4 map[string]interface{}
+		json.Unmarshal([]byte(res4.Content[0].(mcp.TextContent).Text), &result4)
+		if got := result4["matched_nodes"]; got != float64(1) {
+			t.Errorf("Expected matched_nodes=1 (child pair), got %v", got)
+		}
+		if result4["match_rate"] != "50.00%" {
+			t.Errorf("Expected match_rate=50.00%% (1 of 2), got %v", result4["match_rate"])
+		}
+		details4, ok := result4["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array in result, got %v", result4["details"])
+		}
+		foundPair4 := false
+		for _, d := range details4 {
+			if s, ok := d.(string); ok && strings.Contains(s, "Matched: 'child' ↔ '.child'") {
+				foundPair4 = true
+				break
+			}
+		}
+		if !foundPair4 {
+			t.Errorf("Expected details to contain matched pair \"Matched: 'child' ↔ '.child'\", got %v", details4)
+		}
+	})
+
+	// =================================================================
 	// 2.10. layout_tree モード: 余分なWebノードの一致率反映 (count_extra_web)
 	// =================================================================
 	t.Run("LayoutTree_CountExtraWeb", func(t *testing.T) {
