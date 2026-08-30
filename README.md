@@ -110,10 +110,36 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 6. 破壊的変更 (Breaking Changes)
+## 6. セキュリティ上の注意（信頼モデル）
+
+本サーバーはローカル実行のMCPサーバーとして設計されています。以下のパラメータで指定された
+ファイルパスはそのまま解決され、**サーバープロセスの権限で**ローカルファイルシステムから
+読み込まれます（ディレクトリ制限やサンドボックス化は行われません）。
+
+- `image_path_a` / `image_path_b`（`perceptual` / `strict` モード）
+- `figma_layout_path` / `web_layout_path`（`layout_tree` モード）
+
+そのため、信頼できない入力に由来するパスをこれらのパラメータに渡す構成（例: 不特定多数の
+ユーザー入力をMCPクライアント経由で渡す、サーバーをネットワーク越しに公開する）では、
+任意のローカルファイルを読み取られる可能性があります（パストラバーサル的な読み取り）。
+
+安全に利用するための指針:
+
+1. 本サーバーを呼び出すMCPクライアント（Claude Desktop / Claude Code / Codex など）は、
+   ユーザー自身が設定した信頼できるものに限定してください。
+2. 本サーバーを信頼できないネットワーク越しに公開しないでください。
+3. 信頼できない入力を扱うシステムからファイルを渡す必要がある場合は、パスではなく
+   内容を直接渡せる `image_a_base64` / `image_b_base64`（base64文字列）や
+   `figma_layout` / `web_layout`（インラインJSON）を使用してください。
+
+---
+
+## 7. 破壊的変更 (Breaking Changes)
 
 ### `diff_image_path` → `diff_image` （フィールド名変更）
 
 `perceptual` モードのレスポンスにおいて、差分画像のフィールド名を `diff_image_path` から `diff_image` に変更しました。`strict` モードと命名を統一し、いずれのモードでも base64 data URI 形式で返却するようになりました。
 
 **影響:** 既存クライアントが `diff_image_path` を参照している場合、フィールド名の更新が必要です。
+
+なお `generate_diff` を `false` に指定した場合は差分画像を生成せず、`diff_image` は空文字列で返されます。
