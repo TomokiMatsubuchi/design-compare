@@ -79,6 +79,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	draw.Draw(imgD, image.Rect(0, 100, 200, 200), &image.Uniform{color.Black}, image.Point{}, draw.Src)
 	pathD := saveTempImage(t, tmpDir, "imageD.png", imgD)
 
+	// E: 200x200 白地に左上100x100の黒矩形 (ignore_region テスト用の既知差分領域)
+	imgE := image.NewRGBA(image.Rect(0, 0, 200, 200))
+	draw.Draw(imgE, imgE.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+	draw.Draw(imgE, image.Rect(0, 0, 100, 100), &image.Uniform{color.Black}, image.Point{}, draw.Src)
+	pathE := saveTempImage(t, tmpDir, "imageE.png", imgE)
+
+	// F: 200x200 全面白 (Eとの差分は左上100x100のみ)
+	imgF := generateSolidImage(200, 200, color.White)
+	pathF := saveTempImage(t, tmpDir, "imageF.png", imgF)
+
 	// =================================================================
 	// 1. layout_tree モード (構造ツリー比較) のテスト
 	// =================================================================
@@ -129,6 +139,35 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := resultMatch["total_nodes"]; got != float64(3) {
 			t.Errorf("Expected total_nodes=3, got %v", got)
+		}
+
+		// 数値一致率と実効パラメータの出力検証
+		if got := resultMatch["match_rate_value"]; got != float64(100) {
+			t.Errorf("Expected match_rate_value=100, got %v", got)
+		}
+		if got := resultMatch["effective_threshold"]; got != 0.15 {
+			t.Errorf("Expected effective_threshold=0.15, got %v", got)
+		}
+		if got := resultMatch["pass_rate"]; got != float64(98) {
+			t.Errorf("Expected pass_rate=98 (default), got %v", got)
+		}
+		if got := resultMatch["ignored_count"]; got != float64(0) {
+			t.Errorf("Expected ignored_count=0, got %v", got)
+		}
+		// 一致ペアが details に出力されることの検証
+		detailsMatch, ok := resultMatch["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array in result, got %v", resultMatch["details"])
+		}
+		foundPair := false
+		for _, d := range detailsMatch {
+			if s, ok := d.(string); ok && strings.Contains(s, "Matched: 'nav' ↔ '.nav'") {
+				foundPair = true
+				break
+			}
+		}
+		if !foundPair {
+			t.Errorf("Expected details to contain matched pair \"Matched: 'nav' ↔ '.nav'\", got %v", detailsMatch)
 		}
 
 		// B: 不一致になるはずのケース
@@ -438,6 +477,364 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.7. layout_tree モード: ignore_nodes で全件除外された場合の skipped
+	// =================================================================
+	t.Run("LayoutTree_AllIgnored_Skipped", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"}
+		]`
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"ignore_nodes": "header, #header, logo, .logo",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "skipped" {
+			t.Errorf("Expected skipped status when all nodes are excluded by ignore_nodes, got status=%v", result["status"])
+		}
+		if got := result["ignored_count"]; got != float64(4) {
+			t.Errorf("Expected ignored_count=4, got %v", got)
+		}
+		details, ok := result["details"].([]interface{})
+		if !ok || len(details) == 0 {
+			t.Fatalf("Expected details array, got %v", result["details"])
+		}
+		if s, ok := details[0].(string); !ok || !strings.Contains(s, "ignore_nodes") {
+			t.Errorf("Expected details to mention ignore_nodes exclusion, got %v", details)
+		}
+	})
+
+	// =================================================================
+	// 2.8. layout_tree モード: 空入力時にどちら側が空かを明示
+	// =================================================================
+	t.Run("LayoutTree_EmptySideMessages", func(t *testing.T) {
+		figmaOnly := `[{"id":"1","name":"a","x":0,"y":0,"w":100,"h":100}]`
+		webOnly := `[{"selector":".a","x":0,"y":0,"w":100,"h":100}]`
+
+		cases := []struct {
+			figma   string
+			web     string
+			wantMsg string
+		}{
+			{"[]", webOnly, "Figma layout node data is empty"},
+			{figmaOnly, "[]", "Web layout node data is empty"},
+			{"[]", "[]", "Both Figma and Web layout node data are empty"},
+		}
+		for _, c := range cases {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": c.figma,
+						"web_layout":   c.web,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "mismatch" {
+				t.Errorf("Expected mismatch for empty input (%q), got status=%v", c.wantMsg, result["status"])
+			}
+			details, ok := result["details"].([]interface{})
+			if !ok || len(details) != 1 {
+				t.Fatalf("Expected exactly 1 detail, got %v", result["details"])
+			}
+			if s, ok := details[0].(string); !ok || s != c.wantMsg {
+				t.Errorf("Expected detail %q, got %v", c.wantMsg, details[0])
+			}
+		}
+	})
+
+	// =================================================================
+	// 2.9. layout_tree モード: サイズ0の親を持つ子ノードの比較
+	// =================================================================
+	t.Run("LayoutTree_ZeroSizeParent", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "collapsed", "x": 0, "y": 0, "w": 0, "h": 0},
+			{"id": "2", "name": "child", "x": 10, "y": 10, "w": 50, "h": 50, "parent": "1"}
+		]`
+
+		// 子の絶対座標が大きく異なるケース: サイズ0の親を持つ子は従来 (0,0,0,0) 同士で
+		// 常に一致扱いになったが、絶対座標フォールバックにより不一致になる
+		webFar := `[
+			{"selector": "#collapsed", "x": 0, "y": 0, "w": 0, "h": 0},
+			{"selector": ".child", "x": 500, "y": 400, "w": 50, "h": 50, "parent": "#collapsed"}
+		]`
+		reqFar := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webFar,
+					"threshold":    0.15,
+				},
+			},
+		}
+		resFar, err := compareDesignHandler(context.Background(), reqFar)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultFar map[string]interface{}
+		json.Unmarshal([]byte(resFar.Content[0].(mcp.TextContent).Text), &resultFar)
+		if resultFar["status"] != "mismatch" {
+			t.Errorf("Expected mismatch when child of zero-size parent is far away, got status=%v, rate=%v", resultFar["status"], resultFar["match_rate"])
+		}
+
+		// 子の絶対座標が同じケース: 一致扱いになる
+		webSame := `[
+			{"selector": "#collapsed", "x": 0, "y": 0, "w": 0, "h": 0},
+			{"selector": ".child", "x": 10, "y": 10, "w": 50, "h": 50, "parent": "#collapsed"}
+		]`
+		reqSame := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webSame,
+					"threshold":    0.15,
+				},
+			},
+		}
+		resSame, err := compareDesignHandler(context.Background(), reqSame)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultSame map[string]interface{}
+		json.Unmarshal([]byte(resSame.Content[0].(mcp.TextContent).Text), &resultSame)
+		if resultSame["status"] != "success" || resultSame["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match for same absolute coords, got status=%v, rate=%v", resultSame["status"], resultSame["match_rate"])
+		}
+	})
+
+	// =================================================================
+	// 2.10. layout_tree モード: 余分なWebノードの一致率反映 (count_extra_web)
+	// =================================================================
+	t.Run("LayoutTree_CountExtraWeb", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"}
+		]`
+		webLayoutExtra := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".banner", "x": 400, "y": 300, "w": 200, "h": 100, "parent": "#header"}
+		]`
+
+		// count_extra_web=true: 余分な .banner が分母に加算され 2/3=66.67% で mismatch
+		reqOn := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "layout_tree",
+					"figma_layout":    figmaLayout,
+					"web_layout":      webLayoutExtra,
+					"threshold":       0.15,
+					"count_extra_web": true,
+				},
+			},
+		}
+		resOn, err := compareDesignHandler(context.Background(), reqOn)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOn map[string]interface{}
+		json.Unmarshal([]byte(resOn.Content[0].(mcp.TextContent).Text), &resultOn)
+		if resultOn["status"] != "mismatch" || resultOn["match_rate"] != "66.67%" {
+			t.Errorf("Expected mismatch with 66.67%% when count_extra_web=true, got status=%v, rate=%v", resultOn["status"], resultOn["match_rate"])
+		}
+		if got := resultOn["matched_nodes"]; got != float64(2) {
+			t.Errorf("Expected matched_nodes=2, got %v", got)
+		}
+		if got := resultOn["total_nodes"]; got != float64(3) {
+			t.Errorf("Expected total_nodes=3 (extra web node counted), got %v", got)
+		}
+
+		// count_extra_web 未指定 (デフォルト false): 一致率には影響しない
+		reqOff := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutExtra,
+					"threshold":    0.15,
+				},
+			},
+		}
+		resOff, err := compareDesignHandler(context.Background(), reqOff)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOff map[string]interface{}
+		json.Unmarshal([]byte(resOff.Content[0].(mcp.TextContent).Text), &resultOff)
+		if resultOff["status"] != "success" || resultOff["match_rate"] != "100.00%" {
+			t.Errorf("Expected success with 100%% when count_extra_web is off, got status=%v, rate=%v", resultOff["status"], resultOff["match_rate"])
+		}
+		if got := resultOff["total_nodes"]; got != float64(2) {
+			t.Errorf("Expected total_nodes=2 when count_extra_web is off, got %v", got)
+		}
+	})
+
+	// =================================================================
+	// 2.11. layout_tree モード: threshold=0 / pass_rate=0 は有効値
+	// =================================================================
+	t.Run("LayoutTree_ZeroThresholdAndPassRate", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"},
+			{"id": "3", "name": "nav", "x": 600, "y": 10, "w": 380, "h": 80, "parent": "1"}
+		]`
+		webLayoutCorrect := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".nav", "x": 600, "y": 10, "w": 380, "h": 80, "parent": "#header"}
+		]`
+		webLayoutIncorrect := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".nav", "x": 200, "y": 10, "w": 380, "h": 80, "parent": "#header"}
+		]`
+
+		// threshold=0 (完全一致要求) はデフォルト 0.15 へ上書きされず、正確に一致していれば成功
+		reqZeroT := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutCorrect,
+					"threshold":    0.0,
+				},
+			},
+		}
+		resZeroT, err := compareDesignHandler(context.Background(), reqZeroT)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultZeroT map[string]interface{}
+		json.Unmarshal([]byte(resZeroT.Content[0].(mcp.TextContent).Text), &resultZeroT)
+		if resultZeroT["status"] != "success" || resultZeroT["match_rate"] != "100.00%" {
+			t.Errorf("Expected success with threshold=0 for exact match, got status=%v, rate=%v", resultZeroT["status"], resultZeroT["match_rate"])
+		}
+
+		// pass_rate=0 はデフォルト 98.0 へ上書きされず、66.67% でも成功扱いになる
+		reqZeroP := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"pass_rate":    0.0,
+				},
+			},
+		}
+		resZeroP, err := compareDesignHandler(context.Background(), reqZeroP)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultZeroP map[string]interface{}
+		json.Unmarshal([]byte(resZeroP.Content[0].(mcp.TextContent).Text), &resultZeroP)
+		if resultZeroP["status"] != "success" {
+			t.Errorf("Expected success with pass_rate=0 despite 66.67%% match, got status=%v", resultZeroP["status"])
+		}
+	})
+
+	// =================================================================
+	// 2.12. layout_tree モード: レイアウトJSONのファイルパス指定
+	// =================================================================
+	t.Run("LayoutTree_LayoutFilePath", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"}
+		]`
+		figmaPath := filepath.Join(tmpDir, "figma-layout.json")
+		if err := os.WriteFile(figmaPath, []byte(figmaLayout), 0o644); err != nil {
+			t.Fatalf("failed to write figma layout file: %v", err)
+		}
+		webPath := filepath.Join(tmpDir, "web-layout.json")
+		if err := os.WriteFile(webPath, []byte(webLayout), 0o644); err != nil {
+			t.Fatalf("failed to write web layout file: %v", err)
+		}
+
+		// パス指定のみ: インライン指定と同等の結果になる
+		reqPath := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":              "layout_tree",
+					"figma_layout_path": figmaPath,
+					"web_layout_path":   webPath,
+				},
+			},
+		}
+		resPath, err := compareDesignHandler(context.Background(), reqPath)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultPath map[string]interface{}
+		json.Unmarshal([]byte(resPath.Content[0].(mcp.TextContent).Text), &resultPath)
+		if resultPath["status"] != "success" || resultPath["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match via layout file paths, got status=%v, rate=%v", resultPath["status"], resultPath["match_rate"])
+		}
+
+		// インラインとパスの同時指定はエラー
+		reqBoth := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":              "layout_tree",
+					"figma_layout":      figmaLayout,
+					"figma_layout_path": figmaPath,
+					"web_layout":        webLayout,
+				},
+			},
+		}
+		resBoth, err := compareDesignHandler(context.Background(), reqBoth)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resBoth.IsError {
+			t.Errorf("Expected error when both figma_layout and figma_layout_path are specified, got content=%v", resBoth.Content[0].(mcp.TextContent).Text)
+		}
+
+		// figma側をどちらも指定しない場合はエラー
+		reqNeither := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":       "layout_tree",
+					"web_layout": webLayout,
+				},
+			},
+		}
+		resNeither, err := compareDesignHandler(context.Background(), reqNeither)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resNeither.IsError {
+			t.Errorf("Expected error when neither figma_layout nor figma_layout_path is specified, got content=%v", resNeither.Content[0].(mcp.TextContent).Text)
+		}
+	})
+
+	// =================================================================
 	// 2. perceptual モード (知覚的画像比較) のテスト
 	// =================================================================
 	t.Run("Perceptual_Layout_Match", func(t *testing.T) {
@@ -459,8 +856,12 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "success" || result["match_rate"] != "100.00%" {
 			t.Errorf("Expected perceptual layout success, got status=%v, rate=%v", result["status"], result["match_rate"])
 		}
-		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath == "" {
-			t.Errorf("Expected non-empty diff_image_path, got %v", result["diff_image_path"])
+		if diffImg, ok := result["diff_image"].(string); !ok || !strings.HasPrefix(diffImg, "data:image/png;base64,") {
+			t.Errorf("Expected base64 diff_image data URI, got %v", result["diff_image"])
+		}
+		// 数値一致率フィールドの検証
+		if got := result["match_rate_value"]; got != float64(100) {
+			t.Errorf("Expected match_rate_value=100, got %v", got)
 		}
 		// details は全モードで文字列配列に統一されている (perceptual は単一要素)
 		details, ok := result["details"].([]interface{})
@@ -491,8 +892,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected perceptual layout mismatch, got status=%v", result["status"])
 		}
-		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath == "" {
-			t.Errorf("Expected non-empty diff_image_path, got %v", result["diff_image_path"])
+		if diffImg, ok := result["diff_image"].(string); !ok || !strings.HasPrefix(diffImg, "data:image/png;base64,") {
+			t.Errorf("Expected base64 diff_image data URI, got %v", result["diff_image"])
 		}
 	})
 
@@ -517,8 +918,79 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] == "" {
 			t.Errorf("Expected a comparison result with generate_diff=false, got %v", result)
 		}
-		if diffPath, ok := result["diff_image_path"].(string); !ok || diffPath != "" {
-			t.Errorf("Expected empty diff_image_path with generate_diff=false, got %v", result["diff_image_path"])
+		if diffImg, ok := result["diff_image"].(string); !ok || diffImg != "" {
+			t.Errorf("Expected empty diff_image with generate_diff=false, got %v", result["diff_image"])
+		}
+	})
+
+	// ignore_region: 既知の差分領域をマスクして比較する
+	t.Run("Perceptual_IgnoreRegion", func(t *testing.T) {
+		// 指定なし: 左上の黒矩形 (pathE) と全面白 (pathF) は一致率75%で mismatch
+		reqNoRegion := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resNoRegion, err := compareDesignHandler(context.Background(), reqNoRegion)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNoRegion map[string]interface{}
+		json.Unmarshal([]byte(resNoRegion.Content[0].(mcp.TextContent).Text), &resultNoRegion)
+		if resultNoRegion["status"] != "mismatch" {
+			t.Errorf("Expected mismatch without ignore_region, got status=%v, rate=%v", resultNoRegion["status"], resultNoRegion["match_rate"])
+		}
+
+		// 指定あり: 黒矩形領域をマスクすると完全一致で success
+		reqRegion := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": "0,0,100,100",
+				},
+			},
+		}
+		resRegion, err := compareDesignHandler(context.Background(), reqRegion)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultRegion map[string]interface{}
+		json.Unmarshal([]byte(resRegion.Content[0].(mcp.TextContent).Text), &resultRegion)
+		if resultRegion["status"] != "success" || resultRegion["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match with ignore_region, got status=%v, rate=%v", resultRegion["status"], resultRegion["match_rate"])
+		}
+	})
+
+	// 差分画像は一時ファイルを作らず base64 data URI で返る (ファイルリーク解消)
+	t.Run("Perceptual_NoTempFileLeak", func(t *testing.T) {
+		before, _ := filepath.Glob(filepath.Join(os.TempDir(), "perceptual-diff-*.png"))
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathD,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if diffImg, ok := result["diff_image"].(string); !ok || !strings.HasPrefix(diffImg, "data:image/png;base64,") {
+			t.Errorf("Expected base64 diff_image data URI, got %v", result["diff_image"])
+		}
+		after, _ := filepath.Glob(filepath.Join(os.TempDir(), "perceptual-diff-*.png"))
+		if len(after) != len(before) {
+			t.Errorf("Expected no new perceptual-diff-* temp files (before=%d, after=%d)", len(before), len(after))
 		}
 	})
 
@@ -856,6 +1328,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if len(details) != 1 {
 			t.Errorf("Expected 1 detail entry in strict result, got %d: %v", len(details), details)
 		}
+		// 数値一致率が差分ピクセル数と整合することの検証
+		totalPixels, _ := result["total_pixels"].(float64)
+		diffPixels, _ := result["diff_pixels"].(float64)
+		expectedRate := (totalPixels - diffPixels) / totalPixels * 100.0
+		if v, ok := result["match_rate_value"].(float64); !ok || v != expectedRate {
+			t.Errorf("Expected match_rate_value=%v (consistent with diff/total pixels), got %v", expectedRate, result["match_rate_value"])
+		}
 	})
 
 	// generate_diff=false で差分画像 (base64) を返さない
@@ -983,6 +1462,111 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if msg := res.Content[0].(mcp.TextContent).Text; !strings.Contains(msg, "size mismatch") {
 			t.Errorf("Expected size mismatch error message, got %v", msg)
+		}
+	})
+
+	// ignore_region: 既知の差分領域をマスクして比較する
+	t.Run("Strict_IgnoreRegion", func(t *testing.T) {
+		// 指定なし: 左上100x100=10000pxの差分で mismatch
+		reqNoRegion := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resNoRegion, err := compareDesignHandler(context.Background(), reqNoRegion)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNoRegion map[string]interface{}
+		json.Unmarshal([]byte(resNoRegion.Content[0].(mcp.TextContent).Text), &resultNoRegion)
+		if resultNoRegion["status"] != "mismatch" {
+			t.Errorf("Expected mismatch without ignore_region, got status=%v", resultNoRegion["status"])
+		}
+		if got := resultNoRegion["diff_pixels"]; got == float64(0) {
+			t.Errorf("Expected positive diff_pixels without ignore_region, got %v", got)
+		}
+
+		// 指定あり: 差分領域をマスクすると diff_pixels=0 で success
+		reqRegion := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "strict",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": "0,0,100,100",
+				},
+			},
+		}
+		resRegion, err := compareDesignHandler(context.Background(), reqRegion)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultRegion map[string]interface{}
+		json.Unmarshal([]byte(resRegion.Content[0].(mcp.TextContent).Text), &resultRegion)
+		if resultRegion["status"] != "success" || resultRegion["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match with ignore_region, got status=%v, rate=%v", resultRegion["status"], resultRegion["match_rate"])
+		}
+		if got := resultRegion["diff_pixels"]; got != float64(0) {
+			t.Errorf("Expected diff_pixels=0 with ignore_region, got %v", got)
+		}
+	})
+
+	// 不正な ignore_region 指定はエラーになる
+	t.Run("IgnoreRegion_InvalidFormat", func(t *testing.T) {
+		for _, region := range []string{"10,20,100", "a,b,c,d", "-1,0,10,10", "0,0,0,10", "10,20,100,50;bad"} {
+			for _, mode := range []string{"perceptual", "strict"} {
+				req := mcp.CallToolRequest{
+					Params: mcp.CallToolParams{
+						Arguments: map[string]any{
+							"mode":          mode,
+							"image_path_a":  pathE,
+							"image_path_b":  pathF,
+							"ignore_region": region,
+						},
+					},
+				}
+				res, err := compareDesignHandler(context.Background(), req)
+				if err != nil {
+					t.Fatalf("handler failed: %v", err)
+				}
+				if !res.IsError {
+					t.Errorf("Expected error for ignore_region=%q in %s mode, got content=%v", region, mode, res.Content[0].(mcp.TextContent).Text)
+				}
+			}
+		}
+	})
+
+	// 0次元画像は NaN や空応答にならず明示的なエラーになる
+	t.Run("ZeroSizeImage_Error", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 0, 0))); err != nil {
+			t.Skipf("cannot encode a 0x0 PNG on this Go version: %v", err)
+		}
+		pathZero := filepath.Join(tmpDir, "imageZero.png")
+		if err := os.WriteFile(pathZero, buf.Bytes(), 0o644); err != nil {
+			t.Fatalf("failed to write zero-size image: %v", err)
+		}
+		for _, mode := range []string{"perceptual", "strict"} {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         mode,
+						"image_path_a": pathZero,
+						"image_path_b": pathZero,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("Expected error for zero-size image in %s mode, got content=%v", mode, res.Content[0].(mcp.TextContent).Text)
+			}
 		}
 	})
 }

@@ -10,15 +10,23 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
-	"os"
 
 	"github.com/orisano/pixelmatch"
 )
 
+// Region は画像比較時に除外（マスク）する矩形領域を表す（ピクセル座標）。
+type Region struct {
+	X int
+	Y int
+	W int
+	H int
+}
+
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
 // generateDiff is false, the diff image is not rendered and an empty string
-// is returned instead of its base64 data URI.
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool) (float64, int, int, string, error) {
+// is returned instead of its base64 data URI. ignoreRegions are masked with
+// white on both images before comparison so their content is ignored.
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, error) {
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
 		return 0, 0, 0, "", fmt.Errorf("failed to decode design image: %w", err)
@@ -33,13 +41,27 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 	if err != nil {
 		return 0, 0, 0, "", err
 	}
+
 	bounds := normA.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
+	// 0次元画像は totalPixels=0 となり一致率計算が0除算 (NaN) になるため、
+	// 明示的なエラーとして報告する。
+	if w == 0 || h == 0 {
+		return 0, 0, 0, "", fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
+	}
 	totalPixels := w * h
+
+	// 除外領域 (ignore_region) を両画像とも白でマスクしてから比較する。
+	if len(ignoreRegions) > 0 {
+		normA = maskRegions(normA, ignoreRegions)
+		normB = maskRegions(normB, ignoreRegions)
+	}
 
 	opts := []pixelmatch.MatchOption{
 		pixelmatch.Threshold(threshold),
-		pixelmatch.IncludeAntiAlias,
+		// 注: IncludeAntiAlias を渡さないデフォルト (includeAA=false) では、
+		// アンチエイリアス境界ピクセルは差分カウントから自動除外される
+		// （README の「アンチエイリアスの境界は自動除外」と整合する）。
 	}
 	var diffImg image.Image
 	if generateDiff {
@@ -67,11 +89,26 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 }
 
 // CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and, when
-// generateDiff is true, writes a diff-visualization PNG to a temp file. Each cell is
-// rendered as a 16x16 pixel block (256x256 total): matching cells show the grayscale
-// value from image A; mismatching cells are highlighted in red. Returns the match
-// rate and an empty diff file path when generateDiff is false.
-func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool) (float64, string, error) {
+// generateDiff is true, renders a diff-visualization PNG (256x256) and returns it
+// as a base64 data URI. Each cell is rendered as a 16x16 pixel block (256x256
+// total): matching cells show the grayscale value from image A; mismatching
+// cells are highlighted in red. ignoreRegions are masked with white on both
+// images before hashing so their content is ignored. Returns the match rate and
+// an empty string when generateDiff is false. 一時ファイルは作成しない。
+func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, string, error) {
+	// 0次元画像は意味のある比較ができないため明示的なエラーとする。
+	if b := imgA.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
+		return 0, "", fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+	}
+	if b := imgB.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
+		return 0, "", fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+	}
+
+	if len(ignoreRegions) > 0 {
+		imgA = maskRegions(imgA, ignoreRegions)
+		imgB = maskRegions(imgB, ignoreRegions)
+	}
+
 	grayA := resizeTo16x16Gray(imgA)
 	grayB := resizeTo16x16Gray(imgB)
 
@@ -114,22 +151,33 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 		}
 	}
 
-	var diffPath string
+	var diffDataURI string
 	if generateDiff {
-		diffFile, err := os.CreateTemp(os.TempDir(), "perceptual-diff-*.png")
-		if err != nil {
-			return 0, "", fmt.Errorf("failed to create diff file: %w", err)
-		}
-		defer diffFile.Close()
-
-		if err := png.Encode(diffFile, diffImg); err != nil {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, diffImg); err != nil {
 			return 0, "", fmt.Errorf("failed to encode diff PNG: %w", err)
 		}
-		diffPath = diffFile.Name()
+		diffDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
 	similarity := float64(256-diffBits) / 256.0 * 100.0
-	return similarity, diffPath, nil
+	return similarity, diffDataURI, nil
+}
+
+// maskRegions returns a copy of img with the given regions filled with white.
+// 領域は描画先の画像範囲に合わせて自動的にクリップされる。
+func maskRegions(img image.Image, regions []Region) image.Image {
+	bounds := img.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	draw.Draw(dst, dst.Bounds(), img, bounds.Min, draw.Src)
+	white := &image.Uniform{color.RGBA{255, 255, 255, 255}}
+	for _, r := range regions {
+		rect := image.Rect(r.X, r.Y, r.X+r.W, r.Y+r.H)
+		if !rect.Empty() {
+			draw.Draw(dst, rect, white, image.Point{}, draw.Src)
+		}
+	}
+	return dst
 }
 
 func resizeTo16x16Gray(img image.Image) []byte {
