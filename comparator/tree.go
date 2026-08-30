@@ -39,12 +39,8 @@ type LayoutTreeResult struct {
 // countExtraWeb が true の場合、どの Figma ノードにもマッチしなかった Web ノード
 // （実装側の余分な要素）を一致率の分母 (totalCompared) に加算する。
 func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool) (*LayoutTreeResult, error) {
-	if tolerance < 0 {
-		tolerance = 0.15 // デフォルト許容差 15% (0 は有効値: 完全一致を要求)
-	}
-	if passRate < 0 {
-		passRate = 98.0 // デフォルト合格ライン 98% (0 は有効値: 常に合格)
-	}
+	// tolerance / passRate の範囲検証は呼び出し元 (main.go) で行われるため、
+	// ここでは負値のデフォルト補完は不要。
 
 	var fNodes []FigmaNode
 	if err := json.Unmarshal([]byte(figmaJSON), &fNodes); err != nil {
