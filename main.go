@@ -322,7 +322,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			status = "mismatch"
 		}
 
-		// 差分画像は一時ファイルではなく base64 data URI (diff_image) で返す
+		// 差分画像は base64 data URI で返す（strict モードの diff_image と同じ形式）。
+		// 一時ファイルを書き出さないため /tmp への蓄積が発生しない。
 		responseMap = map[string]interface{}{
 			"status":           status,
 			"mode":             "perceptual",

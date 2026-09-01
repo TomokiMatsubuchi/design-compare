@@ -131,3 +131,15 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 3. 信頼できない入力を扱うシステムからファイルを渡す必要がある場合は、パスではなく
    内容を直接渡せる `image_a_base64` / `image_b_base64`（base64文字列）や
    `figma_layout` / `web_layout`（インラインJSON）を使用してください。
+
+---
+
+## 7. 破壊的変更 (Breaking Changes)
+
+### `diff_image_path` → `diff_image` （フィールド名変更）
+
+`perceptual` モードのレスポンスにおいて、差分画像のフィールド名を `diff_image_path` から `diff_image` に変更しました。`strict` モードと命名を統一し、いずれのモードでも base64 data URI 形式で返却するようになりました。
+
+**影響:** 既存クライアントが `diff_image_path` を参照している場合、フィールド名の更新が必要です。
+
+なお `generate_diff` を `false` に指定した場合は差分画像を生成せず、`diff_image` は空文字列で返されます。

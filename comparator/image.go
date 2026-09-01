@@ -94,7 +94,9 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 // total): matching cells show the grayscale value from image A; mismatching
 // cells are highlighted in red. ignoreRegions are masked with white on both
 // images before hashing so their content is ignored. Returns the match rate and
-// an empty string when generateDiff is false. 一時ファイルは作成しない。
+// an empty string when generateDiff is false. The diff image is kept in memory
+// (一時ファイルは作成しない), so repeated comparisons never accumulate PNG files
+// in the temp directory.
 func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, string, error) {
 	// 0次元画像は意味のある比較ができないため明示的なエラーとする。
 	if b := imgA.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
