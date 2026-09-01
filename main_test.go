@@ -58,6 +58,24 @@ func encodePNGBase64(t *testing.T, img image.Image) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+// perceptual モードの応答に含まれる差分画像が base64 data URI であることを検証する
+func assertDiffDataURI(t *testing.T, result map[string]interface{}) {
+	t.Helper()
+	diffImage, ok := result["diff_image"].(string)
+	if !ok || !strings.HasPrefix(diffImage, "data:image/png;base64,") {
+		t.Errorf("Expected diff_image as PNG data URI, got %v", result["diff_image"])
+	}
+}
+
+// /tmp 内の差分PNG一時ファイル（perceptual-diff-*.png）の数を数える
+func countDiffTempFiles() (int, error) {
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "perceptual-diff-*.png"))
+	if err != nil {
+		return 0, err
+	}
+	return len(matches), nil
+}
+
 func TestVRTUnifiedCompare(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vrt-test-*")
 	if err != nil {
@@ -1020,9 +1038,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "success" || result["match_rate"] != "100.00%" {
 			t.Errorf("Expected perceptual layout success, got status=%v, rate=%v", result["status"], result["match_rate"])
 		}
-		if diffImg, ok := result["diff_image"].(string); !ok || !strings.HasPrefix(diffImg, "data:image/png;base64,") {
-			t.Errorf("Expected base64 diff_image data URI, got %v", result["diff_image"])
-		}
+		assertDiffDataURI(t, result)
 		// 数値一致率フィールドの検証
 		if got := result["match_rate_value"]; got != float64(100) {
 			t.Errorf("Expected match_rate_value=100, got %v", got)
@@ -1056,9 +1072,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected perceptual layout mismatch, got status=%v", result["status"])
 		}
-		if diffImg, ok := result["diff_image"].(string); !ok || !strings.HasPrefix(diffImg, "data:image/png;base64,") {
-			t.Errorf("Expected base64 diff_image data URI, got %v", result["diff_image"])
-		}
+		assertDiffDataURI(t, result)
 	})
 
 	// generate_diff=false で差分画像の生成を省略し、temp ファイルを作らない
@@ -1131,9 +1145,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
-	// 差分画像は一時ファイルを作らず base64 data URI で返る (ファイルリーク解消)
-	t.Run("Perceptual_NoTempFileLeak", func(t *testing.T) {
-		before, _ := filepath.Glob(filepath.Join(os.TempDir(), "perceptual-diff-*.png"))
+	// 差分PNG一時ファイルが /tmp に蓄積しないことを確認する（Issue #32）。
+	t.Run("Perceptual_NoDiffTempFiles", func(t *testing.T) {
+		before, err := countDiffTempFiles()
+		if err != nil {
+			t.Fatalf("failed to list temp dir: %v", err)
+		}
+
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
@@ -1149,12 +1167,14 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		var result map[string]interface{}
 		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
-		if diffImg, ok := result["diff_image"].(string); !ok || !strings.HasPrefix(diffImg, "data:image/png;base64,") {
-			t.Errorf("Expected base64 diff_image data URI, got %v", result["diff_image"])
+		assertDiffDataURI(t, result)
+
+		after, err := countDiffTempFiles()
+		if err != nil {
+			t.Fatalf("failed to list temp dir: %v", err)
 		}
-		after, _ := filepath.Glob(filepath.Join(os.TempDir(), "perceptual-diff-*.png"))
-		if len(after) != len(before) {
-			t.Errorf("Expected no new perceptual-diff-* temp files (before=%d, after=%d)", len(before), len(after))
+		if after != before {
+			t.Errorf("expected no new perceptual-diff-*.png files in %s, before=%d after=%d", os.TempDir(), before, after)
 		}
 	})
 
