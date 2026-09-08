@@ -31,6 +31,7 @@ func main() {
 		mcp.WithString("mode",
 			mcp.Required(),
 			mcp.Description("Comparison mode: 'layout_tree' (DOM/Figma hierarchy comparison), 'perceptual' (aHash image template check), or 'strict' (pixelmatch VRT)"),
+			mcp.Enum("layout_tree", "perceptual", "strict"),
 		),
 		mcp.WithString("image_path_a",
 			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes unless image_a_base64 is given; mutually exclusive with image_a_base64). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
