@@ -2224,4 +2224,29 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Errorf("Expected unknown mode error, got %q", got)
 		}
 	})
+
+	// 未知モードのエラーには有効モード名が列挙されている (タイポ時にREADME等を
+	// 見ずに1回のリトライで自己修復できる)
+	t.Run("UnknownMode_ListsValidModes", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode": "typo",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("Expected error for unknown mode, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		for _, valid := range []string{"layout_tree", "perceptual", "strict"} {
+			if !strings.Contains(got, valid) {
+				t.Errorf("Expected unknown mode error to list valid mode %q, got %q", valid, got)
+			}
+		}
+	})
 }
