@@ -210,8 +210,15 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			}
 			// 一致したペア（Figmaノード名 ↔ Webセレクタ）を details に出力する。
 			matchedPairDetails = append(matchedPairDetails, fmt.Sprintf("Matched: '%s' ↔ '%s'", fn.Name, bestMatchSelector))
+		} else if bestMatchIdx == -1 {
+			// 比較候補（未使用のWebノード）が残っていないケース（Web側のノードがFigma側より少ない等）。
+			// このとき bestMatchSelector / minDiff は初期値（空文字・math.MaxFloat64）のまま意味を
+			// なさないため、幾何差分ではなく「候補が枯渇した」ことを明示するメッセージを出す。
+			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match any Web element: no unused Web element is left to compare (Web side has fewer elements than the Figma side)", fn.Name))
 		} else {
-			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' (type config mismatch or position shifted) did not match closest Web element '%s' (diff: %.2f, dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
+			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
+			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
 		}
 	}
 
