@@ -143,3 +143,22 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 **影響:** 既存クライアントが `diff_image_path` を参照している場合、フィールド名の更新が必要です。
 
 なお `generate_diff` を `false` に指定した場合は差分画像を生成せず、`diff_image` は空文字列で返されます。
+
+### モード非対応パラメータの明示的エラー化
+
+従来は、モードごとに効果を持たないパラメータ（例: `perceptual` / `strict` モードへの `ignore_nodes`、`layout_tree` モードへの `ignore_region`、`perceptual` モードへの `pass_rate`）を指定しても警告なく無視され、呼び出し側は「除外・合格ラインが効いているつもり」のまま判定結果を受け取る状態でした。
+
+これを防ぐため、モードごとのパラメータ許可マップによる照合を導入しました。非対応モードでパラメータを指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラー (`IsError: true`) を返します。
+
+各パラメータが有効なモード:
+
+| パラメータ | 有効なモード |
+| :--- | :--- |
+| `image_path_a` / `image_path_b` / `image_a_base64` / `image_b_base64` | `perceptual`, `strict` |
+| `figma_layout` / `figma_layout_path` / `web_layout` / `web_layout_path` | `layout_tree` |
+| `ignore_nodes` / `count_extra_web` / `pass_rate` | `layout_tree` |
+| `ignore_region` / `generate_diff` / `min_match` | `perceptual`, `strict` |
+| `max_diff_pixels` | `strict` |
+| `threshold` | `layout_tree`, `perceptual`, `strict` (`perceptual` では `min_match` の後方互換エイリアスとして 1.0–100.0 を受け付ける) |
+
+**影響:** 既存クライアントがモード非対応のパラメータを渡していた場合、それらの呼び出しはエラーになります。該当パラメータを除外するか、対応するモードで指定し直してください。

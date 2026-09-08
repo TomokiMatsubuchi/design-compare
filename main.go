@@ -12,6 +12,7 @@ import (
 	_ "image/png"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -168,11 +169,74 @@ func parseIgnoreRegions(s string) ([]comparator.Region, error) {
 	return regions, nil
 }
 
+// modeParamSupport は compare_design の各パラメータが効果を持つモードの一覧
+// (mode 自身は対象外)。モードで効果を持たないパラメータを警告なく無視すると
+// 呼び出し側が「除外・合格ラインが効いているつもり」のまま判定結果を受け取り
+// 誤った確信を得るため、validateModeParams でこの許可マップと照合する。
+var modeParamSupport = map[string]map[string]bool{
+	// 画像入力 (perceptual / strict)
+	"image_path_a":   {"perceptual": true, "strict": true},
+	"image_path_b":   {"perceptual": true, "strict": true},
+	"image_a_base64": {"perceptual": true, "strict": true},
+	"image_b_base64": {"perceptual": true, "strict": true},
+	// レイアウト入力 (layout_tree)
+	"figma_layout":      {"layout_tree": true},
+	"figma_layout_path": {"layout_tree": true},
+	"web_layout":        {"layout_tree": true},
+	"web_layout_path":   {"layout_tree": true},
+	// 比較条件 (モード固有)
+	// threshold は全モードで有効 (perceptual では min_match の後方互換エイリアス)
+	"threshold":       {"layout_tree": true, "perceptual": true, "strict": true},
+	"min_match":       {"perceptual": true, "strict": true},
+	"pass_rate":       {"layout_tree": true},
+	"max_diff_pixels": {"strict": true},
+	"ignore_nodes":    {"layout_tree": true},
+	"ignore_region":   {"perceptual": true, "strict": true},
+	"count_extra_web": {"layout_tree": true},
+	"generate_diff":   {"perceptual": true, "strict": true},
+}
+
+// validateModeParams は、指定された引数の中に当該モードで効果を持たない
+// (指定しても警告なく無視されるだけの) パラメータがないかを modeParamSupport
+// と照合して検証する。非対応キーは無視せず "parameter 'X' is not supported in
+// mode 'Y'" を返し、除外・合格ラインが効いていない判定結果を静かに受け取るのを
+// 防ぐ。mode 自身とここに列挙していない未知のキーは検証対象外とする (未知の
+// モードは handler の switch で "Unknown comparison mode" としてエラーになる)。
+func validateModeParams(args map[string]any, mode string) error {
+	switch mode {
+	case "layout_tree", "perceptual", "strict":
+		// 既知のモードのみ検証する
+	default:
+		return nil
+	}
+	// map の反復順は不定のためキーをソートし、複数指定時のエラーも決定論的にする
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		supported, isToolParam := modeParamSupport[key]
+		if !isToolParam || supported[mode] {
+			continue
+		}
+		return fmt.Errorf("parameter '%s' is not supported in mode '%s'", key, mode)
+	}
+	return nil
+}
+
 // Handler: compare_design
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
 	if err != nil {
 		return mcp.NewToolResultError("mode parameter is required"), nil
+	}
+
+	// モード非対応パラメータの検証: 当該モードで効果を持たないパラメータ
+	// (例: perceptual への ignore_nodes、layout_tree への ignore_region) は
+	// サイレントに無視せず、明示的にエラーとして返す。
+	if err := validateModeParams(request.GetArguments(), mode); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	var responseMap map[string]interface{}
