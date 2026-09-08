@@ -1622,6 +1622,134 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// min_match: 一致率(%)で合否判定する (strict モード)。
+	// max_diff_pixels は total_pixels が分からないと逆算できないため、
+	// 「一致率○%以上で合格」を割合で直接指定できるようにする。
+	t.Run("StrictMode_MinMatch", func(t *testing.T) {
+		baseArgs := map[string]any{
+			"mode":         "strict",
+			"image_path_a": pathE, // 左上100x100の黒矩形 (pathF との比較で一致率75%)
+			"image_path_b": pathF,
+		}
+
+		// まず素の状態 (max_diff_pixels=0) で一致率と差分ピクセル数を取得する
+		req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: baseArgs}}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Errorf("Expected mismatch with default max_diff_pixels=0, got status=%v", result["status"])
+		}
+		matchRate, ok := result["match_rate_value"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric match_rate_value, got %v", result["match_rate_value"])
+		}
+		if matchRate <= 0.0 || matchRate >= 100.0 {
+			t.Fatalf("Expected partial match rate between 0 and 100, got %v", matchRate)
+		}
+		diffPixels := int(result["diff_pixels"].(float64))
+		// min_match 未指定時は判定に使っていないため、応答に echo されない
+		if _, ok := result["min_match"]; ok {
+			t.Errorf("Expected no min_match echo when unspecified, got %v", result["min_match"])
+		}
+
+		// min_match が一致率未満なら success (max_diff_pixels も併せて緩める)
+		argsOK := map[string]any{
+			"mode": "strict", "image_path_a": pathE, "image_path_b": pathF,
+			"max_diff_pixels": float64(diffPixels),
+			"min_match":       matchRate - 1.0,
+		}
+		resOK, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: argsOK}})
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOK map[string]interface{}
+		json.Unmarshal([]byte(resOK.Content[0].(mcp.TextContent).Text), &resultOK)
+		if resultOK["status"] != "success" {
+			t.Errorf("Expected success with min_match=%.2f, got status=%v", matchRate-1.0, resultOK["status"])
+		}
+		// 指定時は実効値が応答に echo される
+		if v, ok := resultOK["min_match"].(float64); !ok || v != matchRate-1.0 {
+			t.Errorf("Expected min_match echo=%.2f, got %v", matchRate-1.0, resultOK["min_match"])
+		}
+
+		// min_match が一致率ちょうどなら success (matchRate < min_match のときだけ mismatch)
+		argsEqual := map[string]any{
+			"mode": "strict", "image_path_a": pathE, "image_path_b": pathF,
+			"max_diff_pixels": float64(diffPixels),
+			"min_match":       matchRate,
+		}
+		resEqual, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: argsEqual}})
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultEqual map[string]interface{}
+		json.Unmarshal([]byte(resEqual.Content[0].(mcp.TextContent).Text), &resultEqual)
+		if resultEqual["status"] != "success" {
+			t.Errorf("Expected success with min_match equal to match rate (%.2f), got status=%v", matchRate, resultEqual["status"])
+		}
+
+		// min_match が一致率を超えていれば max_diff_pixels を満たしていても mismatch
+		argsNG := map[string]any{
+			"mode": "strict", "image_path_a": pathE, "image_path_b": pathF,
+			"max_diff_pixels": float64(diffPixels),
+			"min_match":       matchRate + 1.0,
+		}
+		resNG, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: argsNG}})
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNG map[string]interface{}
+		json.Unmarshal([]byte(resNG.Content[0].(mcp.TextContent).Text), &resultNG)
+		if resultNG["status"] != "mismatch" {
+			t.Errorf("Expected mismatch with min_match=%.2f, got status=%v", matchRate+1.0, resultNG["status"])
+		}
+		if v, ok := resultNG["min_match"].(float64); !ok || v != matchRate+1.0 {
+			t.Errorf("Expected min_match echo=%.2f, got %v", matchRate+1.0, resultNG["min_match"])
+		}
+
+		// min_match を満たしていても max_diff_pixels (デフォルト 0) を超過すれば mismatch
+		argsOnly := map[string]any{
+			"mode": "strict", "image_path_a": pathE, "image_path_b": pathF,
+			"min_match": matchRate - 1.0,
+		}
+		resOnly, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: argsOnly}})
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOnly map[string]interface{}
+		json.Unmarshal([]byte(resOnly.Content[0].(mcp.TextContent).Text), &resultOnly)
+		if resultOnly["status"] != "mismatch" {
+			t.Errorf("Expected mismatch when max_diff_pixels is exceeded even if min_match is met, got status=%v", resultOnly["status"])
+		}
+	})
+
+	// min_match の範囲バリデーション: 0.0–100.0 外の値はエラーになる
+	t.Run("StrictMode_MinMatch_OutOfRange", func(t *testing.T) {
+		for _, val := range []float64{-1.0, 101.0} {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "strict",
+						"image_path_a": pathE,
+						"image_path_b": pathF,
+						"min_match":    val,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("Expected error for strict min_match=%.1f, got content=%v", val, res.Content[0].(mcp.TextContent).Text)
+			}
+		}
+	})
+
 	// サイズの異なる画像ペアは白埋めで吸収せず、エラーとして明示的に報告する
 	// (白埋め領域が一致として数えられ一致率が水増しされるのを防ぐ)
 	t.Run("StrictMode_SizeMismatch_Error", func(t *testing.T) {
