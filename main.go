@@ -68,7 +68,7 @@ func main() {
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0); prefer 'min_match' instead to avoid confusion with the 0.0–1.0 tolerance scale."),
 		),
 		mcp.WithNumber("min_match",
-			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass in 'perceptual' mode. Default 98.0. Use this instead of 'threshold' for perceptual mode, since 'threshold' uses a 0.0–1.0 scale in other modes."),
+			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass. For 'perceptual' mode: default 98.0; use this instead of 'threshold' for perceptual mode, since 'threshold' uses a 0.0–1.0 scale in other modes. For 'strict' mode: optional with no default; when omitted, strict mode judges only by 'max_diff_pixels', and when specified the match rate must be at least this value (combinable with 'max_diff_pixels'; exceeding either causes mismatch)."),
 		),
 		mcp.WithNumber("pass_rate",
 			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass in 'layout_tree' mode. Default 98.0."),
@@ -353,8 +353,23 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		threshold := request.GetFloat("threshold", 0.1)
 		maxDiffPixels := request.GetInt("max_diff_pixels", 0)
 
+		// min_match: 一致率(%)による合格ライン (0.0–100.0)。strict ではデフォルト値を
+		// 持たず、未指定なら判定に使わない (max_diff_pixels のみで判定する従来挙動)。
+		// total_pixels は比較してみないと分からないため、呼び出し側が max_diff_pixels を
+		// 逆算できない課題を、perceptual の min_match / layout_tree の pass_rate と同じ
+		// 割合ベースの閾値で解消する。
+		args := request.GetArguments()
+		_, hasMinMatch := args["min_match"]
+		var minMatchRate float64
+		if hasMinMatch {
+			minMatchRate = request.GetFloat("min_match", 0.0)
+			if minMatchRate < 0.0 || minMatchRate > 100.0 {
+				return mcp.NewToolResultError("min_match for strict mode must be between 0.0 and 100.0 (match percentage)."), nil
+			}
+		}
+
 		// 範囲バリデーション: threshold は 0.0–1.0、max_diff_pixels は 0 以上
-		if args := request.GetArguments(); args != nil {
+		if args != nil {
 			if _, ok := args["threshold"]; ok && (threshold < 0.0 || threshold > 1.0) {
 				return mcp.NewToolResultError("threshold for strict mode must be between 0.0 and 1.0 (color diff tolerance)."), nil
 			}
@@ -374,9 +389,19 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
 
+		// 合否判定: max_diff_pixels (差分ピクセル数) と min_match (一致率%) は併用可能。
+		// どちらかでも超過すれば mismatch とする (min_match は指定時のみ有効)。
 		status := "success"
 		if diffPixels > maxDiffPixels {
 			status = "mismatch"
+		}
+		if hasMinMatch && matchRate < minMatchRate {
+			status = "mismatch"
+		}
+
+		details := fmt.Sprintf("Strict pixel comparison. %d of %d pixels differ (max allowed: %d).", diffPixels, totalPixels, maxDiffPixels)
+		if hasMinMatch {
+			details += fmt.Sprintf(" Match rate %.2f%% must be at least %.2f%%.", matchRate, minMatchRate)
 		}
 
 		responseMap = map[string]interface{}{
@@ -386,8 +411,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"match_rate_value": matchRate,
 			"total_pixels":     totalPixels,
 			"diff_pixels":      diffPixels,
-			"details":          []string{fmt.Sprintf("Strict pixel comparison. %d of %d pixels differ (max allowed: %d).", diffPixels, totalPixels, maxDiffPixels)},
+			"details":          []string{details},
 			"diff_image":       diffImage,
+		}
+		// min_match 指定時のみ実効値を応答に echo する (layout_tree の effective_threshold と
+		// 同様に、どの閾値で合否判定されたかを検証可能にする。未指定なら判定に使って
+		// いないため含めない)。
+		if hasMinMatch {
+			responseMap["min_match"] = minMatchRate
 		}
 
 	default:
