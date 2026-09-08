@@ -486,7 +486,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 	default:
-		return mcp.NewToolResultError(fmt.Sprintf("Unknown comparison mode: %s", mode)), nil
+		// 有効モードを列挙し、タイポ時にREADME等を見ずに1回のリトライで自己修復できるようにする
+		return mcp.NewToolResultError(fmt.Sprintf("Unknown comparison mode: %s (valid modes: layout_tree, perceptual, strict)", mode)), nil
 	}
 
 	responseJSON, err := json.MarshalIndent(responseMap, "", "  ")
