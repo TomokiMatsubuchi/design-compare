@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -2072,6 +2073,155 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !res.IsError {
 				t.Errorf("Expected error for zero-size image in %s mode, got content=%v", mode, res.Content[0].(mcp.TextContent).Text)
 			}
+		}
+	})
+
+	// =================================================================
+	// 6. モード非対応パラメータの検証テスト (Issue #116)
+	// =================================================================
+	// 各モードで効果を持たないパラメータ (従来は無警告で無視されていた) を
+	// 指定した場合に明示的なエラーになることを表駆動で検証する。
+	t.Run("ModeUnsupportedParams_Error", func(t *testing.T) {
+		figmaLayout := `[{"id":"1","name":"a","x":0,"y":0,"w":100,"h":100}]`
+		webLayout := `[{"selector":".a","x":0,"y":0,"w":100,"h":100}]`
+
+		// 各モードで比較を実行できる最小限の有効引数
+		validArgs := func(mode string) map[string]any {
+			args := map[string]any{"mode": mode}
+			switch mode {
+			case "layout_tree":
+				args["figma_layout"] = figmaLayout
+				args["web_layout"] = webLayout
+			default: // perceptual / strict
+				args["image_path_a"] = pathA
+				args["image_path_b"] = pathC
+			}
+			return args
+		}
+
+		// mode × param の組合せ。wantErr=true はモード非対応のため IsError、
+		// false は対応パラメータなので比較が実行されてエラーにならない。
+		cases := []struct {
+			mode    string
+			param   string
+			value   any
+			wantErr bool
+		}{
+			// layout_tree: 画像入力・画像系モード専用パラメータは非対応
+			{"layout_tree", "image_path_a", pathA, true},
+			{"layout_tree", "image_path_b", pathC, true},
+			{"layout_tree", "image_a_base64", "not-base64", true},
+			{"layout_tree", "image_b_base64", "not-base64", true},
+			{"layout_tree", "ignore_region", "0,0,10,10", true},
+			{"layout_tree", "max_diff_pixels", 10.0, true},
+			{"layout_tree", "generate_diff", false, true},
+			{"layout_tree", "min_match", 90.0, true},
+			// layout_tree: 対応パラメータはエラーにならない
+			{"layout_tree", "ignore_nodes", "a", false},
+			{"layout_tree", "count_extra_web", true, false},
+			{"layout_tree", "pass_rate", 90.0, false},
+			{"layout_tree", "threshold", 0.15, false},
+			// perceptual: レイアウト入力・layout_tree 専用パラメータは非対応
+			{"perceptual", "figma_layout", figmaLayout, true},
+			{"perceptual", "figma_layout_path", "/tmp/nonexistent.json", true},
+			{"perceptual", "web_layout", webLayout, true},
+			{"perceptual", "web_layout_path", "/tmp/nonexistent.json", true},
+			{"perceptual", "ignore_nodes", "nav", true},
+			{"perceptual", "count_extra_web", true, true},
+			{"perceptual", "pass_rate", 90.0, true},
+			{"perceptual", "max_diff_pixels", 10.0, true},
+			// perceptual: 対応パラメータはエラーにならない
+			{"perceptual", "min_match", 98.0, false},
+			{"perceptual", "threshold", 98.0, false},
+			{"perceptual", "ignore_region", "0,0,10,10", false},
+			{"perceptual", "generate_diff", false, false},
+			// strict: レイアウト入力・layout_tree 専用パラメータは非対応
+			{"strict", "figma_layout", figmaLayout, true},
+			{"strict", "figma_layout_path", "/tmp/nonexistent.json", true},
+			{"strict", "web_layout", webLayout, true},
+			{"strict", "web_layout_path", "/tmp/nonexistent.json", true},
+			{"strict", "ignore_nodes", "nav", true},
+			{"strict", "count_extra_web", true, true},
+			{"strict", "pass_rate", 90.0, true},
+			// strict: 対応パラメータはエラーにならない
+			{"strict", "max_diff_pixels", 100000.0, false},
+			{"strict", "min_match", 10.0, false},
+			{"strict", "threshold", 0.1, false},
+			{"strict", "ignore_region", "0,0,10,10", false},
+			{"strict", "generate_diff", false, false},
+		}
+
+		for _, c := range cases {
+			t.Run(fmt.Sprintf("%s_with_%s", c.mode, c.param), func(t *testing.T) {
+				args := validArgs(c.mode)
+				args[c.param] = c.value
+				req := mcp.CallToolRequest{
+					Params: mcp.CallToolParams{Arguments: args},
+				}
+				res, err := compareDesignHandler(context.Background(), req)
+				if err != nil {
+					t.Fatalf("handler failed: %v", err)
+				}
+				if c.wantErr {
+					if !res.IsError {
+						t.Fatalf("Expected error for unsupported parameter %q in mode %q, got content=%v", c.param, c.mode, res.Content[0].(mcp.TextContent).Text)
+					}
+					wantMsg := fmt.Sprintf("parameter '%s' is not supported in mode '%s'", c.param, c.mode)
+					if got := res.Content[0].(mcp.TextContent).Text; !strings.Contains(got, wantMsg) {
+						t.Errorf("Expected error message containing %q, got %q", wantMsg, got)
+					}
+				} else if res.IsError {
+					t.Fatalf("Expected no error for supported parameter %q in mode %q, got content=%v", c.param, c.mode, res.Content[0].(mcp.TextContent).Text)
+				}
+			})
+		}
+	})
+
+	// 複数の非対応パラメータを同時指定した場合も、アルファベット順で
+	// 決定論的なエラーメッセージを返す (map の反復順に依存しない)。
+	t.Run("MultipleUnsupportedParams_Deterministic", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+					"pass_rate":    90.0,
+					"ignore_nodes": "nav", // "ignore_nodes" < "pass_rate" (辞書順)
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("Expected error for multiple unsupported params, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+		if got := res.Content[0].(mcp.TextContent).Text; !strings.Contains(got, "parameter 'ignore_nodes' is not supported in mode 'perceptual'") {
+			t.Errorf("Expected deterministic error for 'ignore_nodes' (alphabetically first), got %q", got)
+		}
+	})
+
+	// 未知のモードはパラメータ検証より優先して "Unknown comparison mode" になる
+	t.Run("UnknownMode_ParamsNotValidated", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "bogus",
+					"ignore_nodes": "nav",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("Expected error for unknown mode, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+		if got := res.Content[0].(mcp.TextContent).Text; !strings.Contains(got, "Unknown comparison mode") {
+			t.Errorf("Expected unknown mode error, got %q", got)
 		}
 	})
 }
