@@ -1,6 +1,7 @@
 package comparator
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -123,6 +124,80 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		// child mismatch by checking that the match rate is below 100%.
 		if result.MatchRate >= 100.0 {
 			t.Errorf("Expected match rate < 100%% (child nodes at different positions should not be inflated to match), got %.1f%% (matched=%d/%d)", result.MatchRate, result.MatchedNodes, result.TotalNodes)
+		}
+	})
+}
+
+// TestLayoutTree_MismatchMessages verifies the mismatch detail messages
+// produced by the layout tree comparison:
+//  1. no_candidates_left – when every Web node has already been used by a
+//     previous Figma node (Web side has fewer elements), the detail must
+//     explicitly state that no unused Web element is left to compare, instead
+//     of printing a meaningless empty selector with a MaxFloat64 diff.
+//  2. tolerance_exceeded  – when a Figma node is shifted beyond tolerance,
+//     the detail must state that the geometric diff exceeds the tolerance,
+//     without the old misleading "(type config mismatch or position shifted)"
+//     wording (there is no "type config" in the data model).
+func TestLayoutTree_MismatchMessages(t *testing.T) {
+	t.Run("no_candidates_left", func(t *testing.T) {
+		// Figma has 3 nodes but Web has only 2 (#container and .childA), so the
+		// third Figma node (childB) has no unused Web node left to compare.
+		figmaJSON := `[
+			{"id":"1","name":"container","x":0,"y":0,"w":500,"h":500},
+			{"id":"2","name":"childA","x":10,"y":10,"w":480,"h":480,"parent":"1"},
+			{"id":"3","name":"childB","x":10,"y":10,"w":480,"h":480,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#container","x":0,"y":0,"w":500,"h":500},
+			{"selector":".childA","x":10,"y":10,"w":480,"h":480,"parent":"#container"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.MatchedNodes != 2 {
+			t.Errorf("Expected 2 matched nodes, got %d", result.MatchedNodes)
+		}
+		var found bool
+		for _, d := range result.Details {
+			if strings.Contains(d, "no unused Web element is left to compare") && strings.Contains(d, "childB") {
+				found = true
+			}
+			if strings.Contains(d, "did not match closest Web element ''") {
+				t.Errorf("Details must not contain an empty closest-element message, got: %s", d)
+			}
+		}
+		if !found {
+			t.Errorf("Expected a detail stating no unused Web element is left for 'childB', got details: %v", result.Details)
+		}
+	})
+
+	t.Run("tolerance_exceeded", func(t *testing.T) {
+		// The Web node is shifted 50px from the Figma node, far beyond the
+		// tolerance of 0.15, so the detail must state that the geometric diff
+		// exceeds the tolerance.
+		figmaJSON := `[{"id":"1","name":"hero","x":0,"y":0,"w":100,"h":100}]`
+		webJSON := `[{"selector":".hero","x":50,"y":0,"w":100,"h":100}]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.MatchedNodes != 0 {
+			t.Errorf("Expected 0 matched nodes, got %d", result.MatchedNodes)
+		}
+		var found bool
+		for _, d := range result.Details {
+			if strings.Contains(d, "geometric diff 50.00 exceeds tolerance 0.15") && strings.Contains(d, ".hero") {
+				found = true
+			}
+			if strings.Contains(d, "type config mismatch") {
+				t.Errorf("Details must not contain the old misleading 'type config mismatch' wording, got: %s", d)
+			}
+		}
+		if !found {
+			t.Errorf("Expected a detail stating the geometric diff exceeds tolerance, got details: %v", result.Details)
 		}
 	})
 }
