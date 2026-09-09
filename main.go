@@ -388,11 +388,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		// 差分画像は base64 data URI で返す（strict モードの diff_image と同じ形式）。
 		// 一時ファイルを書き出さないため /tmp への蓄積が発生しない。
+		// 実効パラメータ min_match を応答に含め、どの閾値で判定されたかを検証可能にする
+		// (layout_tree の effective_threshold / pass_rate と同じ方針)。
 		responseMap = map[string]interface{}{
 			"status":           status,
 			"mode":             "perceptual",
 			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
 			"match_rate_value": matchRate,
+			"min_match":        minMatchRate,
 			"details":          []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate)},
 			"diff_image":       diffImage,
 		}
@@ -468,15 +471,19 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			details += fmt.Sprintf(" Match rate %.2f%% must be at least %.2f%%.", matchRate, minMatchRate)
 		}
 
+		// 実効パラメータ (threshold / max_diff_pixels) を応答に含め、どの閾値で判定されたかを
+		// 検証可能にする (layout_tree の effective_threshold / pass_rate と同じ方針)。
 		responseMap = map[string]interface{}{
-			"status":           status,
-			"mode":             "strict",
-			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
-			"match_rate_value": matchRate,
-			"total_pixels":     totalPixels,
-			"diff_pixels":      diffPixels,
-			"details":          []string{details},
-			"diff_image":       diffImage,
+			"status":              status,
+			"mode":                "strict",
+			"match_rate":          fmt.Sprintf("%.2f%%", matchRate),
+			"match_rate_value":    matchRate,
+			"total_pixels":        totalPixels,
+			"diff_pixels":         diffPixels,
+			"effective_threshold": threshold,
+			"max_diff_pixels":     maxDiffPixels,
+			"details":             []string{details},
+			"diff_image":          diffImage,
 		}
 		// min_match 指定時のみ実効値を応答に echo する (layout_tree の effective_threshold と
 		// 同様に、どの閾値で合否判定されたかを検証可能にする。未指定なら判定に使って
