@@ -1044,6 +1044,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := result["match_rate_value"]; got != float64(100) {
 			t.Errorf("Expected match_rate_value=100, got %v", got)
 		}
+		// 実効パラメータ min_match (デフォルト 98.0) が応答に含まれることの検証
+		if got := result["min_match"]; got != float64(98) {
+			t.Errorf("Expected min_match=98 (default), got %v", got)
+		}
 		// details は全モードで文字列配列に統一されている (perceptual は単一要素)
 		details, ok := result["details"].([]interface{})
 		if !ok {
@@ -1268,6 +1272,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		// 0.5% 基準なら不一致画像でも success になるはず
 		if result["status"] != "success" {
 			t.Errorf("Expected success with min_match=0.5, got status=%v", result["status"])
+		}
+		// 指定した min_match が実効値としてそのまま応答に echo されることの検証
+		if got := result["min_match"]; got != float64(0.5) {
+			t.Errorf("Expected min_match=0.5, got %v", got)
 		}
 	})
 
@@ -1520,6 +1528,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if v, ok := result["match_rate_value"].(float64); !ok || v != expectedRate {
 			t.Errorf("Expected match_rate_value=%v (consistent with diff/total pixels), got %v", expectedRate, result["match_rate_value"])
 		}
+		// 実効パラメータ (threshold / max_diff_pixels) が応答に含まれることの検証
+		if got := result["effective_threshold"]; got != 0.1 {
+			t.Errorf("Expected effective_threshold=0.1 (default), got %v", got)
+		}
+		if got := result["max_diff_pixels"]; got != float64(0) {
+			t.Errorf("Expected max_diff_pixels=0 (default), got %v", got)
+		}
 	})
 
 	// generate_diff=false で差分画像 (base64) を返さない
@@ -1586,6 +1601,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultOK["status"] != "success" {
 			t.Errorf("Expected success with max_diff_pixels=%d, got status=%v", diffPixels, resultOK["status"])
 		}
+		// 指定した max_diff_pixels が実効値としてそのまま応答に echo されることの検証
+		if got := resultOK["max_diff_pixels"]; got != float64(diffPixels) {
+			t.Errorf("Expected max_diff_pixels=%d, got %v", diffPixels, got)
+		}
 
 		// 許容数を 1 でも下回ると mismatch のまま
 		argsNG := map[string]any{
@@ -1600,6 +1619,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(resNG.Content[0].(mcp.TextContent).Text), &resultNG)
 		if resultNG["status"] != "mismatch" {
 			t.Errorf("Expected mismatch with max_diff_pixels=%d, got status=%v", diffPixels-1, resultNG["status"])
+		}
+		if got := resultNG["max_diff_pixels"]; got != float64(diffPixels-1) {
+			t.Errorf("Expected max_diff_pixels=%d, got %v", diffPixels-1, got)
 		}
 	})
 
