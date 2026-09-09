@@ -1144,6 +1144,37 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultRegion["status"] != "success" || resultRegion["match_rate"] != "100.00%" {
 			t.Errorf("Expected success and 100%% match with ignore_region, got status=%v, rate=%v", resultRegion["status"], resultRegion["match_rate"])
 		}
+		// 範囲内の ignore_region では警告フィールド (out_of_bounds_regions) は出ない
+		if _, ok := resultRegion["out_of_bounds_regions"]; ok {
+			t.Errorf("Expected no out_of_bounds_regions for in-bounds ignore_region, got %v", resultRegion["out_of_bounds_regions"])
+		}
+
+		// 画像範囲外の ignore_region は何もマスクされず差分が残るため、座標ミスが
+		// 分かるよう out_of_bounds_regions として応答で警告される (Issue #128)
+		reqOutOfBounds := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": "500,500,100,100",
+				},
+			},
+		}
+		resOutOfBounds, err := compareDesignHandler(context.Background(), reqOutOfBounds)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOutOfBounds map[string]interface{}
+		json.Unmarshal([]byte(resOutOfBounds.Content[0].(mcp.TextContent).Text), &resultOutOfBounds)
+		// 200x200 画像に対する "500,500,100,100" は全く交差しないため差分が残る
+		if resultOutOfBounds["status"] != "mismatch" {
+			t.Errorf("Expected mismatch with out-of-bounds ignore_region (nothing masked), got status=%v", resultOutOfBounds["status"])
+		}
+		gotRegions, ok := resultOutOfBounds["out_of_bounds_regions"].([]interface{})
+		if !ok || len(gotRegions) != 1 || gotRegions[0] != "500,500,100,100" {
+			t.Errorf("Expected out_of_bounds_regions=[500,500,100,100], got %v", resultOutOfBounds["out_of_bounds_regions"])
+		}
 	})
 
 	// 差分PNG一時ファイルが /tmp に蓄積しないことを確認する（Issue #32）。
@@ -2018,6 +2049,39 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := resultRegion["diff_pixels"]; got != float64(0) {
 			t.Errorf("Expected diff_pixels=0 with ignore_region, got %v", got)
+		}
+		// 範囲内の ignore_region では警告フィールド (out_of_bounds_regions) は出ない
+		if _, ok := resultRegion["out_of_bounds_regions"]; ok {
+			t.Errorf("Expected no out_of_bounds_regions for in-bounds ignore_region, got %v", resultRegion["out_of_bounds_regions"])
+		}
+
+		// 画像範囲外の ignore_region は何もマスクされず差分が残るため、座標ミスが
+		// 分かるよう out_of_bounds_regions として応答で警告される (Issue #128)
+		reqOutOfBounds := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "strict",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": "500,500,100,100",
+				},
+			},
+		}
+		resOutOfBounds, err := compareDesignHandler(context.Background(), reqOutOfBounds)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOutOfBounds map[string]interface{}
+		json.Unmarshal([]byte(resOutOfBounds.Content[0].(mcp.TextContent).Text), &resultOutOfBounds)
+		if resultOutOfBounds["status"] != "mismatch" {
+			t.Errorf("Expected mismatch with out-of-bounds ignore_region (nothing masked), got status=%v", resultOutOfBounds["status"])
+		}
+		if got := resultOutOfBounds["diff_pixels"]; got == float64(0) {
+			t.Errorf("Expected positive diff_pixels with out-of-bounds ignore_region (nothing masked), got %v", got)
+		}
+		gotRegions, ok := resultOutOfBounds["out_of_bounds_regions"].([]interface{})
+		if !ok || len(gotRegions) != 1 || gotRegions[0] != "500,500,100,100" {
+			t.Errorf("Expected out_of_bounds_regions=[500,500,100,100], got %v", resultOutOfBounds["out_of_bounds_regions"])
 		}
 	})
 

@@ -60,7 +60,7 @@ func main() {
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode)."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore in 'perceptual' and 'strict' modes, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). Both images are masked with white in these regions before comparison. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore in 'perceptual' and 'strict' modes, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). Both images are masked with white in these regions before comparison. Useful to exclude dynamic content (dates, ads, banners) that always differs. Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are only reported in details)."),
@@ -377,7 +377,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())), nil
 		}
 
-		matchRate, diffImage, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
+		matchRate, diffImage, outOfBounds, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
@@ -395,6 +395,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"match_rate_value": matchRate,
 			"details":          []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate)},
 			"diff_image":       diffImage,
+		}
+		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず
+		// 座標ミスの可能性が高いため、layout_tree の unmatched_ignores と同様に
+		// 非空時のみ応答へ含めて呼び出し側に通知する。
+		if len(outOfBounds) > 0 {
+			responseMap["out_of_bounds_regions"] = outOfBounds
 		}
 
 	case "strict":
@@ -448,7 +454,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -483,6 +489,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// いないため含めない)。
 		if hasMinMatch {
 			responseMap["min_match"] = minMatchRate
+		}
+		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず
+		// 座標ミスの可能性が高いため、非空時のみ応答へ含めて通知する
+		// (perceptual モードや layout_tree の unmatched_ignores と同様)。
+		if len(outOfBounds) > 0 {
+			responseMap["out_of_bounds_regions"] = outOfBounds
 		}
 
 	default:
