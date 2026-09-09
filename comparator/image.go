@@ -26,20 +26,23 @@ type Region struct {
 // generateDiff is false, the diff image is not rendered and an empty string
 // is returned instead of its base64 data URI. ignoreRegions are masked with
 // white on both images before comparison so their content is ignored.
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, error) {
+// ignoreRegions のうち画像矩形と全く交差しない領域は draw.Draw の自動クリップ
+// により何もマスクされないため、"x,y,w,h" 形式の文字列リストとして検出結果を
+// 返す (layout_tree モードの unmatched_ignores と同様のフィードバック)。
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, []string, error) {
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
-		return 0, 0, 0, "", fmt.Errorf("failed to decode design image: %w", err)
+		return 0, 0, 0, "", nil, fmt.Errorf("failed to decode design image: %w", err)
 	}
 
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
-		return 0, 0, 0, "", fmt.Errorf("failed to decode web screenshot: %w", err)
+		return 0, 0, 0, "", nil, fmt.Errorf("failed to decode web screenshot: %w", err)
 	}
 
 	normA, normB, err := EnsureSameSize(imgA, imgB)
 	if err != nil {
-		return 0, 0, 0, "", err
+		return 0, 0, 0, "", nil, err
 	}
 
 	bounds := normA.Bounds()
@@ -47,14 +50,19 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 	// 0次元画像は totalPixels=0 となり一致率計算が0除算 (NaN) になるため、
 	// 明示的なエラーとして報告する。
 	if w == 0 || h == 0 {
-		return 0, 0, 0, "", fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
+		return 0, 0, 0, "", nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
 	}
 	totalPixels := w * h
 
 	// 除外領域 (ignore_region) を両画像とも白でマスクしてから比較する。
+	// 画像矩形と全く交差しない領域は何もマスクされないため、"x,y,w,h" 形式の
+	// 文字列リストとして検出し、応答で警告できるよう呼び出し側へ返す。
+	var outOfBounds []string
 	if len(ignoreRegions) > 0 {
-		normA = maskRegions(normA, ignoreRegions)
-		normB = maskRegions(normB, ignoreRegions)
+		var oobA, oobB []string
+		normA, oobA = maskRegions(normA, ignoreRegions)
+		normB, oobB = maskRegions(normB, ignoreRegions)
+		outOfBounds = mergeOutOfBoundsRegions(oobA, oobB)
 	}
 
 	opts := []pixelmatch.MatchOption{
@@ -71,21 +79,21 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 
 	diffCount, err := pixelmatch.MatchPixel(normA, normB, opts...)
 	if err != nil {
-		return 0, 0, 0, "", fmt.Errorf("pixelmatch error: %w", err)
+		return 0, 0, 0, "", nil, fmt.Errorf("pixelmatch error: %w", err)
 	}
 
 	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
 	if !generateDiff {
-		return matchRate, totalPixels, diffCount, "", nil
+		return matchRate, totalPixels, diffCount, "", outOfBounds, nil
 	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, diffImg); err != nil {
-		return 0, 0, 0, "", fmt.Errorf("failed to encode diff PNG: %w", err)
+		return 0, 0, 0, "", nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	return matchRate, totalPixels, diffCount, diffDataURI, nil
+	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, nil
 }
 
 // CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and, when
@@ -96,19 +104,28 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 // images before hashing so their content is ignored. Returns the match rate and
 // an empty string when generateDiff is false. The diff image is kept in memory
 // (一時ファイルは作成しない), so repeated comparisons never accumulate PNG files
-// in the temp directory.
-func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, string, error) {
+// in the temp directory. ignoreRegions のうち画像矩形と全く交差しない領域は
+// draw.Draw の自動クリップにより何もマスクされないため、"x,y,w,h" 形式の
+// 文字列リストとして検出結果を返す (両画像の寸法は異なり得るため、いずれかの
+// 画像で範囲外の領域を報告する)。
+func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, string, []string, error) {
 	// 0次元画像は意味のある比較ができないため明示的なエラーとする。
 	if b := imgA.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, "", fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, "", nil, fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 	if b := imgB.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, "", fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, "", nil, fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 
+	// 除外領域 (ignore_region) を両画像とも白でマスクしてから比較する。
+	// 両画像の寸法は異なり得るため、いずれかの画像で範囲外の領域 (完全には
+	// マスクされない) を "x,y,w,h" 形式の文字列リストとして検出して返す。
+	var outOfBounds []string
 	if len(ignoreRegions) > 0 {
-		imgA = maskRegions(imgA, ignoreRegions)
-		imgB = maskRegions(imgB, ignoreRegions)
+		var oobA, oobB []string
+		imgA, oobA = maskRegions(imgA, ignoreRegions)
+		imgB, oobB = maskRegions(imgB, ignoreRegions)
+		outOfBounds = mergeOutOfBoundsRegions(oobA, oobB)
 	}
 
 	grayA := resizeTo16x16Gray(imgA)
@@ -157,29 +174,58 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	if generateDiff {
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, diffImg); err != nil {
-			return 0, "", fmt.Errorf("failed to encode diff PNG: %w", err)
+			return 0, "", nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 		}
 		diffDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
 	similarity := float64(256-diffBits) / 256.0 * 100.0
-	return similarity, diffDataURI, nil
+	return similarity, diffDataURI, outOfBounds, nil
 }
 
-// maskRegions returns a copy of img with the given regions filled with white.
-// 領域は描画先の画像範囲に合わせて自動的にクリップされる。
-func maskRegions(img image.Image, regions []Region) image.Image {
+// maskRegions returns a copy of img with the given regions filled with white,
+// along with the list of regions that do not intersect the image rectangle at
+// all, formatted as "x,y,w,h" strings. 領域は描画先の画像範囲に合わせて自動的
+// にクリップされるため一部だけ交差する領域はマスクされるが、全く交差しない
+// 領域は何もマスクされず沈黙する。座標ミスに呼び出し側が気付けるよう、それら
+// の領域を検出して返す (w/h が 0 の退化した領域も何もマスクしないため検出対象)。
+func maskRegions(img image.Image, regions []Region) (image.Image, []string) {
 	bounds := img.Bounds()
 	dst := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
 	draw.Draw(dst, dst.Bounds(), img, bounds.Min, draw.Src)
 	white := &image.Uniform{color.RGBA{255, 255, 255, 255}}
+	var outOfBounds []string
 	for _, r := range regions {
 		rect := image.Rect(r.X, r.Y, r.X+r.W, r.Y+r.H)
-		if !rect.Empty() {
-			draw.Draw(dst, rect, white, image.Point{}, draw.Src)
+		// 画像矩形と全く交差しない領域は draw.Draw の自動クリップにより
+		// 何もマスクされないため、警告対象として検出する。
+		if rect.Intersect(dst.Bounds()).Empty() {
+			outOfBounds = append(outOfBounds, fmt.Sprintf("%d,%d,%d,%d", r.X, r.Y, r.W, r.H))
+			continue
+		}
+		draw.Draw(dst, rect, white, image.Point{}, draw.Src)
+	}
+	return dst, outOfBounds
+}
+
+// mergeOutOfBoundsRegions merges the out-of-bounds region lists detected on
+// each image into one deduplicated list. RunPixelMatch では EnsureSameSize に
+// より両画像の寸法が同一のため同じリストが渡り、重複除去により 1 つにまとまる。
+// CalculateLayoutSimilarityWithDiff では両画像の寸法が異なり得るため、
+// いずれかの画像で範囲外の領域 (完全にはマスクされない) を報告する。
+func mergeOutOfBoundsRegions(lists ...[]string) []string {
+	var merged []string
+	seen := make(map[string]bool)
+	for _, list := range lists {
+		for _, s := range list {
+			if seen[s] {
+				continue
+			}
+			seen[s] = true
+			merged = append(merged, s)
 		}
 	}
-	return dst
+	return merged
 }
 
 func resizeTo16x16Gray(img image.Image) []byte {
