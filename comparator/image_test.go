@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"strings"
 	"testing"
 )
 
@@ -92,4 +93,41 @@ func TestRunPixelMatch_AntiAliasExclusion(t *testing.T) {
 			t.Errorf("Expected diffCount>0 (non-AA difference should be counted), got 0")
 		}
 	})
+}
+
+// TestRunPixelMatch_UnsupportedFormatHint verifies that decode failures caused
+// by unsupported image formats (e.g. WebP, SVG) include a hint about the
+// supported formats (PNG, JPEG, GIF) in the error message, so callers can
+// determine the corrective action (format conversion) without an extra
+// round-trip (Issue #122).
+func TestRunPixelMatch_UnsupportedFormatHint(t *testing.T) {
+	// WebP のマジックナンバー ("RIFF" + "WEBP") を含むバイト列。
+	// Go 標準の image パッケージはデコードできず "image: unknown format" になる。
+	webpBytes := []byte("RIFF\x00\x00\x00\x00WEBPVP8 fake payload")
+	pngBytes := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+
+	for _, tc := range []struct {
+		name        string
+		imgA, imgB  []byte
+		wantKeyword string
+	}{
+		{"webp_as_design_image", webpBytes, pngBytes, "failed to decode design image"},
+		{"webp_as_web_screenshot", pngBytes, webpBytes, "failed to decode web screenshot"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, _, err := RunPixelMatch(tc.imgA, tc.imgB, 0.1, false, nil)
+			if err == nil {
+				t.Fatal("expected decode error for WebP bytes, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantKeyword) {
+				t.Errorf("expected error to contain %q, got %q", tc.wantKeyword, err.Error())
+			}
+			if !strings.Contains(err.Error(), "supported: PNG, JPEG, GIF") {
+				t.Errorf("expected error to contain supported-format hint, got %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), "WebP/SVG are not supported") {
+				t.Errorf("expected error to mention unsupported formats, got %q", err.Error())
+			}
+		})
+	}
 }

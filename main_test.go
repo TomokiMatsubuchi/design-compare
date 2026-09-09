@@ -2250,3 +2250,59 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 }
+
+// TestPerceptualDecodeErrorListsSupportedFormats verifies that perceptual-mode
+// decode failures for unsupported image formats (e.g. WebP, SVG) include a hint
+// about the supported formats (PNG, JPEG, GIF) in the error message, so callers
+// can determine the corrective action (format conversion) without an extra
+// round-trip (Issue #122).
+func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vrt-webp-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// WebP のマジックナンバー ("RIFF" + "WEBP") を含むファイル。
+	// Go 標準の image パッケージはデコードできず "image: unknown format" になる。
+	webpPath := filepath.Join(tmpDir, "image.webp")
+	if err := os.WriteFile(webpPath, []byte("RIFF\x00\x00\x00\x00WEBPVP8 fake payload"), 0o644); err != nil {
+		t.Fatalf("failed to write WebP file: %v", err)
+	}
+	pngPath := saveTempImage(t, tmpDir, "valid.png", generateSolidImage(10, 10, color.White))
+
+	for _, c := range []struct {
+		name         string
+		pathA, pathB string
+		wantMsg      string
+	}{
+		{"webp_as_image_A", webpPath, pngPath, "Failed to decode image A"},
+		{"webp_as_image_B", pngPath, webpPath, "Failed to decode image B"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "perceptual",
+						"image_path_a": c.pathA,
+						"image_path_b": c.pathB,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("expected decode error, got content=%v", res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, c.wantMsg) {
+				t.Errorf("expected error to contain %q, got %q", c.wantMsg, got)
+			}
+			if !strings.Contains(got, "supported: PNG, JPEG, GIF") {
+				t.Errorf("expected decode error to contain supported-format hint, got %q", got)
+			}
+		})
+	}
+}
