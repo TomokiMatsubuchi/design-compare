@@ -361,12 +361,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image A: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image A: %v (supported: PNG, JPEG, GIF; WebP/SVG are not supported)", err)), nil
 		}
 
 		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v (supported: PNG, JPEG, GIF; WebP/SVG are not supported)", err)), nil
 		}
 
 		// 0次元画像は意味のある比較ができないため明示的にエラーにする
