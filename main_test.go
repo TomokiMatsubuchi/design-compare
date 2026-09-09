@@ -1365,6 +1365,30 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// 本ツールの diff_image が返す data URI 形式 ("data:image/png;base64,...") を
+	// そのまま再入力できることを検証する (Issue #127: ラウンドトリップ)
+	t.Run("Perceptual_Base64_DataURI_Input", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":           "perceptual",
+					"image_a_base64": "data:image/png;base64," + encodePNGBase64(t, imgA),
+					"image_b_base64": "data:image/png;base64," + encodePNGBase64(t, imgC),
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" || result["match_rate"] != "100.00%" {
+			t.Errorf("Expected perceptual data URI base64 success, got status=%v, rate=%v, content=%v",
+				result["status"], result["match_rate"], res.Content[0].(mcp.TextContent).Text)
+		}
+	})
+
 	t.Run("Perceptual_Base64_Path_Exclusive", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -2249,4 +2273,42 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		}
 	})
+}
+
+// resolveImageInput が data URI 形式 ("data:<mime>;base64,<payload>") の
+// base64 入力を受け付けること、および従来のプレーン base64 が引き続き
+// 動作することを検証する (Issue #127)。
+func TestResolveImageInputBase64DataURI(t *testing.T) {
+	payload := []byte("PNGDATA")
+	plain := base64.StdEncoding.EncodeToString(payload)
+	dataURI := "data:image/png;base64," + plain
+
+	// プレーン base64 は従来通りデコードされる
+	got, err := resolveImageInput("", plain, "image_path_a", "image_a_base64")
+	if err != nil {
+		t.Fatalf("plain base64 should decode: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("plain base64 decoded to %q, want %q", got, payload)
+	}
+
+	// data URI はプレフィックスが除去されて同じバイト列になる
+	got, err = resolveImageInput("", dataURI, "image_path_a", "image_a_base64")
+	if err != nil {
+		t.Fatalf("data URI base64 should decode: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("data URI decoded to %q, want %q", got, payload)
+	}
+
+	// "data:" プレフィックスがあるが ";base64," マーカーを欠く入力は
+	// そのままデコードされるため illegal base64 エラーになる
+	if _, err := resolveImageInput("", "data:image/png", "image_path_a", "image_a_base64"); err == nil {
+		t.Error("expected error for data URI without ';base64,' marker, got nil")
+	}
+
+	// 不正な base64 は従来通りエラーになる
+	if _, err := resolveImageInput("", "not-base64", "image_path_a", "image_a_base64"); err == nil {
+		t.Error("expected error for invalid base64, got nil")
+	}
 }

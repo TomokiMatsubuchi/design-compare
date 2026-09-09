@@ -39,10 +39,10 @@ func main() {
 			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_a_base64",
-			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a)"),
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). May carry a data URI prefix (\"data:image/png;base64,...\"), which is stripped before decoding."),
 		),
 		mcp.WithString("image_b_base64",
-			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b)"),
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). May carry a data URI prefix (\"data:image/png;base64,...\"), which is stripped before decoding."),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path)"),
@@ -92,12 +92,22 @@ func main() {
 
 // resolveImageInput returns the raw bytes of a comparison image from either a
 // local file path or a base64-encoded string (exactly one must be provided).
+// The base64 string may carry a data URI prefix (e.g. "data:image/png;base64,..."),
+// as returned in diff_image responses; the prefix is stripped before decoding.
 func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
 	switch {
 	case pathValue != "" && base64Value != "":
 		return nil, fmt.Errorf("only one of %s and %s can be specified", pathParam, base64Param)
 	case base64Value != "":
-		data, err := base64.StdEncoding.DecodeString(base64Value)
+		// data URI 形式 ("data:<mime>;base64,<payload>") の場合はプレフィックスを除去する。
+		// 本ツールの diff_image はこの形式で返すため、ラウンドトリップ可能にする。
+		payload := base64Value
+		if strings.HasPrefix(payload, "data:") {
+			if i := strings.Index(payload, ";base64,"); i >= 0 {
+				payload = payload[i+len(";base64,"):]
+			}
+		}
+		data, err := base64.StdEncoding.DecodeString(payload)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode %s: %w", base64Param, err)
 		}
