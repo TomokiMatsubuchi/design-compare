@@ -1351,6 +1351,73 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// perceptual 応答の min_match echo のテスト (Issue #129)
+	// perceptual は常に閾値で合否判定するため、実効 min_match (threshold エイリアス
+	// 解決後を含む) を常に応答へ含め、どの閾値で判定されたかを検証可能にする。
+	t.Run("Perceptual_MinMatch_Echo", func(t *testing.T) {
+		// 未指定時はデフォルトの 98.0 が応答される
+		reqDefault := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+				},
+			},
+		}
+		resDefault, err := compareDesignHandler(context.Background(), reqDefault)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultDefault map[string]interface{}
+		json.Unmarshal([]byte(resDefault.Content[0].(mcp.TextContent).Text), &resultDefault)
+		if v, ok := resultDefault["min_match"].(float64); !ok || v != 98.0 {
+			t.Errorf("Expected default min_match=98.0 in response, got %v", resultDefault["min_match"])
+		}
+
+		// 明示指定時は指定値が応答される
+		reqExplicit := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+					"min_match":    50.0,
+				},
+			},
+		}
+		resExplicit, err := compareDesignHandler(context.Background(), reqExplicit)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultExplicit map[string]interface{}
+		json.Unmarshal([]byte(resExplicit.Content[0].(mcp.TextContent).Text), &resultExplicit)
+		if v, ok := resultExplicit["min_match"].(float64); !ok || v != 50.0 {
+			t.Errorf("Expected min_match=50.0 in response, got %v", resultExplicit["min_match"])
+		}
+
+		// threshold エイリアス使用時は解決後の値が応答される
+		reqAlias := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+					"threshold":    99.0,
+				},
+			},
+		}
+		resAlias, err := compareDesignHandler(context.Background(), reqAlias)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultAlias map[string]interface{}
+		json.Unmarshal([]byte(resAlias.Content[0].(mcp.TextContent).Text), &resultAlias)
+		if v, ok := resultAlias["min_match"].(float64); !ok || v != 99.0 {
+			t.Errorf("Expected resolved min_match=99.0 in response for threshold alias, got %v", resultAlias["min_match"])
+		}
+	})
+
 	// =================================================================
 	// base64 入力のテスト (perceptual / strict モード)
 	// =================================================================

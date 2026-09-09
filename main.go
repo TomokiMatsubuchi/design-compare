@@ -388,11 +388,15 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		// 差分画像は base64 data URI で返す（strict モードの diff_image と同じ形式）。
 		// 一時ファイルを書き出さないため /tmp への蓄積が発生しない。
+		// 実効 min_match も常に応答に含め、どの閾値で合否判定されたかを検証可能にする
+		// (layout_tree の effective_threshold / strict の min_match echo と同様。
+		// perceptual は常に閾値で判定するため、threshold エイリアス解決後の値を含む)。
 		responseMap = map[string]interface{}{
 			"status":           status,
 			"mode":             "perceptual",
 			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
 			"match_rate_value": matchRate,
+			"min_match":        minMatchRate,
 			"details":          []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate)},
 			"diff_image":       diffImage,
 		}
