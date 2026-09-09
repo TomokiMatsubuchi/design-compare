@@ -84,7 +84,7 @@ func main() {
 	s.AddTool(compareDesignTool, compareDesignHandler)
 
 	// stdio経由でMCPサーバーを起動
-	log.Println("VRT Unified Compare MCP Server starting...")
+	log.Println("design-compare MCP server starting...")
 	if err := server.ServeStdio(s); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
