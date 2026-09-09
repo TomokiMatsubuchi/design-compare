@@ -107,14 +107,16 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 // in the temp directory. ignoreRegions のうち画像矩形と全く交差しない領域は
 // draw.Draw の自動クリップにより何もマスクされないため、"x,y,w,h" 形式の
 // 文字列リストとして検出結果を返す (両画像の寸法は異なり得るため、いずれかの
-// 画像で範囲外の領域を報告する)。
-func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, string, []string, error) {
+// 画像で範囲外の領域を報告する)。grayA / grayB のいずれかが一様 (ベタ塗り) の
+// 場合は aHash が退化するため、status / match_rate には影響させず警告
+// メッセージのリスト (warnings) を返す (非一様な通常のペアでは空)。
+func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, string, []string, []string, error) {
 	// 0次元画像は意味のある比較ができないため明示的なエラーとする。
 	if b := imgA.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, "", nil, fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, "", nil, nil, fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 	if b := imgB.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, "", nil, fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, "", nil, nil, fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 
 	// 除外領域 (ignore_region) を両画像とも白でマスクしてから比較する。
@@ -138,6 +140,19 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	}
 	avgA := byte(sumA / 256)
 	avgB := byte(sumB / 256)
+
+	// aHash は各画像自身の平均輝度で2値化するため、一様 (ベタ塗り) な画像では
+	// 全セルが同一ビットになる (255>=255 も 0>=0 も true)。全面白 vs 全面黒の
+	// ようなペアでも diffBits=0 → 一致率100% となり、撮影失敗・真っ黒スクショ等が
+	// 無検証で合格する。status / match_rate は変えず、一様な画像を検出して
+	// 警告として呼び出し側に通知する。
+	var warnings []string
+	if isUniformGray(grayA) {
+		warnings = append(warnings, "degenerate aHash: image A is uniform; perceptual match may be unreliable")
+	}
+	if isUniformGray(grayB) {
+		warnings = append(warnings, "degenerate aHash: image B is uniform; perceptual match may be unreliable")
+	}
 
 	const cellScale = 16 // each aHash cell rendered as 16x16 px → 256x256 image
 	var diffImg *image.RGBA
@@ -174,13 +189,13 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	if generateDiff {
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, diffImg); err != nil {
-			return 0, "", nil, fmt.Errorf("failed to encode diff PNG: %w", err)
+			return 0, "", nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 		}
 		diffDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
 	similarity := float64(256-diffBits) / 256.0 * 100.0
-	return similarity, diffDataURI, outOfBounds, nil
+	return similarity, diffDataURI, outOfBounds, warnings, nil
 }
 
 // maskRegions returns a copy of img with the given regions filled with white,
@@ -226,6 +241,23 @@ func mergeOutOfBoundsRegions(lists ...[]string) []string {
 		}
 	}
 	return merged
+}
+
+// isUniformGray は 16x16 グレースケール配列の最小値と最大値が一致する
+// (一様 = ベタ塗り) かどうかを判定する。aHash は各画像自身の平均輝度で
+// 2値化するため、一様な画像は全セルが同一ビットになり (255>=255 も 0>=0 も
+// true)、画像間で内容が全く異なっても diffBits=0 (一致率100%) になってしまう。
+func isUniformGray(gray []byte) bool {
+	minVal, maxVal := gray[0], gray[0]
+	for _, v := range gray[1:] {
+		if v < minVal {
+			minVal = v
+		}
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+	return minVal == maxVal
 }
 
 func resizeTo16x16Gray(img image.Image) []byte {

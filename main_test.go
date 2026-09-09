@@ -1177,6 +1177,62 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// 一様画像 (ベタ塗り) のペアは aHash が退化し、全面白 vs 全面黒でも一致率100%で
+	// 合格してしまう。status / match_rate は変えず warnings で気付かせる (Issue #131)
+	t.Run("Perceptual_UniformImage_Warnings", func(t *testing.T) {
+		pathBlack := saveTempImage(t, tmpDir, "imageUniformBlack.png", generateSolidImage(200, 200, color.Black))
+
+		// pathF (全面白) vs 全面黒: 挙動は success/100% のまま warnings が付く
+		reqUniform := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathF,
+					"image_path_b": pathBlack,
+				},
+			},
+		}
+		resUniform, err := compareDesignHandler(context.Background(), reqUniform)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultUniform map[string]interface{}
+		json.Unmarshal([]byte(resUniform.Content[0].(mcp.TextContent).Text), &resultUniform)
+		if resultUniform["status"] != "success" || resultUniform["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match for uniform pair (behavior unchanged), got status=%v, rate=%v", resultUniform["status"], resultUniform["match_rate"])
+		}
+		gotWarnings, ok := resultUniform["warnings"].([]interface{})
+		if !ok || len(gotWarnings) != 2 {
+			t.Fatalf("Expected 2 warnings for all-white vs all-black, got %v", resultUniform["warnings"])
+		}
+		if gotWarnings[0] != "degenerate aHash: image A is uniform; perceptual match may be unreliable" {
+			t.Errorf("Unexpected warning for image A: %v", gotWarnings[0])
+		}
+		if gotWarnings[1] != "degenerate aHash: image B is uniform; perceptual match may be unreliable" {
+			t.Errorf("Unexpected warning for image B: %v", gotWarnings[1])
+		}
+
+		// 通常の明暗パターンを持つペアでは warnings フィールドは含まれない
+		reqNormal := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+				},
+			},
+		}
+		resNormal, err := compareDesignHandler(context.Background(), reqNormal)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNormal map[string]interface{}
+		json.Unmarshal([]byte(resNormal.Content[0].(mcp.TextContent).Text), &resultNormal)
+		if _, ok := resultNormal["warnings"]; ok {
+			t.Errorf("Expected no warnings for non-uniform pair, got %v", resultNormal["warnings"])
+		}
+	})
+
 	// 差分PNG一時ファイルが /tmp に蓄積しないことを確認する（Issue #32）。
 	t.Run("Perceptual_NoDiffTempFiles", func(t *testing.T) {
 		before, err := countDiffTempFiles()
