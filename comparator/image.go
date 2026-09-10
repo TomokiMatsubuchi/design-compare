@@ -110,13 +110,17 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 // 画像で範囲外の領域を報告する)。grayA / grayB のいずれかが一様 (ベタ塗り) の
 // 場合は aHash が退化するため、status / match_rate には影響させず警告
 // メッセージのリスト (warnings) を返す (非一様な通常のペアでは空)。
-func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, string, []string, []string, error) {
+// あわせて不一致セル数 (diffBits) を 0–256 の int で返す (aHash は 16x16 =
+// 256 セルのため画像サイズによらず固定)。一致率はこの 256 段階の離散値から
+// 算出されるため、呼び出し側が "N of 256 blocks differ" のように数量として
+// 報告できる (strict モードの差分ピクセル数 diffCount に対応する情報)。
+func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, int, string, []string, []string, error) {
 	// 0次元画像は意味のある比較ができないため明示的なエラーとする。
 	if b := imgA.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, "", nil, nil, fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, 0, "", nil, nil, fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 	if b := imgB.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, "", nil, nil, fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, 0, "", nil, nil, fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 
 	// 除外領域 (ignore_region) を両画像とも白でマスクしてから比較する。
@@ -189,13 +193,13 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	if generateDiff {
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, diffImg); err != nil {
-			return 0, "", nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
+			return 0, 0, "", nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 		}
 		diffDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
 	similarity := float64(256-diffBits) / 256.0 * 100.0
-	return similarity, diffDataURI, outOfBounds, warnings, nil
+	return similarity, diffBits, diffDataURI, outOfBounds, warnings, nil
 }
 
 // maskRegions returns a copy of img with the given regions filled with white,

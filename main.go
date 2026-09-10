@@ -225,6 +225,12 @@ func validateModeParams(args map[string]any, mode string) error {
 	return nil
 }
 
+// perceptualTotalBlocks は perceptual (aHash) 比較のブロック (セル) 総数。
+// aHash は画像を 16x16 = 256 セルに分割して比較するため画像サイズに依存せず
+// 固定。strict モードの total_pixels に対応する数量情報として、応答の
+// total_blocks と details の "N of M blocks differ" 表記に使う (Issue #141)。
+const perceptualTotalBlocks = 256
+
 // Handler: compare_design
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
@@ -384,7 +390,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())), nil
 		}
 
-		matchRate, diffImage, outOfBounds, warnings, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
+		matchRate, diffBlocks, diffImage, outOfBounds, warnings, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
@@ -398,13 +404,19 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 実効 min_match も常に応答に含め、どの閾値で合否判定されたかを検証可能にする
 		// (layout_tree の effective_threshold / strict の min_match echo と同様。
 		// perceptual は常に閾値で判定するため、threshold エイリアス解決後の値を含む)。
+		// aHash の不一致セル数 (diff_blocks) と総数 (total_blocks) を strict の
+		// diff_pixels / total_pixels と同様に数量として応答へ含める。aHash は
+		// 256 段階の離散値のため、一致率だけよりも差分セル数の方が min_match の
+		// 調整や差分の解釈が容易になる (Issue #141)。
 		responseMap = map[string]interface{}{
 			"status":           status,
 			"mode":             "perceptual",
 			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
 			"match_rate_value": matchRate,
 			"min_match":        minMatchRate,
-			"details":          []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%", minMatchRate)},
+			"total_blocks":     perceptualTotalBlocks,
+			"diff_blocks":      diffBlocks,
+			"details":          []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, perceptualTotalBlocks)},
 			"diff_image":       diffImage,
 		}
 		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず

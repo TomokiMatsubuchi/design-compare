@@ -1245,6 +1245,81 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// diff_blocks / total_blocks: aHash の差分セル数を数量として応答へ含める
+	// (strict の diff_pixels / total_pixels に対応。Issue #141)
+	t.Run("Perceptual_DiffBlocks", func(t *testing.T) {
+		// 指定なし: pathE (左上100x100の黒矩形) vs pathF (全面白) は
+		// 16x16 グリッドの左上 8x8 = 64 セルが不一致 (一致率75%)
+		reqNoRegion := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resNoRegion, err := compareDesignHandler(context.Background(), reqNoRegion)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNoRegion map[string]interface{}
+		json.Unmarshal([]byte(resNoRegion.Content[0].(mcp.TextContent).Text), &resultNoRegion)
+
+		totalBlocks, ok := resultNoRegion["total_blocks"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric total_blocks, got %T: %v", resultNoRegion["total_blocks"], resultNoRegion["total_blocks"])
+		}
+		if totalBlocks != 256 {
+			t.Errorf("Expected total_blocks=256 (16x16 aHash grid), got %v", totalBlocks)
+		}
+		diffBlocks, ok := resultNoRegion["diff_blocks"].(float64)
+		if !ok {
+			t.Fatalf("Expected numeric diff_blocks, got %T: %v", resultNoRegion["diff_blocks"], resultNoRegion["diff_blocks"])
+		}
+		if diffBlocks != 64 {
+			t.Errorf("Expected diff_blocks=64 (top-left 8x8 cells differ), got %v", diffBlocks)
+		}
+		// diff_blocks / total_blocks から算出される一致率と match_rate_value が整合すること
+		if got, want := resultNoRegion["match_rate_value"], float64(256-64)/256*100; got != want {
+			t.Errorf("Expected match_rate_value=%v consistent with diff_blocks/total_blocks, got %v", want, got)
+		}
+		// details は差分セル数を "N of 256 blocks differ" として含む (単一要素のまま)
+		details, ok := resultNoRegion["details"].([]interface{})
+		if !ok || len(details) != 1 {
+			t.Fatalf("Expected 1 detail entry in perceptual result, got %v", resultNoRegion["details"])
+		}
+		if s, ok := details[0].(string); !ok || !strings.Contains(s, "64 of 256 blocks differ") {
+			t.Errorf("Expected details to contain '64 of 256 blocks differ', got %v", details[0])
+		}
+
+		// ignore_region で既知の差分領域をマスクすると diff_blocks=0
+		reqRegion := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": "0,0,100,100",
+				},
+			},
+		}
+		resRegion, err := compareDesignHandler(context.Background(), reqRegion)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultRegion map[string]interface{}
+		json.Unmarshal([]byte(resRegion.Content[0].(mcp.TextContent).Text), &resultRegion)
+		if got := resultRegion["diff_blocks"]; got != float64(0) {
+			t.Errorf("Expected diff_blocks=0 with ignore_region, got %v", got)
+		}
+		if detailsRegion, ok := resultRegion["details"].([]interface{}); !ok || len(detailsRegion) != 1 {
+			t.Fatalf("Expected 1 detail entry with ignore_region, got %v", resultRegion["details"])
+		} else if str, ok := detailsRegion[0].(string); !ok || !strings.Contains(str, "0 of 256 blocks differ") {
+			t.Errorf("Expected details to contain '0 of 256 blocks differ', got %v", detailsRegion[0])
+		}
+	})
+
 	// 一様画像 (ベタ塗り) のペアは aHash が退化し、全面白 vs 全面黒でも一致率100%で
 	// 合格してしまう。status / match_rate は変えず warnings で気付かせる (Issue #131)
 	t.Run("Perceptual_UniformImage_Warnings", func(t *testing.T) {
