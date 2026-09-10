@@ -38,7 +38,10 @@ type LayoutTreeResult struct {
 // CompareLayoutTrees performs structural layout comparison on element hierarchies.
 // countExtraWeb が true の場合、どの Figma ノードにもマッチしなかった Web ノード
 // （実装側の余分な要素）を一致率の分母 (totalCompared) に加算する。
-func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool) (*LayoutTreeResult, error) {
+// ignoreRegions は画像モードの ignore_region 相当の領域除外で、BoundingBox の
+// 中心点が領域内にあるノードを両側から除外する（除外数は IgnoredCount に加算）。
+// セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
+func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool, ignoreRegions []Region) (*LayoutTreeResult, error) {
 	// tolerance / passRate の範囲検証は呼び出し元 (main.go) で行われるため、
 	// ここでは負値のデフォルト補完は不要。
 
@@ -104,6 +107,32 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 	}
 
+	// ignore_region による領域除外: BoundingBox の中心点が領域内にあるノードを
+	// 両側から除外し、ignore_nodes と同じく IgnoredCount に加算する。セレクタ名が
+	// 分からない動的要素（日付・広告バナー等）を領域だけで除外できるようにする。
+	// 全件除外された場合は下の skipped 判定にそのまま乗る。
+	if len(ignoreRegions) > 0 {
+		var filteredFNodes []FigmaNode
+		for _, fn := range fNodes {
+			if boundingBoxCenterInRegions(fn.X, fn.Y, fn.W, fn.H, ignoreRegions) {
+				ignoredCount++
+				continue
+			}
+			filteredFNodes = append(filteredFNodes, fn)
+		}
+		fNodes = filteredFNodes
+
+		var filteredWNodes []WebNode
+		for _, wn := range wNodes {
+			if boundingBoxCenterInRegions(wn.X, wn.Y, wn.W, wn.H, ignoreRegions) {
+				ignoredCount++
+				continue
+			}
+			filteredWNodes = append(filteredWNodes, wn)
+		}
+		wNodes = filteredWNodes
+	}
+
 	if len(fNodes) == 0 || len(wNodes) == 0 {
 		// ignore_nodes により比較対象が全件除外された場合は、実装不一致と区別して
 		// skipped ステータスで「比較できなかった」ことを明示する。
@@ -118,7 +147,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			return &LayoutTreeResult{
 				MatchRate:        0,
 				Status:           "skipped",
-				Details:          []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
+				Details:          []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
 				IgnoredCount:     ignoredCount,
 				UnmatchedIgnores: unmatchedIgnores,
 			}, nil
@@ -262,6 +291,20 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		IgnoredCount:     ignoredCount,
 		UnmatchedIgnores: unmatchedIgnores,
 	}, nil
+}
+
+// boundingBoxCenterInRegions はノードの BoundingBox 中心点が除外領域のいずれかに
+// 含まれるかを判定する。領域は画像ピクセルの矩形と同じ半開区間
+// [X, X+W) × [Y, Y+H) として中心点を判定する。
+func boundingBoxCenterInRegions(x, y, w, h float64, regions []Region) bool {
+	cx, cy := x+w/2, y+h/2
+	for _, r := range regions {
+		rx, ry := float64(r.X), float64(r.Y)
+		if cx >= rx && cx < rx+float64(r.W) && cy >= ry && cy < ry+float64(r.H) {
+			return true
+		}
+	}
+	return false
 }
 
 func getFigmaParent(node FigmaNode, list []FigmaNode) *FigmaNode {
