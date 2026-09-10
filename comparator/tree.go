@@ -181,12 +181,29 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
 	usedWeb := make(map[int]bool)
 
+	// 親ノード検索をループ内の線形走査で行うと全体で O(n_f × n_w²) になるため、
+	// フィルタリング後のリストから親参照用インデックスを一度だけ構築して O(1) 参照にする。
+	// 同一キー（Figma ID / Web セレクタ）が重複する場合は先勝ちとし、線形走査で
+	// 「最初に見つかったノード」を返していた従来挙動を維持する。
+	figmaByID := make(map[string]*FigmaNode, len(fNodes))
+	for i := range fNodes {
+		if _, ok := figmaByID[fNodes[i].ID]; !ok {
+			figmaByID[fNodes[i].ID] = &fNodes[i]
+		}
+	}
+	webBySelector := make(map[string]*WebNode, len(wNodes))
+	for i := range wNodes {
+		if _, ok := webBySelector[wNodes[i].Selector]; !ok {
+			webBySelector[wNodes[i].Selector] = &wNodes[i]
+		}
+	}
+
 	// 各Figmaノードと、Webの対応する要素を探して比較
 	// 簡単のため、Figmaの各要素と、Web側で最も「幾何学的位置（相対位置）が近いもの」を対応付ける
 	for _, fn := range fNodes {
 		totalCompared++
 		// 親要素に対する相対サイズと相対座標を計算
-		parentF := getFigmaParent(fn, fNodes)
+		parentF := getFigmaParent(fn, figmaByID)
 		relX_f, relY_f, relW_f, relH_f, figmaAbs := getFigmaRelativeCoords(fn, parentF)
 
 		var bestMatchSelector string
@@ -200,7 +217,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				continue
 			}
 
-			parentW := getWebParent(wn, wNodes)
+			parentW := getWebParent(wn, webBySelector)
 			relX_w, relY_w, relW_w, relH_w, webAbs := getWebRelativeCoords(wn, parentW)
 
 			// 座標空間の対称性を保証する:
@@ -307,28 +324,24 @@ func boundingBoxCenterInRegions(x, y, w, h float64, regions []Region) bool {
 	return false
 }
 
-func getFigmaParent(node FigmaNode, list []FigmaNode) *FigmaNode {
+// getFigmaParent は親参照用インデックス（ID → ノード）から親ノードを O(1) で引く。
+// インデックスは先勝ちで構築されるため、ID 重複時も従来の線形走査と同じく
+// 「最初に見つかったノード」が返る。見つからない場合は nil。
+func getFigmaParent(node FigmaNode, byID map[string]*FigmaNode) *FigmaNode {
 	if node.Parent == "" {
 		return nil
 	}
-	for _, n := range list {
-		if n.ID == node.Parent {
-			return &n
-		}
-	}
-	return nil
+	return byID[node.Parent]
 }
 
-func getWebParent(node WebNode, list []WebNode) *WebNode {
+// getWebParent は親参照用インデックス（セレクタ → ノード）から親ノードを O(1) で引く。
+// インデックスは先勝ちで構築されるため、セレクタ重複時も従来の線形走査と同じく
+// 「最初に見つかったノード」が返る。見つからない場合は nil。
+func getWebParent(node WebNode, bySelector map[string]*WebNode) *WebNode {
 	if node.Parent == "" {
 		return nil
 	}
-	for _, n := range list {
-		if n.Selector == node.Parent {
-			return &n
-		}
-	}
-	return nil
+	return bySelector[node.Parent]
 }
 
 // getFigmaRelativeCoords はノードの親要素に対する相対比率 (0〜1) を返す。
