@@ -60,7 +60,7 @@ func main() {
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode)."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore in 'perceptual' and 'strict' modes, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). Both images are masked with white in these regions before comparison. Useful to exclude dynamic content (dates, ads, banners) that always differs. Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are only reported in details)."),
@@ -191,7 +191,7 @@ var modeParamSupport = map[string]map[string]bool{
 	"pass_rate":       {"layout_tree": true},
 	"max_diff_pixels": {"strict": true},
 	"ignore_nodes":    {"layout_tree": true},
-	"ignore_region":   {"perceptual": true, "strict": true},
+	"ignore_region":   {"layout_tree": true, "perceptual": true, "strict": true},
 	"count_extra_web": {"layout_tree": true},
 	"generate_diff":   {"perceptual": true, "strict": true},
 }
@@ -233,7 +233,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 	}
 
 	// モード非対応パラメータの検証: 当該モードで効果を持たないパラメータ
-	// (例: perceptual への ignore_nodes、layout_tree への ignore_region) は
+	// (例: perceptual への ignore_nodes、layout_tree への min_match) は
 	// サイレントに無視せず、明示的にエラーとして返す。
 	if err := validateModeParams(request.GetArguments(), mode); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -285,7 +285,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		countExtraWeb := request.GetBool("count_extra_web", false)
 
-		treeResult, err := comparator.CompareLayoutTrees(figmaLayout, webLayout, tolerance, passRate, ignoreList, countExtraWeb)
+		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
+		// layout_tree では BoundingBox の中心点が領域内にあるノードを両側から除外する。
+		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
+		}
+
+		treeResult, err := comparator.CompareLayoutTrees(figmaLayout, webLayout, tolerance, passRate, ignoreList, countExtraWeb, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout Tree comparison failed: %v", err)), nil
 		}
