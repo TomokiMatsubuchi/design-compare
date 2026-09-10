@@ -1233,6 +1233,62 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// 背景透過PNG (Figma のフレーム書き出し等) の透過ピクセルを白背景に合成して
+	// から輝度化することを検証する (Issue #134)。アルファを無視して透過部分を
+	// 「黒」として扱うと、strict (pixelmatch は白背景に合成して比較) だけが通り、
+	// perceptual だけが大差分の誤不一致になっていた。
+	t.Run("Perceptual_TransparentBackground_WhiteComposite", func(t *testing.T) {
+		// 全面透過 200x200 (全ピクセル alpha=0) vs 全面白 (pathF):
+		// 白合成後は同じ全面白のため 100% 一致する (両画像とも一様のため
+		// uniform 警告は発火するが合否には影響しない)。
+		pathTransparent := saveTempImage(t, tmpDir, "imageTransparent.png", image.NewRGBA(image.Rect(0, 0, 200, 200)))
+
+		reqFull := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathTransparent,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resFull, err := compareDesignHandler(context.Background(), reqFull)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultFull map[string]interface{}
+		json.Unmarshal([]byte(resFull.Content[0].(mcp.TextContent).Text), &resultFull)
+		if resultFull["status"] != "success" || resultFull["match_rate"] != "100.00%" {
+			t.Errorf("Expected full transparent vs full white to match 100%% after white compositing, got status=%v, rate=%v", resultFull["status"], resultFull["match_rate"])
+		}
+
+		// 透過背景 + 右半分に黒矩形 (Figma の背景透過書き出しを模擬) vs
+		// pathA (白背景 + 同じ黒矩形): 透過部分が「黒」として扱われると透過側が
+		// 一様な全面黒になり 50% の誤不一致になるが、白合成されれば 100% 一致する。
+		imgTransparentContent := image.NewRGBA(image.Rect(0, 0, 200, 200))
+		draw.Draw(imgTransparentContent, image.Rect(100, 0, 200, 200), &image.Uniform{color.Black}, image.Point{}, draw.Src)
+		pathTransparentContent := saveTempImage(t, tmpDir, "imageTransparentContent.png", imgTransparentContent)
+
+		reqContent := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathTransparentContent,
+					"image_path_b": pathA,
+				},
+			},
+		}
+		resContent, err := compareDesignHandler(context.Background(), reqContent)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultContent map[string]interface{}
+		json.Unmarshal([]byte(resContent.Content[0].(mcp.TextContent).Text), &resultContent)
+		if resultContent["status"] != "success" || resultContent["match_rate"] != "100.00%" {
+			t.Errorf("Expected transparent-bg content vs white-bg content to match 100%% after white compositing, got status=%v, rate=%v", resultContent["status"], resultContent["match_rate"])
+		}
+	})
+
 	// 差分PNG一時ファイルが /tmp に蓄積しないことを確認する（Issue #32）。
 	t.Run("Perceptual_NoDiffTempFiles", func(t *testing.T) {
 		before, err := countDiffTempFiles()
