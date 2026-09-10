@@ -1018,6 +1018,74 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.13. layout_tree モード: ignore_region による領域除外
+	// =================================================================
+	// 画像モードと同じ ignore_region を layout_tree でも受け付ける。
+	// BoundingBox の中心点が領域内にあるノードは両側とも比較から除外され、
+	// 除外数は ignored_count に加算される。全件除外時は ignore_nodes と同じ
+	// skipped 判定になる。
+	t.Run("LayoutTree_IgnoreRegion", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "banner", "x": 400, "y": 400, "w": 200, "h": 80}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".banner", "x": 650, "y": 420, "w": 200, "h": 80}
+		]`
+
+		// banner は Figma 側 (中心 500,440) と Web 側 (中心 750,460) で位置が大きく
+		// 異なるため、除外が効かない場合は mismatch になる。
+		cases := []struct {
+			region        string
+			wantStatus    string
+			wantIgnored   float64
+			wantMatchRate string
+		}{
+			// 両側の banner の中心点のみを含む領域 [400,900)x[400,500):
+			// banner が両側から除外され、残った header 同士は一致する
+			{"400,400,500,100", "success", 2, "100.00%"},
+			// banner と重なるが中心点を含まない領域 [600,700)x[400,500):
+			// 中心点ベースの判定のため除外されず mismatch のまま
+			{"600,400,100,100", "mismatch", 0, "50.00%"},
+			// 全ノードの中心点を含む領域: ignore_nodes と同じ skipped 判定になる
+			{"0,0,2000,2000", "skipped", 4, "0.00%"},
+		}
+
+		for _, c := range cases {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":          "layout_tree",
+						"figma_layout":  figmaLayout,
+						"web_layout":    webLayout,
+						"threshold":     0.15,
+						"ignore_region": c.region,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("Expected no error for ignore_region=%q, got content=%v", c.region, res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != c.wantStatus {
+				t.Errorf("ignore_region=%q: expected status=%v, got %v", c.region, c.wantStatus, result["status"])
+			}
+			if got := result["ignored_count"]; got != c.wantIgnored {
+				t.Errorf("ignore_region=%q: expected ignored_count=%v, got %v", c.region, c.wantIgnored, got)
+			}
+			if got := result["match_rate"]; got != c.wantMatchRate {
+				t.Errorf("ignore_region=%q: expected match_rate=%v, got %v", c.region, c.wantMatchRate, got)
+			}
+		}
+	})
+
+	// =================================================================
 	// 2. perceptual モード (知覚的画像比較) のテスト
 	// =================================================================
 	t.Run("Perceptual_Layout_Match", func(t *testing.T) {
@@ -2355,12 +2423,12 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_tree", "image_path_b", pathC, true},
 			{"layout_tree", "image_a_base64", "not-base64", true},
 			{"layout_tree", "image_b_base64", "not-base64", true},
-			{"layout_tree", "ignore_region", "0,0,10,10", true},
 			{"layout_tree", "max_diff_pixels", 10.0, true},
 			{"layout_tree", "generate_diff", false, true},
 			{"layout_tree", "min_match", 90.0, true},
 			// layout_tree: 対応パラメータはエラーにならない
 			{"layout_tree", "ignore_nodes", "a", false},
+			{"layout_tree", "ignore_region", "0,0,10,10", false},
 			{"layout_tree", "count_extra_web", true, false},
 			{"layout_tree", "pass_rate", 90.0, false},
 			{"layout_tree", "threshold", 0.15, false},

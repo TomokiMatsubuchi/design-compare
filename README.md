@@ -36,7 +36,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 `compare_design` ツールの全パラメータを以下に示します。`mode`（必須）には `layout_tree` / `perceptual` / `strict` のいずれかを指定します（各モードの詳細は「1. 3つの検証モード (`mode`)」を参照）。
 
-**注意:** モードごとに意味やスケールが異なるパラメータ（特に `threshold`）があります。また、当該モードでは効果を持たないパラメータ（例: `layout_tree` への `ignore_region`、`perceptual` への `pass_rate`）を指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラーが返ります。パラメータと有効モードの対応表は「8. 破壊的変更」を参照してください。
+**注意:** モードごとに意味やスケールが異なるパラメータ（特に `threshold`）があります。また、当該モードでは効果を持たないパラメータ（例: `layout_tree` への `min_match`、`perceptual` への `pass_rate`）を指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラーが返ります。パラメータと有効モードの対応表は「8. 破壊的変更」を参照してください。
 
 ### 入力データ
 
@@ -63,7 +63,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。 |
 | `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
 | `ignore_nodes` | string | `layout_tree` | — | 空 | 比較から除外する Figma Node ID / Node Name / Web Selector のカンマ区切りリスト。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される。 |
-| `ignore_region` | string | `perceptual` / `strict` | — | 空 | 比較前に両画像を白でマスクする矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。 |
+| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`layout_tree` では BoundingBox の中心点が領域内にあるノードを両側から除外し、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。 |
 | `count_extra_web` | boolean | `layout_tree` | true / false | false | `true` の場合、どの Figma ノードにもマッチしなかった Web ノード（実装側の余分な要素）を一致率の分母に加算して一致率を下げる。 |
 | `generate_diff` | boolean | `perceptual` / `strict` | true / false | true | `false` の場合は差分画像を生成せず、`diff_image` は空文字列で返される。 |
 
@@ -238,7 +238,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ### モード非対応パラメータの明示的エラー化
 
-従来は、モードごとに効果を持たないパラメータ（例: `perceptual` / `strict` モードへの `ignore_nodes`、`layout_tree` モードへの `ignore_region`、`perceptual` モードへの `pass_rate`）を指定しても警告なく無視され、呼び出し側は「除外・合格ラインが効いているつもり」のまま判定結果を受け取る状態でした。
+従来は、モードごとに効果を持たないパラメータ（例: `perceptual` / `strict` モードへの `ignore_nodes`、`layout_tree` モードへの `max_diff_pixels`、`perceptual` モードへの `pass_rate`）を指定しても警告なく無視され、呼び出し側は「除外・合格ラインが効いているつもり」のまま判定結果を受け取る状態でした。
 
 これを防ぐため、モードごとのパラメータ許可マップによる照合を導入しました。非対応モードでパラメータを指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラー (`IsError: true`) を返します。
 
@@ -249,7 +249,8 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 | `image_path_a` / `image_path_b` / `image_a_base64` / `image_b_base64` | `perceptual`, `strict` |
 | `figma_layout` / `figma_layout_path` / `web_layout` / `web_layout_path` | `layout_tree` |
 | `ignore_nodes` / `count_extra_web` / `pass_rate` | `layout_tree` |
-| `ignore_region` / `generate_diff` / `min_match` | `perceptual`, `strict` |
+| `ignore_region` | `layout_tree`, `perceptual`, `strict` |
+| `generate_diff` / `min_match` | `perceptual`, `strict` |
 | `max_diff_pixels` | `strict` |
 | `threshold` | `layout_tree`, `perceptual`, `strict` (`perceptual` では `min_match` の後方互換エイリアスとして 1.0–100.0 を受け付ける) |
 
