@@ -284,7 +284,19 @@ func resizeTo16x16Gray(img image.Image) []byte {
 
 			for py := startY; py < endY; py++ {
 				for px := startX; px < endX; px++ {
-					r, g, b, _ := img.At(px, py).RGBA()
+					// 透過ピクセルは白背景に合成してから輝度化する。RGBA() は
+					// premultiplied 値を返すため透過部分は (0,0,0) になり、アルファを
+					// 無視すると透過が「黒」として扱われてしまう。strict モード
+					// (pixelmatch は白背景に合成して比較する) と同じ「白背景」前提に
+					// 揃え、背景透過PNGと不透明スクショの組での誤不一致を防ぐ
+					// (Issue #134)。premultiplied 値は r,g,b ≤ a が保証されるため
+					// 0xffff-a を加えても桁あふれしない。
+					r, g, b, a := img.At(px, py).RGBA()
+					if a != 0xffff {
+						r += 0xffff - a
+						g += 0xffff - a
+						b += 0xffff - a
+					}
 					sumR += r >> 8
 					sumG += g >> 8
 					sumB += b >> 8
