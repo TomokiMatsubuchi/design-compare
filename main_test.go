@@ -2105,7 +2105,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// サイズの異なる画像ペアは白埋めで吸収せず、エラーとして明示的に報告する
-	// (白埋め領域が一致として数えられ一致率が水増しされるのを防ぐ)
+	// (白埋め領域が一致として数えられ一致率が水増しされるのを防ぐ)。
+	// エラーメッセージには対処ヒント (同一ビューポート・DPR で撮り直す /
+	// perceptual モードへの代替) が含まれることも検証する (Issue #143)
 	t.Run("StrictMode_SizeMismatch_Error", func(t *testing.T) {
 		imgSmall := generateSolidImage(100, 100, color.White)
 		pathSmall := saveTempImage(t, tmpDir, "imageSmall.png", imgSmall)
@@ -2126,8 +2128,17 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !res.IsError {
 			t.Errorf("Expected error for strict mode with different image sizes, got content=%v", res.Content[0].(mcp.TextContent).Text)
 		}
-		if msg := res.Content[0].(mcp.TextContent).Text; !strings.Contains(msg, "size mismatch") {
+		msg := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(msg, "size mismatch") {
 			t.Errorf("Expected size mismatch error message, got %v", msg)
+		}
+		// 対処ヒント: 同一ビューポートサイズ・DPR での撮り直しと、
+		// サイズ違い画像に対する perceptual モードへの案内が含まれること (Issue #143)
+		if !strings.Contains(msg, "same viewport size and device pixel ratio") {
+			t.Errorf("Expected same viewport/DPR hint in size mismatch message, got %v", msg)
+		}
+		if !strings.Contains(msg, "perceptual mode") {
+			t.Errorf("Expected perceptual mode hint in size mismatch message, got %v", msg)
 		}
 	})
 

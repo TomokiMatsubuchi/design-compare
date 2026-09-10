@@ -322,6 +322,10 @@ func resizeTo16x16Gray(img image.Image) []byte {
 // EnsureSameSize verifies that both images have identical dimensions and returns
 // them unchanged. Size differences are reported as an error instead of being
 // silently padded, so that strict pixel comparison never counts padding as matches.
+// エラーメッセージには対処ヒント (同一ビューポートサイズ・DPR で両スクショを撮り
+// 直す、または異なるサイズの画像には perceptual モードを使う) を含め、エージェント
+// が自己解決できるようにする (Retina 環境の DPR 差やフルページ撮影によるサイズ
+// 違いは頻出の失敗のため)。
 func EnsureSameSize(imgA, imgB image.Image) (image.Image, image.Image, error) {
 	boundsA := imgA.Bounds()
 	boundsB := imgB.Bounds()
@@ -329,7 +333,7 @@ func EnsureSameSize(imgA, imgB image.Image) (image.Image, image.Image, error) {
 	wB, hB := boundsB.Dx(), boundsB.Dy()
 
 	if wA != wB || hA != hB {
-		return nil, nil, fmt.Errorf("image size mismatch: image A is %dx%d, image B is %dx%d; strict comparison requires identical sizes", wA, hA, wB, hB)
+		return nil, nil, fmt.Errorf("image size mismatch: image A is %dx%d, image B is %dx%d; strict comparison requires identical sizes; capture both screenshots at the same viewport size and device pixel ratio (or use the perceptual mode for images of different sizes)", wA, hA, wB, hB)
 	}
 	return imgA, imgB, nil
 }
