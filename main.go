@@ -242,7 +242,7 @@ const perceptualTotalBlocks = 256
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
 	if err != nil {
-		return mcp.NewToolResultError("mode parameter is required"), nil
+		return mcp.NewToolResultError("mode parameter is required (valid modes: layout_tree, perceptual, strict)"), nil
 	}
 
 	// モード非対応パラメータの検証: 当該モードで効果を持たないパラメータ
