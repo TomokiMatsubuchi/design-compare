@@ -39,10 +39,10 @@ func main() {
 			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_a_base64",
-			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a)"),
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Also accepts a data URI form ('data:<mime>;base64,...') as returned by screenshot tools; the prefix is stripped before decoding"),
 		),
 		mcp.WithString("image_b_base64",
-			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b)"),
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Also accepts a data URI form ('data:<mime>;base64,...') as returned by screenshot tools; the prefix is stripped before decoding"),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path)"),
@@ -92,12 +92,19 @@ func main() {
 
 // resolveImageInput returns the raw bytes of a comparison image from either a
 // local file path or a base64-encoded string (exactly one must be provided).
+// For base64 input, a data URI prefix ("data:<mime>;base64,...") such as the one
+// returned by screenshot tools (e.g. chrome-devtools-mcp) is stripped before
+// decoding; a bare base64 string is accepted unchanged.
 func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
 	switch {
 	case pathValue != "" && base64Value != "":
 		return nil, fmt.Errorf("only one of %s and %s can be specified", pathParam, base64Param)
 	case base64Value != "":
-		data, err := base64.StdEncoding.DecodeString(base64Value)
+		b64 := base64Value
+		if i := strings.Index(b64, ";base64,"); i >= 0 && strings.HasPrefix(b64, "data:") {
+			b64 = b64[i+len(";base64,"):]
+		}
+		data, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode %s: %w", base64Param, err)
 		}
