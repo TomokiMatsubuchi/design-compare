@@ -2715,4 +2715,30 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		}
 	})
+
+	// mode 未指定のエラーにも有効モード名が列挙されている (未知モード時と同じ
+	// 自己修復体験に揃え、呼び出し側のリトライ回数を減らす)
+	t.Run("MissingMode_ListsValidModes", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("Expected error for missing mode, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "mode parameter is required") {
+			t.Errorf("Expected missing mode error to state mode is required, got %q", got)
+		}
+		for _, valid := range []string{"layout_tree", "perceptual", "strict"} {
+			if !strings.Contains(got, valid) {
+				t.Errorf("Expected missing mode error to list valid mode %q, got %q", valid, got)
+			}
+		}
+	})
 }
