@@ -1718,6 +1718,48 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	t.Run("Perceptual_Base64_DataURI_Input", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":           "perceptual",
+					"image_a_base64": encodePNGBase64(t, imgA),
+					"image_b_base64": "data:image/png;base64," + encodePNGBase64(t, imgC),
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" || result["match_rate"] != "100.00%" {
+			t.Errorf("Expected perceptual data URI base64 success, got status=%v, rate=%v", result["status"], result["match_rate"])
+		}
+	})
+
+	t.Run("Strict_Base64_DataURI_Input", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":           "strict",
+					"image_a_base64": encodePNGBase64(t, imgA),
+					"image_b_base64": "data:image/png;base64," + encodePNGBase64(t, imgC),
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Errorf("Expected strict data URI base64 mismatch, got status=%v", result["status"])
+		}
+	})
+
 	t.Run("Perceptual_Base64_Path_Exclusive", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
