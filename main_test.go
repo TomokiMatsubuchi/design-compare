@@ -493,6 +493,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !found {
 			t.Errorf("Expected details to report unmatched Web node '.banner', got %v", details)
 		}
+
+		// 余分な Web ノードは構造化フィールド (extra_web_count / extra_web_nodes) でも
+		// 報告されるはず（クライアントは文字列パースなしで対象を特定できる）
+		if got := result["extra_web_count"]; got != float64(1) {
+			t.Errorf("Expected extra_web_count=1, got %v", got)
+		}
+		extraNodes, hasExtra := result["extra_web_nodes"].([]interface{})
+		if !hasExtra || len(extraNodes) != 1 || extraNodes[0] != ".banner" {
+			t.Errorf("Expected extra_web_nodes=[\".banner\"], got %v", result["extra_web_nodes"])
+		}
 	})
 
 	// =================================================================
@@ -850,6 +860,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultOn["total_nodes"]; got != float64(3) {
 			t.Errorf("Expected total_nodes=3 (extra web node counted), got %v", got)
 		}
+		if got := resultOn["extra_web_count"]; got != float64(1) {
+			t.Errorf("Expected extra_web_count=1, got %v", got)
+		}
+		extraOn, hasExtraOn := resultOn["extra_web_nodes"].([]interface{})
+		if !hasExtraOn || len(extraOn) != 1 || extraOn[0] != ".banner" {
+			t.Errorf("Expected extra_web_nodes=[\".banner\"], got %v", resultOn["extra_web_nodes"])
+		}
 
 		// count_extra_web 未指定 (デフォルト false): 一致率には影響しない
 		reqOff := mcp.CallToolRequest{
@@ -873,6 +890,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := resultOff["total_nodes"]; got != float64(2) {
 			t.Errorf("Expected total_nodes=2 when count_extra_web is off, got %v", got)
+		}
+
+		// count_extra_web が false でも、余分な Web ノードの構造化レポートは返る
+		// （分母への加算のみが本フラグで制御される）
+		if got := resultOff["extra_web_count"]; got != float64(1) {
+			t.Errorf("Expected extra_web_count=1 even when count_extra_web is off, got %v", got)
+		}
+		extraOff, hasExtraOff := resultOff["extra_web_nodes"].([]interface{})
+		if !hasExtraOff || len(extraOff) != 1 || extraOff[0] != ".banner" {
+			t.Errorf("Expected extra_web_nodes=[\".banner\"] even when count_extra_web is off, got %v", resultOff["extra_web_nodes"])
 		}
 	})
 

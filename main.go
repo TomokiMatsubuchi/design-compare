@@ -63,7 +63,7 @@ func main() {
 			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
-			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are only reported in details)."),
+			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
 		),
 		mcp.WithNumber("threshold",
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0); prefer 'min_match' instead to avoid confusion with the 0.0–1.0 tolerance scale."),
@@ -322,10 +322,16 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"effective_threshold": tolerance,
 			"pass_rate":           passRate,
 			"ignored_count":       treeResult.IgnoredCount,
+			"extra_web_count":     treeResult.ExtraWebCount,
 		}
 		// ignore_nodes 指定時に一致しなかったエントリ（スペルミス等）のフィードバックを返す
 		if len(treeResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = treeResult.UnmatchedIgnores
+		}
+		// どの Figma ノードにもマッチしなかった余分な Web ノード（実装側の過剰要素）を
+		// 文字列パースなしで扱えるよう、セレクタを構造化フィールドでも返す（0件時は省略）。
+		if len(treeResult.ExtraWebNodes) > 0 {
+			responseMap["extra_web_nodes"] = treeResult.ExtraWebNodes
 		}
 
 	case "perceptual":
