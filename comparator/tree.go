@@ -33,11 +33,15 @@ type LayoutTreeResult struct {
 	TotalNodes       int      `json:"total_nodes"`
 	IgnoredCount     int      `json:"ignored_count"`
 	UnmatchedIgnores []string `json:"unmatched_ignores,omitempty"`
+	ExtraWebCount    int      `json:"extra_web_count"`
+	ExtraWebNodes    []string `json:"extra_web_nodes,omitempty"`
 }
 
 // CompareLayoutTrees performs structural layout comparison on element hierarchies.
 // countExtraWeb が true の場合、どの Figma ノードにもマッチしなかった Web ノード
-// （実装側の余分な要素）を一致率の分母 (totalCompared) に加算する。
+// （実装側の余分な要素）を一致率の分母 (totalCompared) に加算する。余分な Web ノードの
+// セレクタは countExtraWeb の指定に関わらず ExtraWebCount / ExtraWebNodes にも
+// 構造化して返す（details の free-text と同じ情報を文字列パースなしで扱えるようにする）。
 // ignoreRegions は画像モードの ignore_region 相当の領域除外で、BoundingBox の
 // 中心点が領域内にあるノードを両側から除外する（除外数は IgnoredCount に加算）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
@@ -268,10 +272,14 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 	}
 
-	// 1対1マッチング後に使用されなかったWebノード（実装側の余分な要素）を報告する
+	// 1対1マッチング後に使用されなかったWebノード（実装側の余分な要素）を報告する。
+	// details の free-text に加え、クライアントが文字列パースなしで対象を特定できる
+	// ようセレクタを構造化フィールド (ExtraWebCount / ExtraWebNodes) 用にも収集する。
+	var extraWebSelectors []string
 	for wi, wn := range wNodes {
 		if !usedWeb[wi] {
 			extraWebDetails = append(extraWebDetails, fmt.Sprintf("Web Node '%s' did not match any Figma node (extra element in implementation)", wn.Selector))
+			extraWebSelectors = append(extraWebSelectors, wn.Selector)
 		}
 	}
 
@@ -307,6 +315,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		TotalNodes:       totalCompared,
 		IgnoredCount:     ignoredCount,
 		UnmatchedIgnores: unmatchedIgnores,
+		ExtraWebCount:    len(extraWebSelectors),
+		ExtraWebNodes:    extraWebSelectors,
 	}, nil
 }
 
