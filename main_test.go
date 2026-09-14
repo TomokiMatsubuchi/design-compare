@@ -2209,6 +2209,11 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !strings.Contains(msg, "perceptual mode") {
 			t.Errorf("Expected perceptual mode hint in size mismatch message, got %v", msg)
 		}
+		// 意図的なサイズ違い (DPR 差など) への誘導には、perceptual モードが両画像を
+		// 16x16 に縮小してマクロレイアウトを比較する旨の説明が含まれること (Issue #155)
+		if !strings.Contains(msg, "downscaling both to 16x16") {
+			t.Errorf("Expected 16x16 downscaling explanation in size mismatch message, got %v", msg)
+		}
 	})
 
 	// =================================================================
