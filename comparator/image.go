@@ -22,6 +22,13 @@ type Region struct {
 	H int
 }
 
+// maxImageDimension は比較可能な画像の幅・高さの上限 (8192 = 8K スクショ相当)。
+// 巨大または圧縮爆弾的な PNG は image.Decode だけでも数百MB〜数GB を確保し、
+// さらに maskRegions の RGBA コピーや pixelmatch の差分画像でメモリ確保が数倍に
+// 増幅される。長時間稼働する MCP サーバープロセスが OOM で落ちるのを防ぐため、
+// 上限を超えた画像は修復可能な明示的エラーとして弾く (Issue #158)。
+const maxImageDimension = 8192
+
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
 // generateDiff is false, the diff image is not rendered and an empty string
 // is returned instead of its base64 data URI. ignoreRegions are masked with
@@ -51,6 +58,12 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 	// 明示的なエラーとして報告する。
 	if w == 0 || h == 0 {
 		return 0, 0, 0, "", nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
+	}
+	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーや
+	// pixelmatch の差分画像による追加確保の前に修復可能なエラーとして弾く
+	// (EnsureSameSize 済みのため両画像の寸法は同一)。
+	if w > maxImageDimension || h > maxImageDimension {
+		return 0, 0, 0, "", nil, fmt.Errorf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", w, h, maxImageDimension)
 	}
 	totalPixels := w * h
 
@@ -121,6 +134,14 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	}
 	if b := imgB.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
 		return 0, 0, "", nil, nil, fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+	}
+	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーによる
+	// 追加確保の前に修復可能なエラーとして弾く (OOM 防止、Issue #158)。
+	if b := imgA.Bounds(); b.Dx() > maxImageDimension || b.Dy() > maxImageDimension {
+		return 0, 0, "", nil, nil, fmt.Errorf("image A is %dx%d; maximum supported dimension is %d, resize the images before comparison", b.Dx(), b.Dy(), maxImageDimension)
+	}
+	if b := imgB.Bounds(); b.Dx() > maxImageDimension || b.Dy() > maxImageDimension {
+		return 0, 0, "", nil, nil, fmt.Errorf("image B is %dx%d; maximum supported dimension is %d, resize the images before comparison", b.Dx(), b.Dy(), maxImageDimension)
 	}
 
 	// 除外領域 (ignore_region) を両画像とも白でマスクしてから比較する。
