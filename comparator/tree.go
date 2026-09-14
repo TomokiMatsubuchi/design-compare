@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 )
 
 type FigmaNode struct {
@@ -42,6 +43,9 @@ type LayoutTreeResult struct {
 // （実装側の余分な要素）を一致率の分母 (totalCompared) に加算する。余分な Web ノードの
 // セレクタは countExtraWeb の指定に関わらず ExtraWebCount / ExtraWebNodes にも
 // 構造化して返す（details の free-text と同じ情報を文字列パースなしで扱えるようにする）。
+// ignoreList の末尾が '*' のエントリはプレフィックス一致として扱われ、命名規則に従う
+// グループ（例: '.ad-*'、'Icon/*'）を全要素列挙なしで除外できる。プレフィックスに
+// 一致するノードが1つも無い場合のみ UnmatchedIgnores に入る。
 // ignoreRegions は画像モードの ignore_region 相当の領域除外で、BoundingBox の
 // 中心点が領域内にあるノードを両側から除外する（除外数は IgnoredCount に加算）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
@@ -59,12 +63,22 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
 	}
 
-	// ignoreList に基づいてノードを除外し、適用結果（除外数・無効なエントリ）を集計する
+	// ignoreList に基づいてノードを除外し、適用結果（除外数・無効なエントリ）を集計する。
+	// 末尾が '*' のエントリはプレフィックス一致（例: '.ad-*' は '.ad-banner' に一致）として
+	// 扱い、命名規則に従うグループ（広告・計測タグ等）を列挙なしで除外できる。
+	// 途中の '*' や '?' はワイルドカードではなく通常の完全一致扱いとする。
 	var ignoredCount int
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
 		ignoreMap := make(map[string]bool)
+		var wildcardPrefixes []string
 		for _, item := range ignoreList {
+			if strings.HasSuffix(item, "*") {
+				// プレフィックス一致エントリ: '*' を除いた部分（raw + clean）を prefix として登録
+				prefix := strings.TrimSuffix(item, "*")
+				wildcardPrefixes = append(wildcardPrefixes, prefix, cleanNodeName(prefix))
+				continue
+			}
 			ignoreMap[item] = true
 			ignoreMap[cleanNodeName(item)] = true
 		}
@@ -85,7 +99,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 		var filteredFNodes []FigmaNode
 		for _, fn := range fNodes {
-			if ignoreMap[fn.ID] || ignoreMap[fn.Name] || ignoreMap[cleanNodeName(fn.ID)] || ignoreMap[cleanNodeName(fn.Name)] {
+			if isNodeValueIgnored(fn.ID, ignoreMap, wildcardPrefixes) || isNodeValueIgnored(fn.Name, ignoreMap, wildcardPrefixes) {
 				ignoredCount++
 				continue
 			}
@@ -95,7 +109,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 		var filteredWNodes []WebNode
 		for _, wn := range wNodes {
-			if ignoreMap[wn.Selector] || ignoreMap[cleanNodeName(wn.Selector)] {
+			if isNodeValueIgnored(wn.Selector, ignoreMap, wildcardPrefixes) {
 				ignoredCount++
 				continue
 			}
@@ -103,8 +117,16 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 		wNodes = filteredWNodes
 
-		// どのノードにも一致しなかった ignore エントリ（スペルミス等）を検出する
+		// どのノードにも一致しなかった ignore エントリ（スペルミス等）を検出する。
+		// 末尾 '*' のプレフィックスエントリは、プレフィックスに一致するノードが
+		// 1つも無い場合のみ報告する。
 		for _, item := range ignoreList {
+			if strings.HasSuffix(item, "*") {
+				if !anyNodeValueHasPrefix(nodeValues, strings.TrimSuffix(item, "*")) {
+					unmatchedIgnores = append(unmatchedIgnores, item)
+				}
+				continue
+			}
 			if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
 				unmatchedIgnores = append(unmatchedIgnores, item)
 			}
@@ -394,4 +416,38 @@ func cleanNodeName(s string) string {
 		return s[1:]
 	}
 	return s
+}
+
+// isIgnored はノード識別値 v が ignore エントリ（完全一致: m、末尾 '*' の
+// プレフィックス一致: prefixes）に一致するかを判定する。
+func isIgnored(v string, m map[string]bool, prefixes []string) bool {
+	if m[v] {
+		return true
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(v, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isNodeValueIgnored はノード識別値の raw と cleanNodeName 適用後の値の
+// 両方に対して ignore 判定を行う。
+func isNodeValueIgnored(v string, m map[string]bool, prefixes []string) bool {
+	return isIgnored(v, m, prefixes) || isIgnored(cleanNodeName(v), m, prefixes)
+}
+
+// anyNodeValueHasPrefix はノード識別値の集合の中に、prefix（またはその
+// cleanNodeName 適用後の値）をプレフィックスとして持つ値が1つでも存在するかを
+// 判定する。末尾 '*' の ignore エントリがどのノードにも一致しなかったかの
+// 判定（unmatched_ignores）に使う。
+func anyNodeValueHasPrefix(nodeValues map[string]bool, prefix string) bool {
+	cleanPrefix := cleanNodeName(prefix)
+	for v := range nodeValues {
+		if strings.HasPrefix(v, prefix) || strings.HasPrefix(v, cleanPrefix) {
+			return true
+		}
+	}
+	return false
 }
