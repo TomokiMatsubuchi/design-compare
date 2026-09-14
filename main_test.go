@@ -330,6 +330,37 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !ok || len(unmatchedNothing) != 1 || unmatchedNothing[0] != "nope" {
 			t.Errorf("Expected unmatched_ignores=[nope], got %v", resultIgnoreNothing["unmatched_ignores"])
 		}
+
+		// C5: 末尾 '*' のプレフィックス一致エントリで除外するケース。
+		// '.na*' は Web セレクタ ".nav"（raw prefix）と Figma ノード名 "nav"（clean prefix）の
+		// 両方に一致し、命名規則に従うグループを列挙なしで除外できる。
+		reqIgnorePrefix := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"ignore_nodes": ".na*", // prefix match (ends with '*')
+				},
+			},
+		}
+		resIgnorePrefix, err := compareDesignHandler(context.Background(), reqIgnorePrefix)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultIgnorePrefix map[string]interface{}
+		json.Unmarshal([]byte(resIgnorePrefix.Content[0].(mcp.TextContent).Text), &resultIgnorePrefix)
+		if resultIgnorePrefix["status"] != "success" || resultIgnorePrefix["match_rate"] != "100.00%" {
+			t.Errorf("Expected LayoutTree success and 100%% match after ignoring '.na*', got status=%v, rate=%v", resultIgnorePrefix["status"], resultIgnorePrefix["match_rate"])
+		}
+		// Figma "nav" と Web ".nav" の2ノードがプレフィックス一致で除外されたことを報告する
+		if got := resultIgnorePrefix["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 after ignoring '.na*', got %v", got)
+		}
+		if _, ok := resultIgnorePrefix["unmatched_ignores"]; ok {
+			t.Errorf("Expected no unmatched_ignores for matching prefix '.na*', got %v", resultIgnorePrefix["unmatched_ignores"])
+		}
 	})
 
 	// D: pass_rate を下げて不一致ケースを成功に切り替えるテスト

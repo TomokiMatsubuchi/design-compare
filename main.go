@@ -57,7 +57,7 @@ func main() {
 			mcp.Description("Path to a JSON file containing the Web DOM node list layout (alternative to web_layout for 'layout_tree' mode; mutually exclusive with web_layout). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("ignore_nodes",
-			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode)."),
+			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode). An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
 			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),

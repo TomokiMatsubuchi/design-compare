@@ -273,3 +273,105 @@ func TestLayoutTree_IgnoreRegion(t *testing.T) {
 		t.Errorf("Expected skipped detail to mention ignore_region, got %v", resultAll.Details)
 	}
 }
+
+// TestLayoutTree_IgnoreNodesWildcard verifies that ignore_nodes entries ending
+// with '*' are treated as prefix matches while all other entries keep the
+// exact-match semantics:
+//
+//  1. prefix_excludes_group          – 'ad-*' excludes every ad node on both
+//     sides (Figma IDs / names and Web selectors, via both the raw prefix and
+//     its cleanNodeName-applied form), leaving only the header pair compared.
+//  2. dotted_prefix_matches_clean_values – '.ad-ba*' matches Figma names like
+//     'ad-banner-1' through the cleaned prefix 'ad-ba' (the same raw/clean
+//     duality as exact matching).
+//  3. unmatched_prefix_reported     – a prefix that matches no node value
+//     excludes nothing and is reported in unmatched_ignores.
+//  4. mid_string_star_is_literal    – an entry whose '*' is not trailing keeps
+//     exact-match semantics and is reported in unmatched_ignores when no node
+//     is literally named that way.
+func TestLayoutTree_IgnoreNodesWildcard(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"ad-1","name":"ad-banner-1","x":400,"y":400,"w":200,"h":80},
+		{"id":"ad-2","name":"ad-banner-2","x":400,"y":500,"w":200,"h":80}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":".ad-banner-1","x":400,"y":400,"w":200,"h":80},
+		{"selector":".ad-banner-2","x":400,"y":500,"w":200,"h":80}
+	]`
+
+	t.Run("prefix_excludes_group", func(t *testing.T) {
+		// 'ad-*' matches the Figma IDs ('ad-1', 'ad-2') and names
+		// ('ad-banner-*') directly, and the Web selectors ('.ad-banner-*')
+		// through their cleaned values: all four ad nodes are excluded and
+		// only the header pair remains to compare.
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"ad-*"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 4 {
+			t.Errorf("Expected IgnoredCount=4 (ad nodes on both sides), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 || result.TotalNodes != 1 {
+			t.Errorf("Expected only the header pair left (matched=1, total=1), got matched=%d, total=%d", result.MatchedNodes, result.TotalNodes)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success' after prefix exclusion, got '%s'", result.Status)
+		}
+		if len(result.UnmatchedIgnores) != 0 {
+			t.Errorf("Expected no unmatched_ignores for matching prefix 'ad-*', got %v", result.UnmatchedIgnores)
+		}
+	})
+
+	t.Run("dotted_prefix_matches_clean_values", func(t *testing.T) {
+		// '.ad-ba*' has no node value starting with the raw prefix '.ad-ba',
+		// but its cleaned form 'ad-ba' matches the Figma names 'ad-banner-*'
+		// and the cleaned Web selectors (raw/clean duality, same as exact
+		// matching).
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{".ad-ba*"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 4 {
+			t.Errorf("Expected IgnoredCount=4 (ad nodes on both sides via cleaned prefix), got %d", result.IgnoredCount)
+		}
+		if len(result.UnmatchedIgnores) != 0 {
+			t.Errorf("Expected no unmatched_ignores for '.ad-ba*', got %v", result.UnmatchedIgnores)
+		}
+	})
+
+	t.Run("unmatched_prefix_reported", func(t *testing.T) {
+		// A prefix matching no node value excludes nothing and is reported in
+		// unmatched_ignores so that typos stay noticeable.
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"zz-*"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 0 {
+			t.Errorf("Expected IgnoredCount=0 for prefix matching nothing, got %d", result.IgnoredCount)
+		}
+		if len(result.UnmatchedIgnores) != 1 || result.UnmatchedIgnores[0] != "zz-*" {
+			t.Errorf("Expected unmatched_ignores=[zz-*], got %v", result.UnmatchedIgnores)
+		}
+	})
+
+	t.Run("mid_string_star_is_literal", func(t *testing.T) {
+		// '*' that is not trailing keeps exact-match semantics: 'ad-*-1' is
+		// not a wildcard, matches no node, excludes nothing and is reported in
+		// unmatched_ignores.
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"ad-*-1"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 0 {
+			t.Errorf("Expected IgnoredCount=0 for non-trailing '*' entry, got %d", result.IgnoredCount)
+		}
+		if len(result.UnmatchedIgnores) != 1 || result.UnmatchedIgnores[0] != "ad-*-1" {
+			t.Errorf("Expected unmatched_ignores=[ad-*-1], got %v", result.UnmatchedIgnores)
+		}
+	})
+}
