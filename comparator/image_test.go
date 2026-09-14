@@ -2,6 +2,7 @@ package comparator
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -289,4 +290,67 @@ func TestCalculateLayoutSimilarityWithDiff_DiffBits(t *testing.T) {
 	if diffBits != 0 {
 		t.Errorf("Expected diffBits=0 for identical images, got %d", diffBits)
 	}
+}
+
+// TestMaxImageDimensionLimit verifies that images whose width or height
+// exceeds maxImageDimension are rejected with an explicit, actionable error
+// instead of being processed. 巨大または圧縮爆弾的な画像は image.Decode だけでも
+// 数百MB〜数GB を確保し、maskRegions の RGBA コピーや pixelmatch の差分画像で
+// 追加確保されるため、長時間稼働する MCP サーバープロセスが OOM で落ちない
+// よう修復可能なエラーとして弾く (Issue #158)。
+func TestMaxImageDimensionLimit(t *testing.T) {
+	// strict モード: 上限を 1px 超える 8193x1 の PNG はエラーになる
+	t.Run("RunPixelMatch_rejects_oversized", func(t *testing.T) {
+		img := image.NewRGBA(image.Rect(0, 0, maxImageDimension+1, 1))
+		_, _, _, _, _, err := RunPixelMatch(
+			encodePNGBytes(t, img), encodePNGBytes(t, img),
+			0.1, false, nil,
+		)
+		if err == nil {
+			t.Fatal("Expected an error for an oversized image (8193x1), got nil")
+		}
+		want := fmt.Sprintf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", maxImageDimension+1, 1, maxImageDimension)
+		if err.Error() != want {
+			t.Errorf("Expected error %q, got %q", want, err.Error())
+		}
+	})
+
+	// strict モード: 上限ピッタリ (8192x1) はエラーにならない (実用画像を弾かない)
+	t.Run("RunPixelMatch_allows_max_dimension", func(t *testing.T) {
+		img := image.NewRGBA(image.Rect(0, 0, maxImageDimension, 1))
+		_, _, diffCount, _, _, err := RunPixelMatch(
+			encodePNGBytes(t, img), encodePNGBytes(t, img),
+			0.1, false, nil,
+		)
+		if err != nil {
+			t.Fatalf("RunPixelMatch failed for a %dx1 image: %v", maxImageDimension, err)
+		}
+		if diffCount != 0 {
+			t.Errorf("Expected diffCount=0 for identical images, got %d", diffCount)
+		}
+	})
+
+	// perceptual モード: 幅・高さのいずれかが上限を超えたら A/B それぞれエラーになる
+	t.Run("CalculateLayoutSimilarityWithDiff_rejects_oversized", func(t *testing.T) {
+		oversized := image.NewRGBA(image.Rect(0, 0, 1, maxImageDimension+1))
+		small := image.NewRGBA(image.Rect(0, 0, 100, 100))
+
+		_, _, _, _, _, err := CalculateLayoutSimilarityWithDiff(oversized, small, false, nil)
+		if err == nil {
+			t.Fatal("Expected an error for oversized image A (1x8193), got nil")
+		}
+		wantA := fmt.Sprintf("image A is 1x%d; maximum supported dimension is %d, resize the images before comparison", maxImageDimension+1, maxImageDimension)
+		if err.Error() != wantA {
+			t.Errorf("Expected error %q, got %q", wantA, err.Error())
+		}
+
+		_, _, _, _, _, err = CalculateLayoutSimilarityWithDiff(small, oversized, false, nil)
+		if err == nil {
+			t.Fatal("Expected an error for oversized image B (1x8193), got nil")
+		}
+		wantB := fmt.Sprintf("image B is 1x%d; maximum supported dimension is %d, resize the images before comparison", maxImageDimension+1, maxImageDimension)
+		if err.Error() != wantB {
+			t.Errorf("Expected error %q, got %q", wantB, err.Error())
+		}
+	})
 }
