@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | **`layout_tree`**<br>(構造的比較) | **DOM構造 vs Figma構造** | FigmaとWebそれぞれの要素の幾何位置 (Bounding Box JSON) | 親要素に対する相対的なX, Y, Width, Height比率を算出し、要素の並び順や階層が合っているかをデータレベルで比較します。文字や色の違いを完全に無視して**「配置テンプレート（木）」**を検証します。 |
 | **`perceptual`**<br>(知覚的画像VRT) | **空間の明暗配置パターン** | Figmaの画像 vs Webスクショ of 画像パス | 画像を粗く縮小（16x16）してグレースケール化し、Average Hash（aHash）の明暗パターンとして比較します。文字内容やフォント・色の違いを無視し、**「見た目の大まかなレイアウト配置」**が合っているかを判定します。 |
-| **`strict`**<br>(厳密画素VRT) | **画素単位のビジュアル比較** | Figmaの画像 vs Webスクショ of 画像パス | Mapboxの `pixelmatch` を用い、画素単位で色の違いを厳密に比較します（アンチエイリアスの境界は自動除外）。色味や余白、線の太さなど、**微細なビジュアル差異の検知**に使用します。 |
+| **`strict`**<br>(厳密画素VRT) | **画素単位のビジュアル比較** | Figmaの画像 vs Webスクショ of 画像パス | Mapboxの `pixelmatch` を用い、画素単位で色の違いを厳密に比較します（アンチエイリアスの境界は自動除外）。色味や余白、線の太さなど、**微細なビジュアル差異の検知**に使用します。**両画像はピクセル寸法（縦横の画素数）が完全に一致している必要があります。** Retina 環境の DPR（device pixel ratio）差やフルページ撮影などでサイズが異なる場合は `image size mismatch` エラーになるため、同じビューポートサイズと DPR で両スクリーンショットを撮り直すか、サイズの異なる画像も比較できる `perceptual` モードを使用してください。 |
 
 ### 差分画像 (`diff_image`) の見方 (`perceptual` モード)
 
@@ -24,9 +24,102 @@
 - **赤以外のセル**: 明暗パターンが一致したセルで、image A 側の同じ位置の平均輝度をグレースケールで表示しています。
 - `generate_diff` を `false` に指定した場合は差分画像を生成せず、`diff_image` は空文字列で返されます。
 
+### 差分画像 (`diff_image`) の見方 (`strict` モード)
+
+`strict` モードのレスポンス `diff_image` は、pixelmatch が生成した差分画像（base64 data URI）です。pixelmatch の既定の配色で描画されます（マゼンタ等の色は使われません）。
+
+- **赤いピクセル**: 両画像で色差が `threshold` を超えた差分ピクセル（差分カウント `diff_pixels` の対象）。
+- **黄色いピクセル**: アンチエイリアス境界由来と判定され、差分カウントから自動除外されたピクセル。
+- **それ以外の領域**: 差分がなかった箇所で、image A（Figma側）の輝度をグレースケール化して白寄りに薄めた階調で表示されます。
+- `generate_diff` を `false` に指定した場合は差分画像を生成せず、`diff_image` は空文字列で返されます。
+
+### 一様画像（ベタ塗り）の警告 (`warnings`)
+
+`perceptual` モードでは、aHash が各画像自身の平均輝度で明暗を2値化するため、一様（単色のベタ塗り）画像は全セルが同一ビットになります。その結果、全面白 vs 全面黒のようなペアでも一致率100%・`success` となり、撮影失敗（真っ黒スクショ等）が無検証で合格する恐れがあります。
+
+image A / B のいずれかが一様と検出された場合、status / match_rate は従来どおり変えず、代わりに応答へ `warnings` フィールド（例: `["degenerate aHash: image A is uniform; perceptual match may be unreliable"]`）を付けて通知します。通常の明暗パターンを持つ画像ペアではこのフィールドは含まれません。
+
 ---
 
-## 2. 開発とビルド方法
+## 2. パラメータリファレンス (`compare_design`)
+
+`compare_design` ツールの全パラメータを以下に示します。`mode`（必須）には `layout_tree` / `perceptual` / `strict` のいずれかを指定します（各モードの詳細は「1. 3つの検証モード (`mode`)」を参照）。なお `strict` では比較前に両画像のピクセル寸法（縦横の画素数）が完全に一致している必要があり、異なる場合は `image size mismatch` エラーになります（同一ビューポート・DPR で撮り直すか `perceptual` モードを使用）。
+
+**注意:** モードごとに意味やスケールが異なるパラメータ（特に `threshold`）があります。また、当該モードでは効果を持たないパラメータ（例: `layout_tree` への `min_match`、`perceptual` への `pass_rate`）を指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラーが返ります。パラメータと有効モードの対応表は「8. 破壊的変更」を参照してください。
+
+### 入力データ
+
+| パラメータ | 型 | 対象モード | 説明 |
+| :--- | :--- | :--- | :--- |
+| `image_path_a` | string | `perceptual` / `strict` | 参照画像 A（Figma 側）のローカルファイルパス。`image_a_base64` と排他で、どちらか一方が必須。 |
+| `image_path_b` | string | `perceptual` / `strict` | 比較対象画像 B（Web 側）のローカルファイルパス。`image_b_base64` と排他で、どちらか一方が必須。 |
+| `image_a_base64` | string | `perceptual` / `strict` | 参照画像 A の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。`image_path_a` と排他。 |
+| `image_b_base64` | string | `perceptual` / `strict` | 比較対象画像 B の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。`image_path_b` と排他。 |
+| `figma_layout` | string | `layout_tree` | Figma ノードリストの JSON 文字列（インライン指定）。`figma_layout_path` と排他で、どちらか一方が必須。 |
+| `figma_layout_path` | string | `layout_tree` | Figma ノードリスト JSON ファイルのローカルパス。`figma_layout` と排他。 |
+| `web_layout` | string | `layout_tree` | Web DOM ノードリストの JSON 文字列（インライン指定）。`web_layout_path` と排他で、どちらか一方が必須。 |
+| `web_layout_path` | string | `layout_tree` | Web DOM ノードリスト JSON ファイルのローカルパス。`web_layout` と排他。 |
+
+### 比較条件（閾値・除外）
+
+| パラメータ | 型 | 対象モード | 範囲 | デフォルト | 説明 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `threshold` | number | `layout_tree` | 0.0–1.0 | 0.15 | BoundingBox の幾何差分（相対座標・相対サイズの L2 距離）に対する許容差。 |
+| `threshold` | number | `perceptual` | 1.0–100.0 | 98.0 | 後方互換のため `min_match`（一致率%）のエイリアスとして受け付ける。1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐためエラーになる。**`min_match` の使用を推奨。** |
+| `threshold` | number | `strict` | 0.0–1.0 | 0.1 | 色差の許容度（pixelmatch の color diff tolerance）。 |
+| `min_match` | number | `perceptual` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。実効値（`threshold` エイリアス解決後を含む）は応答の `min_match` として常に返される。 |
+| `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。 |
+| `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。 |
+| `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
+| `ignore_nodes` | string | `layout_tree` | — | 空 | 比較から除外する Figma Node ID / Node Name / Web Selector のカンマ区切りリスト。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。 |
+| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`layout_tree` では BoundingBox の中心点が領域内にあるノードを両側から除外し、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。 |
+| `count_extra_web` | boolean | `layout_tree` | true / false | false | `true` の場合、どの Figma ノードにもマッチしなかった Web ノード（実装側の余分な要素）を一致率の分母に加算して一致率を下げる。 |
+| `generate_diff` | boolean | `perceptual` / `strict` | true / false | true | `false` の場合は差分画像を生成せず、`diff_image` は空文字列で返される。 |
+
+### `layout_tree` 入力 JSON スキーマ
+
+`figma_layout` / `figma_layout_path` の内容は **FigmaNode オブジェクトの配列**、`web_layout` / `web_layout_path` の内容は **WebNode オブジェクトの配列** の JSON です。
+
+**Figma 側（FigmaNode）:**
+
+| フィールド | 型 | 必須 | 説明 |
+| :--- | :--- | :--- | :--- |
+| `id` | string | ○ | Figma ノード ID。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。 |
+| `name` | string | ○ | Figma ノード名。details 出力、および `ignore_nodes` の除外対象としても使用される。 |
+| `x` / `y` / `w` / `h` | number | ○ | ノードの BoundingBox（Figma キャンバス上の絶対座標とサイズ）。 |
+| `parent` | string | — | 親ノードの `id`。省略時は親なしとして扱われる。 |
+
+**Web 側（WebNode）:**
+
+| フィールド | 型 | 必須 | 説明 |
+| :--- | :--- | :--- | :--- |
+| `selector` | string | ○ | 要素識別子（CSS セレクタ等）。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。 |
+| `x` / `y` / `w` / `h` | number | ○ | 要素の BoundingBox（ページ上の絶対座標とサイズ）。 |
+| `parent` | string | — | 親要素の `selector`。省略時は親なしとして扱われる。 |
+
+最小例 — `figma_layout`（`figma_layout_path` で指定するファイルも同じ形式）:
+
+```json
+[
+  {"id": "1", "name": "Card", "x": 0, "y": 0, "w": 400, "h": 300},
+  {"id": "2", "name": "Button", "x": 100, "y": 100, "w": 200, "h": 50, "parent": "1"}
+]
+```
+
+最小例 — `web_layout`（`web_layout_path` で指定するファイルも同じ形式）:
+
+```json
+[
+  {"selector": "#card", "x": 0, "y": 0, "w": 400, "h": 300},
+  {"selector": "#card button.primary", "x": 100, "y": 100, "w": 200, "h": 50, "parent": "#card"}
+]
+```
+
+`parent` を持つノードは「親の BoundingBox に対する相対的な位置・サイズ（比率 0–1）」で比較され、レスポンシブなスケール差が吸収されます。親を持たないノード（および幅・高さが 0 の親を持つノード）は絶対座標のまま比較され、比較ペアの両側で座標空間は自動的に揃えられます。
+
+---
+
+## 3. 開発とビルド方法
 
 ### 前提条件
 - Go 1.26 以上
@@ -47,7 +140,7 @@ go test -v ./...
 
 ---
 
-## 3. 各種ツール（Codex / Claude）へのセットアップ手順
+## 4. 各種ツール（Codex / Claude）へのセットアップ手順
 
 本サーバーは、Codexのローカルプラグインとして動作するほか、Claude DesktopやClaude Codeなどの一般的なMCPクライアントにインポートして使用することができます。
 
@@ -85,7 +178,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 4. 全自動でのデザイン検証ワークフロー
+## 5. 全自動でのデザイン検証ワークフロー
 
 有効化されると、AIエージェントは自動的に他のツール（Figma MCPやChrome-DevTools MCP）と連携して、ログイン状態などを維持したまま全自動でVRT/構造検証を実行します。
 
@@ -105,7 +198,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 5. 注意・制限事項 (環境による表示の揺らぎ)
+## 6. 注意・制限事項 (環境による表示の揺らぎ)
 
 比較アルゴリズム（ハッシュ計算や幾何判定）自体はプログラムとして決定論的ですが、以下の**プラットフォーム固有のレンダリング差（非決定的な要素）**により、同じWebコードであっても実行マシンによって比較結果に微細なブレが生じる場合があります。
 
@@ -118,7 +211,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 6. セキュリティ上の注意（信頼モデル）
+## 7. セキュリティ上の注意（信頼モデル）
 
 本サーバーはローカル実行のMCPサーバーとして設計されています。以下のパラメータで指定された
 ファイルパスはそのまま解決され、**サーバープロセスの権限で**ローカルファイルシステムから
@@ -142,7 +235,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 7. 破壊的変更 (Breaking Changes)
+## 8. 破壊的変更 (Breaking Changes)
 
 ### `diff_image_path` → `diff_image` （フィールド名変更）
 
@@ -154,7 +247,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ### モード非対応パラメータの明示的エラー化
 
-従来は、モードごとに効果を持たないパラメータ（例: `perceptual` / `strict` モードへの `ignore_nodes`、`layout_tree` モードへの `ignore_region`、`perceptual` モードへの `pass_rate`）を指定しても警告なく無視され、呼び出し側は「除外・合格ラインが効いているつもり」のまま判定結果を受け取る状態でした。
+従来は、モードごとに効果を持たないパラメータ（例: `perceptual` / `strict` モードへの `ignore_nodes`、`layout_tree` モードへの `max_diff_pixels`、`perceptual` モードへの `pass_rate`）を指定しても警告なく無視され、呼び出し側は「除外・合格ラインが効いているつもり」のまま判定結果を受け取る状態でした。
 
 これを防ぐため、モードごとのパラメータ許可マップによる照合を導入しました。非対応モードでパラメータを指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラー (`IsError: true`) を返します。
 
@@ -165,7 +258,8 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 | `image_path_a` / `image_path_b` / `image_a_base64` / `image_b_base64` | `perceptual`, `strict` |
 | `figma_layout` / `figma_layout_path` / `web_layout` / `web_layout_path` | `layout_tree` |
 | `ignore_nodes` / `count_extra_web` / `pass_rate` | `layout_tree` |
-| `ignore_region` / `generate_diff` / `min_match` | `perceptual`, `strict` |
+| `ignore_region` | `layout_tree`, `perceptual`, `strict` |
+| `generate_diff` / `min_match` | `perceptual`, `strict` |
 | `max_diff_pixels` | `strict` |
 | `threshold` | `layout_tree`, `perceptual`, `strict` (`perceptual` では `min_match` の後方互換エイリアスとして 1.0–100.0 を受け付ける) |
 

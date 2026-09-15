@@ -42,7 +42,7 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 			{"selector":"A","x":100,"y":100,"w":200,"h":200,"parent":"P"}
 		]`
 
-		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false)
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
 		if err != nil {
 			t.Fatalf("CompareLayoutTrees failed: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 			{"selector":"A","x":150,"y":150,"w":200,"h":200,"parent":"P"}
 		]`
 
-		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false)
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
 		if err != nil {
 			t.Fatalf("CompareLayoutTrees failed: %v", err)
 		}
@@ -86,7 +86,7 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 			{"selector":"A","x":100,"y":100,"w":200,"h":200}
 		]`
 
-		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false)
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
 		if err != nil {
 			t.Fatalf("CompareLayoutTrees failed: %v", err)
 		}
@@ -114,7 +114,7 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 			{"selector":"A","x":200,"y":200,"w":50,"h":50,"parent":"P"}
 		]`
 
-		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false)
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
 		if err != nil {
 			t.Fatalf("CompareLayoutTrees failed: %v", err)
 		}
@@ -152,7 +152,7 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 			{"selector":".childA","x":10,"y":10,"w":480,"h":480,"parent":"#container"}
 		]`
 
-		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false)
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
 		if err != nil {
 			t.Fatalf("CompareLayoutTrees failed: %v", err)
 		}
@@ -180,7 +180,7 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		figmaJSON := `[{"id":"1","name":"hero","x":0,"y":0,"w":100,"h":100}]`
 		webJSON := `[{"selector":".hero","x":50,"y":0,"w":100,"h":100}]`
 
-		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false)
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
 		if err != nil {
 			t.Fatalf("CompareLayoutTrees failed: %v", err)
 		}
@@ -198,6 +198,180 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("Expected a detail stating the geometric diff exceeds tolerance, got details: %v", result.Details)
+		}
+	})
+}
+
+// TestLayoutTree_IgnoreRegion verifies that nodes whose bounding-box center
+// lies inside an ignore_region are excluded from both sides (counted in
+// IgnoredCount), that a region overlapping a node but not containing its
+// center does not exclude it (center-point semantics), and that excluding
+// all nodes results in the existing "skipped" status.
+func TestLayoutTree_IgnoreRegion(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"2","name":"banner","x":400,"y":400,"w":200,"h":80}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":".banner","x":650,"y":420,"w":200,"h":80}
+	]`
+
+	// Region [400,900)x[400,500) contains the banner centers on both sides
+	// (500,440) and (750,460) but not the header center (500,50): the banners
+	// are excluded from both sides and only the header pair is compared.
+	regions := []Region{{X: 400, Y: 400, W: 500, H: 100}}
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, regions)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if result.IgnoredCount != 2 {
+		t.Errorf("Expected IgnoredCount=2 (banner on both sides), got %d", result.IgnoredCount)
+	}
+	if result.MatchedNodes != 1 {
+		t.Errorf("Expected 1 matched node (header pair), got %d", result.MatchedNodes)
+	}
+	if result.TotalNodes != 1 {
+		t.Errorf("Expected TotalNodes=1 (only the header pair compared), got %d", result.TotalNodes)
+	}
+	if result.Status != "success" {
+		t.Errorf("Expected status 'success', got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
+	}
+
+	// Region [600,700)x[400,500) overlaps the Web banner bbox but contains
+	// neither center point: nothing is excluded (center-point semantics) and
+	// the shifted banner pair keeps the comparison in mismatch.
+	overlap := []Region{{X: 600, Y: 400, W: 100, H: 100}}
+	resultOverlap, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, overlap)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if resultOverlap.IgnoredCount != 0 {
+		t.Errorf("Expected IgnoredCount=0 for a region containing no node center, got %d", resultOverlap.IgnoredCount)
+	}
+	if resultOverlap.Status != "mismatch" {
+		t.Errorf("Expected status 'mismatch' when nothing is ignored, got '%s'", resultOverlap.Status)
+	}
+
+	// A region containing every node center excludes all nodes on both sides
+	// and rides the existing "skipped" judgement (like ignore_nodes).
+	all := []Region{{X: 0, Y: 0, W: 2000, H: 2000}}
+	resultAll, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, all)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if resultAll.Status != "skipped" {
+		t.Errorf("Expected status 'skipped' when all nodes are excluded by region, got '%s'", resultAll.Status)
+	}
+	if resultAll.IgnoredCount != 4 {
+		t.Errorf("Expected IgnoredCount=4 (all nodes on both sides), got %d", resultAll.IgnoredCount)
+	}
+	if len(resultAll.Details) == 0 || !strings.Contains(resultAll.Details[0], "ignore_region") {
+		t.Errorf("Expected skipped detail to mention ignore_region, got %v", resultAll.Details)
+	}
+}
+
+// TestLayoutTree_IgnoreNodesWildcard verifies that ignore_nodes entries ending
+// with '*' are treated as prefix matches while all other entries keep the
+// exact-match semantics:
+//
+//  1. prefix_excludes_group          – 'ad-*' excludes every ad node on both
+//     sides (Figma IDs / names and Web selectors, via both the raw prefix and
+//     its cleanNodeName-applied form), leaving only the header pair compared.
+//  2. dotted_prefix_matches_clean_values – '.ad-ba*' matches Figma names like
+//     'ad-banner-1' through the cleaned prefix 'ad-ba' (the same raw/clean
+//     duality as exact matching).
+//  3. unmatched_prefix_reported     – a prefix that matches no node value
+//     excludes nothing and is reported in unmatched_ignores.
+//  4. mid_string_star_is_literal    – an entry whose '*' is not trailing keeps
+//     exact-match semantics and is reported in unmatched_ignores when no node
+//     is literally named that way.
+func TestLayoutTree_IgnoreNodesWildcard(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"ad-1","name":"ad-banner-1","x":400,"y":400,"w":200,"h":80},
+		{"id":"ad-2","name":"ad-banner-2","x":400,"y":500,"w":200,"h":80}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":".ad-banner-1","x":400,"y":400,"w":200,"h":80},
+		{"selector":".ad-banner-2","x":400,"y":500,"w":200,"h":80}
+	]`
+
+	t.Run("prefix_excludes_group", func(t *testing.T) {
+		// 'ad-*' matches the Figma IDs ('ad-1', 'ad-2') and names
+		// ('ad-banner-*') directly, and the Web selectors ('.ad-banner-*')
+		// through their cleaned values: all four ad nodes are excluded and
+		// only the header pair remains to compare.
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"ad-*"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 4 {
+			t.Errorf("Expected IgnoredCount=4 (ad nodes on both sides), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 || result.TotalNodes != 1 {
+			t.Errorf("Expected only the header pair left (matched=1, total=1), got matched=%d, total=%d", result.MatchedNodes, result.TotalNodes)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success' after prefix exclusion, got '%s'", result.Status)
+		}
+		if len(result.UnmatchedIgnores) != 0 {
+			t.Errorf("Expected no unmatched_ignores for matching prefix 'ad-*', got %v", result.UnmatchedIgnores)
+		}
+	})
+
+	t.Run("dotted_prefix_matches_clean_values", func(t *testing.T) {
+		// '.ad-ba*' has no node value starting with the raw prefix '.ad-ba',
+		// but its cleaned form 'ad-ba' matches the Figma names 'ad-banner-*'
+		// and the cleaned Web selectors (raw/clean duality, same as exact
+		// matching).
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{".ad-ba*"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 4 {
+			t.Errorf("Expected IgnoredCount=4 (ad nodes on both sides via cleaned prefix), got %d", result.IgnoredCount)
+		}
+		if len(result.UnmatchedIgnores) != 0 {
+			t.Errorf("Expected no unmatched_ignores for '.ad-ba*', got %v", result.UnmatchedIgnores)
+		}
+	})
+
+	t.Run("unmatched_prefix_reported", func(t *testing.T) {
+		// A prefix matching no node value excludes nothing and is reported in
+		// unmatched_ignores so that typos stay noticeable.
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"zz-*"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 0 {
+			t.Errorf("Expected IgnoredCount=0 for prefix matching nothing, got %d", result.IgnoredCount)
+		}
+		if len(result.UnmatchedIgnores) != 1 || result.UnmatchedIgnores[0] != "zz-*" {
+			t.Errorf("Expected unmatched_ignores=[zz-*], got %v", result.UnmatchedIgnores)
+		}
+	})
+
+	t.Run("mid_string_star_is_literal", func(t *testing.T) {
+		// '*' that is not trailing keeps exact-match semantics: 'ad-*-1' is
+		// not a wildcard, matches no node, excludes nothing and is reported in
+		// unmatched_ignores.
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"ad-*-1"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 0 {
+			t.Errorf("Expected IgnoredCount=0 for non-trailing '*' entry, got %d", result.IgnoredCount)
+		}
+		if len(result.UnmatchedIgnores) != 1 || result.UnmatchedIgnores[0] != "ad-*-1" {
+			t.Errorf("Expected unmatched_ignores=[ad-*-1], got %v", result.UnmatchedIgnores)
 		}
 	})
 }
