@@ -40,10 +40,10 @@ func main() {
 			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_a_base64",
-			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Also accepts a data URI form ('data:<mime>;base64,...') as returned by screenshot tools; the prefix is stripped before decoding"),
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding"),
 		),
 		mcp.WithString("image_b_base64",
-			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Also accepts a data URI form ('data:<mime>;base64,...') as returned by screenshot tools; the prefix is stripped before decoding"),
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding"),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
@@ -94,18 +94,24 @@ func main() {
 // resolveImageInput returns the raw bytes of a comparison image from either a
 // local file path or a base64-encoded string (exactly one must be provided).
 // For base64 input, a data URI prefix ("data:<mime>;base64,...") such as the one
-// returned by screenshot tools (e.g. chrome-devtools-mcp) is stripped before
-// decoding; a bare base64 string is accepted unchanged.
+// returned by screenshot tools (e.g. chrome-devtools-mcp) or by this tool's own
+// diff_image responses is stripped before decoding; a bare base64 string is
+// accepted unchanged.
 func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
 	switch {
 	case pathValue != "" && base64Value != "":
 		return nil, fmt.Errorf("only one of %s and %s can be specified", pathParam, base64Param)
 	case base64Value != "":
-		b64 := base64Value
-		if i := strings.Index(b64, ";base64,"); i >= 0 && strings.HasPrefix(b64, "data:") {
-			b64 = b64[i+len(";base64,"):]
+		// data URI 形式 ("data:<mime>;base64,<payload>") の場合はプレフィックスを除去する。
+		// スクリーンショットツール (e.g. chrome-devtools-mcp) や本ツールの diff_image が
+		// この形式で返すため、そのまま再入力 (ラウンドトリップ) できる。
+		payload := base64Value
+		if strings.HasPrefix(payload, "data:") {
+			if i := strings.Index(payload, ";base64,"); i >= 0 {
+				payload = payload[i+len(";base64,"):]
+			}
 		}
-		data, err := base64.StdEncoding.DecodeString(b64)
+		data, err := base64.StdEncoding.DecodeString(payload)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode %s: %w", base64Param, err)
 		}
