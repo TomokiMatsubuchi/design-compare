@@ -61,7 +61,7 @@ func main() {
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode). An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
@@ -402,12 +402,15 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v", err)), nil
 		}
 
+		boundsA := imgA.Bounds()
+		boundsB := imgB.Bounds()
+
 		// 0次元画像は意味のある比較ができないため明示的にエラーにする
-		if b := imgA.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("image A has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())), nil
+		if boundsA.Dx() == 0 || boundsA.Dy() == 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("image A has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", boundsA.Dx(), boundsA.Dy())), nil
 		}
-		if b := imgB.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())), nil
+		if boundsB.Dx() == 0 || boundsB.Dy() == 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", boundsB.Dx(), boundsB.Dy())), nil
 		}
 
 		matchRate, diffBlocks, diffImage, outOfBounds, warnings, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
@@ -428,6 +431,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// diff_pixels / total_pixels と同様に数量として応答へ含める。aHash は
 		// 256 段階の離散値のため、一致率だけよりも差分セル数の方が min_match の
 		// 調整や差分の解釈が容易になる (Issue #141)。
+		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, perceptualTotalBlocks)}
+		// サイズが異なる画像では同じ x,y,w,h が各画像の絶対ピクセルとして
+		// マスクされるため、割合的に別領域になることを呼び出し側へ伝える。
+		if boundsA.Dx() != boundsB.Dx() || boundsA.Dy() != boundsB.Dy() {
+			details = append(details, fmt.Sprintf("note: image A is %dx%d, image B is %dx%d; ignore_region is applied in absolute pixels of each image", boundsA.Dx(), boundsA.Dy(), boundsB.Dx(), boundsB.Dy()))
+		}
 		responseMap = map[string]interface{}{
 			"status":           status,
 			"mode":             "perceptual",
@@ -436,8 +445,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"min_match":        minMatchRate,
 			"total_blocks":     perceptualTotalBlocks,
 			"diff_blocks":      diffBlocks,
-			"details":          []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, perceptualTotalBlocks)},
+			"details":          details,
 			"diff_image":       diffImage,
+			"ignored_regions":  len(ignoreRegions),
 		}
 		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず
 		// 座標ミスの可能性が高いため、layout_tree の unmatched_ignores と同様に
@@ -532,6 +542,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"diff_pixels":      diffPixels,
 			"details":          []string{details},
 			"diff_image":       diffImage,
+			"ignored_regions":  len(ignoreRegions),
 		}
 		// min_match 指定時のみ実効値を応答に echo する (layout_tree の effective_threshold と
 		// 同様に、どの閾値で合否判定されたかを検証可能にする。未指定なら判定に使って
