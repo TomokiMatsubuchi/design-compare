@@ -30,6 +30,7 @@ func main() {
 		mcp.WithDescription("Compare designs against implementations using three deterministic modes: 'layout_tree' (structural data), 'perceptual' (macro-layout image match), or 'strict' (exact pixel match)."),
 		mcp.WithString("mode",
 			mcp.Required(),
+			mcp.Enum("layout_tree", "perceptual", "strict"),
 			mcp.Description("Comparison mode: 'layout_tree' (DOM/Figma hierarchy comparison), 'perceptual' (aHash image template check), or 'strict' (pixelmatch VRT). 'strict' requires both images to have identical pixel dimensions"),
 		),
 		mcp.WithString("image_path_a",
