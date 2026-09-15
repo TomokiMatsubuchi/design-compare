@@ -60,7 +60,7 @@ If any interaction state fails the threshold, fix the CSS/HTML (e.g. overflow ha
 
 ### Step 5: Analyze Results and Fix Code
 - Check the output `status` and `match_rate`.
-- If discrepancies exist, inspect the output details or the generated diff image with red diff pixels (yellow for anti-aliasing boundaries) (for `strict` mode), correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
+- If discrepancies exist, inspect the output details and the `diff_image` field (a base64 PNG data URI returned in the response; no temporary file is written). For how the visualization is colored, see README §1. Then correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
 
 ## Guardrails & Best Practices
 
