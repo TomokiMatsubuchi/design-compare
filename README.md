@@ -72,7 +72,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。 |
 | `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
 | `ignore_nodes` | string | `layout_tree` | — | 空 | 比較から除外する Figma Node ID / Node Name / Web Selector のカンマ区切りリスト。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。 |
-| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`layout_tree` では BoundingBox の中心点が領域内にあるノードを両側から除外し、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。 |
+| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、パースできた領域数は応答の `ignored_regions` に常に含まれる。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`perceptual` で両画像のサイズが異なる場合、同じ座標は各画像の絶対ピクセルとして適用され、`details` に注記が入る。`layout_tree` では BoundingBox の中心点が領域内にあるノードを両側から除外し、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。 |
 | `count_extra_web` | boolean | `layout_tree` | true / false | false | `true` の場合、どの Figma ノードにもマッチしなかった Web ノード（実装側の余分な要素）を一致率の分母に加算して一致率を下げる。 |
 | `generate_diff` | boolean | `perceptual` / `strict` | true / false | true | `false` の場合は差分画像を生成せず、`diff_image` は空文字列で返される。 |
 
