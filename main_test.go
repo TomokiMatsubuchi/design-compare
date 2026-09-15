@@ -1249,6 +1249,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultNoRegion["status"] != "mismatch" {
 			t.Errorf("Expected mismatch without ignore_region, got status=%v, rate=%v", resultNoRegion["status"], resultNoRegion["match_rate"])
 		}
+		if got := resultNoRegion["ignored_regions"]; got != float64(0) {
+			t.Errorf("Expected ignored_regions=0 when ignore_region is omitted, got %v", got)
+		}
 
 		// 指定あり: 黒矩形領域をマスクすると完全一致で success
 		reqRegion := mcp.CallToolRequest{
@@ -1270,9 +1273,33 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultRegion["status"] != "success" || resultRegion["match_rate"] != "100.00%" {
 			t.Errorf("Expected success and 100%% match with ignore_region, got status=%v, rate=%v", resultRegion["status"], resultRegion["match_rate"])
 		}
+		if got := resultRegion["ignored_regions"]; got != float64(1) {
+			t.Errorf("Expected ignored_regions=1 with one ignore_region, got %v", got)
+		}
 		// 範囲内の ignore_region では警告フィールド (out_of_bounds_regions) は出ない
 		if _, ok := resultRegion["out_of_bounds_regions"]; ok {
 			t.Errorf("Expected no out_of_bounds_regions for in-bounds ignore_region, got %v", resultRegion["out_of_bounds_regions"])
+		}
+
+		// 空セグメントはパース時にスキップされ、有効領域数だけ ignored_regions に入る
+		reqEmptySeg := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": "0,0,100,100;;",
+				},
+			},
+		}
+		resEmptySeg, err := compareDesignHandler(context.Background(), reqEmptySeg)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultEmptySeg map[string]interface{}
+		json.Unmarshal([]byte(resEmptySeg.Content[0].(mcp.TextContent).Text), &resultEmptySeg)
+		if got := resultEmptySeg["ignored_regions"]; got != float64(1) {
+			t.Errorf("Expected ignored_regions=1 when empty segments are skipped, got %v", got)
 		}
 
 		// 画像範囲外の ignore_region は何もマスクされず差分が残るため、座標ミスが
@@ -1300,6 +1327,42 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		gotRegions, ok := resultOutOfBounds["out_of_bounds_regions"].([]interface{})
 		if !ok || len(gotRegions) != 1 || gotRegions[0] != "500,500,100,100" {
 			t.Errorf("Expected out_of_bounds_regions=[500,500,100,100], got %v", resultOutOfBounds["out_of_bounds_regions"])
+		}
+		if got := resultOutOfBounds["ignored_regions"]; got != float64(1) {
+			t.Errorf("Expected ignored_regions=1 for out-of-bounds region, got %v", got)
+		}
+	})
+
+	// perceptual で A/B のサイズが異なる場合、ignore_region は各画像の絶対ピクセルで
+	// 適用されるため details に注記を出す (Issue #164)
+	t.Run("Perceptual_IgnoreRegion_DifferentImageSizes", func(t *testing.T) {
+		pathSmallWhite := saveTempImage(t, tmpDir, "imageSmallWhite.png", generateSolidImage(100, 100, color.White))
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathE, // 200x200
+					"image_path_b":  pathSmallWhite,
+					"ignore_region": "0,0,100,100",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if got := result["ignored_regions"]; got != float64(1) {
+			t.Errorf("Expected ignored_regions=1, got %v", got)
+		}
+		details, ok := result["details"].([]interface{})
+		if !ok || len(details) != 2 {
+			t.Fatalf("Expected 2 detail entries when image sizes differ, got %v", result["details"])
+		}
+		note, ok := details[1].(string)
+		if !ok || note != "note: image A is 200x200, image B is 100x100; ignore_region is applied in absolute pixels of each image" {
+			t.Errorf("Expected size-mismatch ignore_region note, got %v", details[1])
 		}
 	})
 
@@ -2468,6 +2531,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultNoRegion["diff_pixels"]; got == float64(0) {
 			t.Errorf("Expected positive diff_pixels without ignore_region, got %v", got)
 		}
+		if got := resultNoRegion["ignored_regions"]; got != float64(0) {
+			t.Errorf("Expected ignored_regions=0 when ignore_region is omitted, got %v", got)
+		}
 
 		// 指定あり: 差分領域をマスクすると diff_pixels=0 で success
 		reqRegion := mcp.CallToolRequest{
@@ -2491,6 +2557,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := resultRegion["diff_pixels"]; got != float64(0) {
 			t.Errorf("Expected diff_pixels=0 with ignore_region, got %v", got)
+		}
+		if got := resultRegion["ignored_regions"]; got != float64(1) {
+			t.Errorf("Expected ignored_regions=1 with one ignore_region, got %v", got)
 		}
 		// 範囲内の ignore_region では警告フィールド (out_of_bounds_regions) は出ない
 		if _, ok := resultRegion["out_of_bounds_regions"]; ok {
@@ -2524,6 +2593,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		gotRegions, ok := resultOutOfBounds["out_of_bounds_regions"].([]interface{})
 		if !ok || len(gotRegions) != 1 || gotRegions[0] != "500,500,100,100" {
 			t.Errorf("Expected out_of_bounds_regions=[500,500,100,100], got %v", resultOutOfBounds["out_of_bounds_regions"])
+		}
+		if got := resultOutOfBounds["ignored_regions"]; got != float64(1) {
+			t.Errorf("Expected ignored_regions=1 for out-of-bounds region, got %v", got)
 		}
 	})
 
