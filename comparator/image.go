@@ -41,12 +41,12 @@ const maxImageDimension = 8192
 func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, []string, string, error) {
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", fmt.Errorf("failed to decode design image: %w", err)
+		return 0, 0, 0, "", nil, "", fmt.Errorf("failed to decode design image: %w (supported formats: PNG, JPEG, GIF)", err)
 	}
 
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", fmt.Errorf("failed to decode web screenshot: %w", err)
+		return 0, 0, 0, "", nil, "", fmt.Errorf("failed to decode web screenshot: %w (supported formats: PNG, JPEG, GIF)", err)
 	}
 
 	normA, normB, err := EnsureSameSize(imgA, imgB)

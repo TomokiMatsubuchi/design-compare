@@ -415,12 +415,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image A: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image A: %v (supported formats: PNG, JPEG, GIF)", err)), nil
 		}
 
 		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v (supported formats: PNG, JPEG, GIF)", err)), nil
 		}
 
 		boundsA := imgA.Bounds()
