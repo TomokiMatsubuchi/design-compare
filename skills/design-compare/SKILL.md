@@ -28,7 +28,7 @@ Use the **Figma MCP server** to fetch:
 - Node metadata: Extract the layout bounding boxes and structural details.
 
 ### Step 2: Gather Web Implementation Data
-Use Codex's browser tools to:
+Use your browser automation MCP tools (chrome-devtools-mcp or playwright-cli):
 - Capture page screenshot: Save to a local path (e.g. `/tmp/web_actual.png`).
 - Extract DOM bounding boxes: Retrieve selectors, relative coordinate hierarchies, widths, and heights in a JSON format.
 
