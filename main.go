@@ -200,15 +200,15 @@ var modeParamSupport = map[string]map[string]bool{
 	"web_layout_path":   {"layout_tree": true},
 	// 比較条件 (モード固有)
 	// threshold は全モードで有効 (perceptual では min_match の後方互換エイリアス)
-	"threshold":       {"layout_tree": true, "perceptual": true, "strict": true},
-	"min_match":       {"perceptual": true, "strict": true},
-	"pass_rate":       {"layout_tree": true},
-	"max_diff_pixels": {"strict": true},
-	"ignore_nodes":    {"layout_tree": true},
-	"ignore_region":   {"layout_tree": true, "perceptual": true, "strict": true},
-	"count_extra_web":   {"layout_tree": true},
-	"generate_diff":     {"perceptual": true, "strict": true},
-	"diff_on_mismatch":  {"perceptual": true, "strict": true},
+	"threshold":        {"layout_tree": true, "perceptual": true, "strict": true},
+	"min_match":        {"perceptual": true, "strict": true},
+	"pass_rate":        {"layout_tree": true},
+	"max_diff_pixels":  {"strict": true},
+	"ignore_nodes":     {"layout_tree": true},
+	"ignore_region":    {"layout_tree": true, "perceptual": true, "strict": true},
+	"count_extra_web":  {"layout_tree": true},
+	"generate_diff":    {"perceptual": true, "strict": true},
+	"diff_on_mismatch": {"perceptual": true, "strict": true},
 }
 
 // modeParamAlternatives は、モード非対応パラメータのうち最頻出の混同ペアだけを
