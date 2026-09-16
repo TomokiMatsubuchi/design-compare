@@ -461,6 +461,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"min_match":        minMatchRate,
 			"total_blocks":     perceptualTotalBlocks,
 			"diff_blocks":      diffBlocks,
+			"image_size_a":     fmt.Sprintf("%dx%d", boundsA.Dx(), boundsA.Dy()),
+			"image_size_b":     fmt.Sprintf("%dx%d", boundsB.Dx(), boundsB.Dy()),
 			"details":          details,
 			"diff_image":       diffImage,
 			"ignored_regions":  len(ignoreRegions),
@@ -529,7 +531,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -556,6 +558,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"match_rate_value":    matchRate,
 			"total_pixels":        totalPixels,
 			"diff_pixels":         diffPixels,
+			"image_size":          imageSize,
 			"effective_threshold": threshold,
 			"details":             []string{details},
 			"diff_image":          diffImage,

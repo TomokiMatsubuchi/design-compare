@@ -36,34 +36,37 @@ const maxImageDimension = 8192
 // ignoreRegions のうち画像矩形と全く交差しない領域は draw.Draw の自動クリップ
 // により何もマスクされないため、"x,y,w,h" 形式の文字列リストとして検出結果を
 // 返す (layout_tree モードの unmatched_ignores と同様のフィードバック)。
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, []string, error) {
+// 成功時の 6 番目の戻り値は比較した画像の寸法 ("WxH")。EnsureSameSize 後の
+// 同一サイズなので A/B を分けず image_size として応答へ echo できる。
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, []string, string, error) {
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, fmt.Errorf("failed to decode design image: %w", err)
+		return 0, 0, 0, "", nil, "", fmt.Errorf("failed to decode design image: %w", err)
 	}
 
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, fmt.Errorf("failed to decode web screenshot: %w", err)
+		return 0, 0, 0, "", nil, "", fmt.Errorf("failed to decode web screenshot: %w", err)
 	}
 
 	normA, normB, err := EnsureSameSize(imgA, imgB)
 	if err != nil {
-		return 0, 0, 0, "", nil, err
+		return 0, 0, 0, "", nil, "", err
 	}
 
 	bounds := normA.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
+	imageSize := fmt.Sprintf("%dx%d", w, h)
 	// 0次元画像は totalPixels=0 となり一致率計算が0除算 (NaN) になるため、
 	// 明示的なエラーとして報告する。
 	if w == 0 || h == 0 {
-		return 0, 0, 0, "", nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
+		return 0, 0, 0, "", nil, imageSize, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
 	}
 	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーや
 	// pixelmatch の差分画像による追加確保の前に修復可能なエラーとして弾く
 	// (EnsureSameSize 済みのため両画像の寸法は同一)。
 	if w > maxImageDimension || h > maxImageDimension {
-		return 0, 0, 0, "", nil, fmt.Errorf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", w, h, maxImageDimension)
+		return 0, 0, 0, "", nil, imageSize, fmt.Errorf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", w, h, maxImageDimension)
 	}
 	totalPixels := w * h
 
@@ -92,21 +95,21 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 
 	diffCount, err := pixelmatch.MatchPixel(normA, normB, opts...)
 	if err != nil {
-		return 0, 0, 0, "", nil, fmt.Errorf("pixelmatch error: %w", err)
+		return 0, 0, 0, "", nil, imageSize, fmt.Errorf("pixelmatch error: %w", err)
 	}
 
 	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
 	if !generateDiff {
-		return matchRate, totalPixels, diffCount, "", outOfBounds, nil
+		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, nil
 	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, diffImg); err != nil {
-		return 0, 0, 0, "", nil, fmt.Errorf("failed to encode diff PNG: %w", err)
+		return 0, 0, 0, "", nil, imageSize, fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, nil
+	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, nil
 }
 
 // CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and, when

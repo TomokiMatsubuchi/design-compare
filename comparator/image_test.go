@@ -59,7 +59,7 @@ func TestRunPixelMatch_AntiAliasExclusion(t *testing.T) {
 		draw.Draw(imgB, image.Rect(0, 0, 5, h), &image.Uniform{black}, image.Point{}, draw.Src)
 		draw.Draw(imgB, image.Rect(5, 0, 6, h), &image.Uniform{grayLight}, image.Point{}, draw.Src)
 
-		_, _, diffCount, _, _, err := RunPixelMatch(
+		_, _, diffCount, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, nil,
 		)
@@ -82,7 +82,7 @@ func TestRunPixelMatch_AntiAliasExclusion(t *testing.T) {
 		draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
 		imgB.SetRGBA(6, 6, black) // single black pixel in flat white region
 
-		_, _, diffCount, _, _, err := RunPixelMatch(
+		_, _, diffCount, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, nil,
 		)
@@ -116,7 +116,7 @@ func newIgnoreRegionTestImages() (image.Image, image.Image) {
 func TestRunPixelMatch_IgnoreRegionOutOfBounds(t *testing.T) {
 	t.Run("out_of_bounds_region_reported", func(t *testing.T) {
 		imgA, imgB := newIgnoreRegionTestImages()
-		_, _, _, _, outOfBounds, err := RunPixelMatch(
+		_, _, _, _, outOfBounds, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, []Region{{X: 500, Y: 500, W: 100, H: 100}},
 		)
@@ -132,7 +132,7 @@ func TestRunPixelMatch_IgnoreRegionOutOfBounds(t *testing.T) {
 		imgA, imgB := newIgnoreRegionTestImages()
 		// "0,0,100,100" は画像内 / "150,150,100,100" は右下が画像外にはみ出すが
 		// 一部だけクリップされてマスクは機能するため、いずれも警告対象外。
-		_, _, _, _, outOfBounds, err := RunPixelMatch(
+		_, _, _, _, outOfBounds, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, []Region{{X: 0, Y: 0, W: 100, H: 100}, {X: 150, Y: 150, W: 100, H: 100}},
 		)
@@ -143,6 +143,26 @@ func TestRunPixelMatch_IgnoreRegionOutOfBounds(t *testing.T) {
 			t.Errorf("Expected no outOfBounds for in-bounds/partially-clipped regions, got %v", outOfBounds)
 		}
 	})
+}
+
+// TestRunPixelMatch_ImageSize verifies that the compared dimensions are
+// returned as "WxH" so callers can echo them without reconstructing from
+// totalPixels (w*h) alone.
+func TestRunPixelMatch_ImageSize(t *testing.T) {
+	imgA, imgB := newIgnoreRegionTestImages()
+	_, totalPixels, _, _, _, imageSize, err := RunPixelMatch(
+		encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
+		0.1, false, nil,
+	)
+	if err != nil {
+		t.Fatalf("RunPixelMatch failed: %v", err)
+	}
+	if imageSize != "200x200" {
+		t.Errorf("Expected imageSize=200x200, got %q", imageSize)
+	}
+	if totalPixels != 200*200 {
+		t.Errorf("Expected totalPixels=40000, got %d", totalPixels)
+	}
 }
 
 // TestCalculateLayoutSimilarityWithDiff_IgnoreRegionOutOfBounds verifies the
@@ -338,7 +358,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 	// strict モード: 上限を 1px 超える 8193x1 の PNG はエラーになる
 	t.Run("RunPixelMatch_rejects_oversized", func(t *testing.T) {
 		img := image.NewRGBA(image.Rect(0, 0, maxImageDimension+1, 1))
-		_, _, _, _, _, err := RunPixelMatch(
+		_, _, _, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, img), encodePNGBytes(t, img),
 			0.1, false, nil,
 		)
@@ -354,7 +374,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 	// strict モード: 上限ピッタリ (8192x1) はエラーにならない (実用画像を弾かない)
 	t.Run("RunPixelMatch_allows_max_dimension", func(t *testing.T) {
 		img := image.NewRGBA(image.Rect(0, 0, maxImageDimension, 1))
-		_, _, diffCount, _, _, err := RunPixelMatch(
+		_, _, diffCount, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, img), encodePNGBytes(t, img),
 			0.1, false, nil,
 		)
