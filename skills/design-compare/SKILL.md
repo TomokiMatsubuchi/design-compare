@@ -60,6 +60,7 @@ If any interaction state fails the threshold, fix the CSS/HTML (e.g. overflow ha
 
 ### Step 5: Analyze Results and Fix Code
 - Check the output `status` and `match_rate`.
+- In `layout_tree` mode, if `zero_geometry_warning` is present, the layout JSON likely used wrong keys (`width`/`height` instead of `w`/`h`). Do not treat a 100% match as valid until the geometry keys are corrected.
 - If discrepancies exist, inspect the output details and the `diff_image` field (a base64 PNG data URI returned in the response; no temporary file is written). For how the visualization is colored, see README §1. Then correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
 
 ## Guardrails & Best Practices

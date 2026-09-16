@@ -375,3 +375,74 @@ func TestLayoutTree_IgnoreNodesWildcard(t *testing.T) {
 		}
 	})
 }
+
+// TestLayoutTree_ZeroGeometryWarning verifies that when layout JSON uses
+// width/height (or other names that do not unmarshal into w/h), most nodes
+// become 0×0. CompareLayoutTrees still returns the same status as before
+// (non-destructive) but sets ZeroGeometryWarning so the silent 100% match
+// is noticeable. A minority of genuine 0×0 nodes must not trigger it.
+func TestLayoutTree_ZeroGeometryWarning(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+	wantWarning := `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
+
+	t.Run("width_height_keys_warn_status_unchanged", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"header","x":0,"y":0,"width":1000,"height":100},
+			{"id":"2","name":"logo","x":10,"y":10,"width":100,"height":80,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#header","x":0,"y":0,"width":1000,"height":100},
+			{"selector":".logo","x":10,"y":10,"width":100,"height":80,"parent":"#header"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success' (non-destructive), got '%s'", result.Status)
+		}
+		if result.MatchRate != 100.0 {
+			t.Errorf("Expected match_rate 100%% (all-zero geometry still matches), got %.1f%%", result.MatchRate)
+		}
+		if result.ZeroGeometryWarning != wantWarning {
+			t.Errorf("Expected ZeroGeometryWarning=%q, got %q", wantWarning, result.ZeroGeometryWarning)
+		}
+	})
+
+	t.Run("valid_w_h_keys_no_warning", func(t *testing.T) {
+		figmaJSON := `[{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100}]`
+		webJSON := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100}]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success', got '%s'", result.Status)
+		}
+		if result.ZeroGeometryWarning != "" {
+			t.Errorf("Expected no ZeroGeometryWarning for valid w/h keys, got %q", result.ZeroGeometryWarning)
+		}
+	})
+
+	t.Run("minority_zero_size_no_warning", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"a","x":0,"y":0,"w":100,"h":100},
+			{"id":"2","name":"b","x":0,"y":0,"w":0,"h":0}
+		]`
+		webJSON := `[
+			{"selector":"a","x":0,"y":0,"w":100,"h":100},
+			{"selector":"b","x":0,"y":0,"w":0,"h":0}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.ZeroGeometryWarning != "" {
+			t.Errorf("Expected no warning when zeros are not a majority, got %q", result.ZeroGeometryWarning)
+		}
+	})
+}
