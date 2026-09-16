@@ -2941,6 +2941,98 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		}
 	})
+
+	// 画像デコード失敗時は対応フォーマットを列挙し、WebP/AVIF 等からの
+	// 再書き出しを1回のリトライで選べるようにする (Issue #179)
+	t.Run("ImageDecodeError_ListsSupportedFormats", func(t *testing.T) {
+		txtPath := filepath.Join(tmpDir, "not-an-image.txt")
+		if err := os.WriteFile(txtPath, []byte("this is not an image"), 0o644); err != nil {
+			t.Fatalf("failed to write text fixture: %v", err)
+		}
+		const formatsHint = "(supported formats: PNG, JPEG, GIF)"
+
+		t.Run("perceptual_txt", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "perceptual",
+						"image_path_a": txtPath,
+						"image_path_b": pathA,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("Expected decode error for text image A, got content=%v", res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "Failed to decode image A") {
+				t.Errorf("Expected image A decode error, got %q", got)
+			}
+			if !strings.Contains(got, formatsHint) {
+				t.Errorf("Expected supported-formats hint, got %q", got)
+			}
+		})
+
+		t.Run("strict_txt", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "strict",
+						"image_path_a": txtPath,
+						"image_path_b": pathA,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("Expected decode error for text design image, got content=%v", res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "failed to decode design image") {
+				t.Errorf("Expected design-image decode error, got %q", got)
+			}
+			if !strings.Contains(got, formatsHint) {
+				t.Errorf("Expected supported-formats hint, got %q", got)
+			}
+		})
+
+		t.Run("perceptual_empty_bytes", func(t *testing.T) {
+			emptyPath := filepath.Join(tmpDir, "empty.bin")
+			if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
+				t.Fatalf("failed to write empty fixture: %v", err)
+			}
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "perceptual",
+						"image_path_a": pathA,
+						"image_path_b": emptyPath,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("Expected decode error for empty image B, got content=%v", res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "Failed to decode image B") {
+				t.Errorf("Expected image B decode error, got %q", got)
+			}
+			if !strings.Contains(got, formatsHint) {
+				t.Errorf("Expected supported-formats hint, got %q", got)
+			}
+		})
+	})
 }
 
 // resolveImageInput が data URI 形式 ("data:<mime>;base64,<payload>") の

@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"strings"
 	"testing"
 )
 
@@ -407,6 +408,41 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 		wantB := fmt.Sprintf("image B is 1x%d; maximum supported dimension is %d, resize the images before comparison", maxImageDimension+1, maxImageDimension)
 		if err.Error() != wantB {
 			t.Errorf("Expected error %q, got %q", wantB, err.Error())
+		}
+	})
+}
+
+const supportedImageFormatsHint = "(supported formats: PNG, JPEG, GIF)"
+
+// TestRunPixelMatch_DecodeErrorListsSupportedFormats verifies that undecodable
+// input (empty bytes or a text payload) reports the formats callers can retry
+// with, matching the self-repair pattern used for unknown comparison modes.
+func TestRunPixelMatch_DecodeErrorListsSupportedFormats(t *testing.T) {
+	valid := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+
+	t.Run("empty_design_bytes", func(t *testing.T) {
+		_, _, _, _, _, _, err := RunPixelMatch(nil, valid, 0.1, false, nil)
+		if err == nil {
+			t.Fatal("Expected decode error for empty design image bytes, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to decode design image") {
+			t.Errorf("Expected design-image decode prefix, got %q", err.Error())
+		}
+		if !strings.Contains(err.Error(), supportedImageFormatsHint) {
+			t.Errorf("Expected supported-formats hint, got %q", err.Error())
+		}
+	})
+
+	t.Run("text_web_screenshot", func(t *testing.T) {
+		_, _, _, _, _, _, err := RunPixelMatch(valid, []byte("this is not an image"), 0.1, false, nil)
+		if err == nil {
+			t.Fatal("Expected decode error for text web screenshot bytes, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to decode web screenshot") {
+			t.Errorf("Expected web-screenshot decode prefix, got %q", err.Error())
+		}
+		if !strings.Contains(err.Error(), supportedImageFormatsHint) {
+			t.Errorf("Expected supported-formats hint, got %q", err.Error())
 		}
 	})
 }
