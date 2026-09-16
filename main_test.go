@@ -1364,6 +1364,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !ok || note != "note: image A is 200x200, image B is 100x100; ignore_region is applied in absolute pixels of each image" {
 			t.Errorf("Expected size-mismatch ignore_region note, got %v", details[1])
 		}
+		if result["image_size_a"] != "200x200" || result["image_size_b"] != "100x100" {
+			t.Errorf("Expected image_size_a=200x200 image_size_b=100x100, got a=%v b=%v", result["image_size_a"], result["image_size_b"])
+		}
 	})
 
 	// diff_blocks / total_blocks: aHash の差分セル数を数量として応答へ含める
@@ -1412,6 +1415,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if s, ok := details[0].(string); !ok || !strings.Contains(s, "64 of 256 blocks differ") {
 			t.Errorf("Expected details to contain '64 of 256 blocks differ', got %v", details[0])
+		}
+		if resultNoRegion["image_size_a"] != "200x200" || resultNoRegion["image_size_b"] != "200x200" {
+			t.Errorf("Expected image_size_a/b=200x200, got a=%v b=%v", resultNoRegion["image_size_a"], resultNoRegion["image_size_b"])
 		}
 
 		// ignore_region で既知の差分領域をマスクすると diff_blocks=0
@@ -2065,6 +2071,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if v, ok := result["effective_threshold"].(float64); !ok || v != 0.1 {
 			t.Errorf("Expected default effective_threshold=0.1 in response, got %v", result["effective_threshold"])
 		}
+		if result["image_size"] != "200x200" {
+			t.Errorf("Expected image_size=200x200, got %v", result["image_size"])
+		}
 	})
 
 	// generate_diff=false で差分画像 (base64) を返さない
@@ -2529,6 +2538,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if _, ok := resultStrict["match_rate"].(string); !ok {
 			t.Errorf("Expected display match_rate to remain a string, got %T", resultStrict["match_rate"])
+		}
+		if resultStrict["image_size"] != "200x200" {
+			t.Errorf("Expected image_size=200x200, got %v", resultStrict["image_size"])
 		}
 	})
 
