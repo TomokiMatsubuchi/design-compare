@@ -78,6 +78,9 @@ func main() {
 		mcp.WithBoolean("generate_diff",
 			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image' is empty for 'perceptual' and 'strict' modes. Useful to avoid large base64 payloads in responses."),
 		),
+		mcp.WithBoolean("diff_on_mismatch",
+			mcp.Description("For 'perceptual' and 'strict' modes: when true, omit the diff image from the response if the comparison status is 'success' (default false). Combined with generate_diff (default true), this still generates a diff internally but replaces 'diff_image' with an empty string on success so matching calls do not return a large base64 payload. On mismatch the diff image is returned as usual. Ignored when generate_diff is false (diff_image is already empty)."),
+		),
 	)
 	s.AddTool(compareDesignTool, compareDesignHandler)
 
@@ -203,8 +206,9 @@ var modeParamSupport = map[string]map[string]bool{
 	"max_diff_pixels": {"strict": true},
 	"ignore_nodes":    {"layout_tree": true},
 	"ignore_region":   {"layout_tree": true, "perceptual": true, "strict": true},
-	"count_extra_web": {"layout_tree": true},
-	"generate_diff":   {"perceptual": true, "strict": true},
+	"count_extra_web":   {"layout_tree": true},
+	"generate_diff":     {"perceptual": true, "strict": true},
+	"diff_on_mismatch":  {"perceptual": true, "strict": true},
 }
 
 // modeParamAlternatives は、モード非対応パラメータのうち最頻出の混同ペアだけを
@@ -585,6 +589,16 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 	default:
 		// 有効モードを列挙し、タイポ時にREADME等を見ずに1回のリトライで自己修復できるようにする
 		return mcp.NewToolResultError(fmt.Sprintf("Unknown comparison mode: %s (valid modes: layout_tree, perceptual, strict)", mode)), nil
+	}
+
+	// 成功時は差分画像が不要な呼び出し向け: 合否確定後に diff_image だけ空にする。
+	// comparator は変更せず、generate_diff の既存挙動 (未指定時は生成) を保つ。
+	if request.GetBool("diff_on_mismatch", false) {
+		if status, _ := responseMap["status"].(string); status == "success" {
+			if _, ok := responseMap["diff_image"]; ok {
+				responseMap["diff_image"] = ""
+			}
+		}
 	}
 
 	responseJSON, err := json.MarshalIndent(responseMap, "", "  ")

@@ -1273,6 +1273,78 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// diff_on_mismatch=true: 成功時のみ diff_image を空にし、不一致では生成する
+	t.Run("Perceptual_DiffOnMismatch", func(t *testing.T) {
+		reqMatch := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":             "perceptual",
+					"image_path_a":     pathA,
+					"image_path_b":     pathC,
+					"diff_on_mismatch": true,
+				},
+			},
+		}
+		resMatch, err := compareDesignHandler(context.Background(), reqMatch)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultMatch map[string]interface{}
+		json.Unmarshal([]byte(resMatch.Content[0].(mcp.TextContent).Text), &resultMatch)
+		if resultMatch["status"] != "success" {
+			t.Fatalf("Expected perceptual success, got status=%v", resultMatch["status"])
+		}
+		if diffImg, ok := resultMatch["diff_image"].(string); !ok || diffImg != "" {
+			t.Errorf("Expected empty diff_image on success with diff_on_mismatch=true, got %v", resultMatch["diff_image"])
+		}
+
+		reqMismatch := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":             "perceptual",
+					"image_path_a":     pathA,
+					"image_path_b":     pathD,
+					"diff_on_mismatch": true,
+				},
+			},
+		}
+		resMismatch, err := compareDesignHandler(context.Background(), reqMismatch)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultMismatch map[string]interface{}
+		json.Unmarshal([]byte(resMismatch.Content[0].(mcp.TextContent).Text), &resultMismatch)
+		if resultMismatch["status"] != "mismatch" {
+			t.Errorf("Expected perceptual mismatch, got status=%v", resultMismatch["status"])
+		}
+		assertDiffDataURI(t, resultMismatch)
+
+		// generate_diff=false と併用すると不一致でも diff_image は空のまま
+		reqBothFalse := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":             "perceptual",
+					"image_path_a":     pathA,
+					"image_path_b":     pathD,
+					"generate_diff":    false,
+					"diff_on_mismatch": true,
+				},
+			},
+		}
+		resBoth, err := compareDesignHandler(context.Background(), reqBothFalse)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultBoth map[string]interface{}
+		json.Unmarshal([]byte(resBoth.Content[0].(mcp.TextContent).Text), &resultBoth)
+		if resultBoth["status"] != "mismatch" {
+			t.Errorf("Expected perceptual mismatch, got status=%v", resultBoth["status"])
+		}
+		if diffImg, ok := resultBoth["diff_image"].(string); !ok || diffImg != "" {
+			t.Errorf("Expected empty diff_image with generate_diff=false even on mismatch, got %v", resultBoth["diff_image"])
+		}
+	})
+
 	// ignore_region: 既知の差分領域をマスクして比較する
 	t.Run("Perceptual_IgnoreRegion", func(t *testing.T) {
 		// 指定なし: 左上の黒矩形 (pathE) と全面白 (pathF) は一致率75%で mismatch
@@ -2147,6 +2219,79 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// diff_on_mismatch=true: 同一画像の success では空、色差 mismatch では生成する
+	t.Run("StrictMode_DiffOnMismatch", func(t *testing.T) {
+		reqMatch := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":             "strict",
+					"image_path_a":     pathA,
+					"image_path_b":     pathA,
+					"diff_on_mismatch": true,
+				},
+			},
+		}
+		resMatch, err := compareDesignHandler(context.Background(), reqMatch)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultMatch map[string]interface{}
+		json.Unmarshal([]byte(resMatch.Content[0].(mcp.TextContent).Text), &resultMatch)
+		if resultMatch["status"] != "success" {
+			t.Fatalf("Expected strict success for identical images, got status=%v", resultMatch["status"])
+		}
+		if diffImage, ok := resultMatch["diff_image"].(string); !ok || diffImage != "" {
+			t.Errorf("Expected empty diff_image on success with diff_on_mismatch=true, got %v", resultMatch["diff_image"])
+		}
+
+		reqMismatch := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":             "strict",
+					"image_path_a":     pathA,
+					"image_path_b":     pathC,
+					"diff_on_mismatch": true,
+				},
+			},
+		}
+		resMismatch, err := compareDesignHandler(context.Background(), reqMismatch)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultMismatch map[string]interface{}
+		json.Unmarshal([]byte(resMismatch.Content[0].(mcp.TextContent).Text), &resultMismatch)
+		if resultMismatch["status"] != "mismatch" {
+			t.Errorf("Expected strict mismatch, got status=%v", resultMismatch["status"])
+		}
+		if diffImage, ok := resultMismatch["diff_image"].(string); !ok || diffImage == "" {
+			t.Errorf("Expected non-empty diff_image on mismatch with diff_on_mismatch=true, got %v", resultMismatch["diff_image"])
+		}
+
+		reqBoth := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":             "strict",
+					"image_path_a":     pathA,
+					"image_path_b":     pathC,
+					"generate_diff":    false,
+					"diff_on_mismatch": true,
+				},
+			},
+		}
+		resBoth, err := compareDesignHandler(context.Background(), reqBoth)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultBoth map[string]interface{}
+		json.Unmarshal([]byte(resBoth.Content[0].(mcp.TextContent).Text), &resultBoth)
+		if resultBoth["status"] != "mismatch" {
+			t.Errorf("Expected strict mismatch, got status=%v", resultBoth["status"])
+		}
+		if diffImage, ok := resultBoth["diff_image"].(string); !ok || diffImage != "" {
+			t.Errorf("Expected empty diff_image with generate_diff=false even on mismatch, got %v", resultBoth["diff_image"])
+		}
+	})
+
 	// max_diff_pixels: 差分ピクセル数が許容値以下なら success と判定する
 	t.Run("StrictMode_MaxDiffPixels", func(t *testing.T) {
 		baseArgs := map[string]any{
@@ -2776,6 +2921,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_tree", "image_b_base64", "not-base64", true, ""},
 			{"layout_tree", "max_diff_pixels", 10.0, true, ""},
 			{"layout_tree", "generate_diff", false, true, ""},
+			{"layout_tree", "diff_on_mismatch", true, true, ""},
 			{"layout_tree", "min_match", 90.0, true, " (use 'pass_rate' instead)"},
 			// layout_tree: 対応パラメータはエラーにならない
 			{"layout_tree", "ignore_nodes", "a", false, ""},
@@ -2797,6 +2943,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"perceptual", "threshold", 98.0, false, ""},
 			{"perceptual", "ignore_region", "0,0,10,10", false, ""},
 			{"perceptual", "generate_diff", false, false, ""},
+			{"perceptual", "diff_on_mismatch", true, false, ""},
 			// strict: レイアウト入力・layout_tree 専用パラメータは非対応
 			{"strict", "figma_layout", figmaLayout, true, ""},
 			{"strict", "figma_layout_path", "/tmp/nonexistent.json", true, ""},
@@ -2811,6 +2958,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "threshold", 0.1, false, ""},
 			{"strict", "ignore_region", "0,0,10,10", false, ""},
 			{"strict", "generate_diff", false, false, ""},
+			{"strict", "diff_on_mismatch", true, false, ""},
 		}
 
 		for _, c := range cases {
