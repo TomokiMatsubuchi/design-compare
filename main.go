@@ -64,10 +64,10 @@ func main() {
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
 		),
 		mcp.WithNumber("threshold",
-			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0); prefer 'min_match' instead to avoid confusion with the 0.0–1.0 tolerance scale."),
+			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
 		),
 		mcp.WithNumber("min_match",
-			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass. For 'perceptual' mode: default 98.0; use this instead of 'threshold' for perceptual mode, since 'threshold' uses a 0.0–1.0 scale in other modes. For 'strict' mode: optional with no default; when omitted, strict mode judges only by 'max_diff_pixels', and when specified the match rate must be at least this value (combinable with 'max_diff_pixels'; exceeding either causes mismatch)."),
+			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass. For 'perceptual' mode: default 98.0; use this instead of 'threshold' (mutually exclusive with 'threshold' in perceptual mode), since 'threshold' uses a 0.0–1.0 scale in other modes. For 'strict' mode: optional with no default; when omitted, strict mode judges only by 'max_diff_pixels', and when specified the match rate must be at least this value (combinable with 'max_diff_pixels'; exceeding either causes mismatch)."),
 		),
 		mcp.WithNumber("pass_rate",
 			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass in 'layout_tree' mode. Default 98.0."),
@@ -370,13 +370,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
 
-		// min_match を優先使用し、threshold は後方互換エイリアスとして扱う。
+		// min_match を正規パラメータとし、threshold は後方互換エイリアスとして扱う。
 		// threshold は layout_tree / strict では 0.0–1.0 の許容差だが、perceptual では
 		// 一致率% (1.0–100.0) と意味が異なる。専用パラメータ min_match を使うことで
-		// モード間の意味の不一致による誤用を防ぐ。
+		// モード間の意味の不一致による誤用を防ぐ。同時指定すると threshold が黙って
+		// 無視されるため、image_path / image_*_base64 と同様に相互排他エラーにする。
 		args := request.GetArguments()
 		_, hasMinMatch := args["min_match"]
 		_, hasThreshold := args["threshold"]
+		if hasMinMatch && hasThreshold {
+			return mcp.NewToolResultError("only one of min_match and threshold can be specified"), nil
+		}
 
 		var minMatchRate float64
 		if hasMinMatch {

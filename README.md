@@ -65,7 +65,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | パラメータ | 型 | 対象モード | 範囲 | デフォルト | 説明 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `threshold` | number | `layout_tree` | 0.0–1.0 | 0.15 | BoundingBox の幾何差分（相対座標・相対サイズの L2 距離）に対する許容差。 |
-| `threshold` | number | `perceptual` | 1.0–100.0 | 98.0 | 後方互換のため `min_match`（一致率%）のエイリアスとして受け付ける。1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐためエラーになる。**`min_match` の使用を推奨。** |
+| `threshold` | number | `perceptual` | 1.0–100.0 | 98.0 | 後方互換のため `min_match`（一致率%）のエイリアスとして受け付ける。1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐためエラーになる。`min_match` との同時指定もエラー。**`min_match` の使用を推奨。** |
 | `threshold` | number | `strict` | 0.0–1.0 | 0.1 | 色差の許容度（pixelmatch の color diff tolerance）。 |
 | `min_match` | number | `perceptual` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。実効値（`threshold` エイリアス解決後を含む）は応答の `min_match` として常に返される。 |
 | `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。 |
@@ -261,6 +261,14 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 | `ignore_region` | `layout_tree`, `perceptual`, `strict` |
 | `generate_diff` / `min_match` | `perceptual`, `strict` |
 | `max_diff_pixels` | `strict` |
-| `threshold` | `layout_tree`, `perceptual`, `strict` (`perceptual` では `min_match` の後方互換エイリアスとして 1.0–100.0 を受け付ける) |
+| `threshold` | `layout_tree`, `perceptual`, `strict` (`perceptual` では `min_match` の後方互換エイリアスとして 1.0–100.0 を受け付ける。`min_match` との同時指定は不可) |
 
 **影響:** 既存クライアントがモード非対応のパラメータを渡していた場合、それらの呼び出しはエラーになります。該当パラメータを除外するか、対応するモードで指定し直してください。
+
+### perceptual モードの `min_match` と `threshold` の同時指定
+
+従来は `perceptual` モードで `min_match` と `threshold` を同時に渡すと、`threshold` は範囲検証もされず黙って無視され、`min_match` のみで判定されていました。呼び出し側は `threshold` が効いているつもりで結果を受け取り、誤った確信を得る状態でした（例: `threshold=0.1` は `min_match` 未指定時には strict スケールとの混同としてエラーになる値でも、同時指定では無視されていました）。
+
+これを防ぐため、`image_path_a` と `image_a_base64` と同様に相互排他とし、同時指定時は比較を実行せずに `only one of min_match and threshold can be specified` のツール実行エラー (`IsError: true`) を返します。`threshold` 単独指定の後方互換は維持されます。
+
+**影響:** 既存クライアントが `perceptual` モードで両方を渡していた場合、どちらか一方に揃えてください。新規呼び出しでは `min_match` を使ってください。
