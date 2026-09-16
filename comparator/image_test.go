@@ -254,6 +254,28 @@ func TestCalculateLayoutSimilarityWithDiff_UniformImageWarning(t *testing.T) {
 	})
 }
 
+// TestCalculateLayoutSimilarityWithDiff_TransparentCompositesOntoWhite verifies
+// that fully transparent pixels are composited onto white before aHash
+// (Issue #168). RGBA() は premultiplied 値を返すためアルファを破棄すると
+// 完全透過は RGB=0（黒）になり、白背景の Web スクショと大規模な誤不一致になる。
+func TestCalculateLayoutSimilarityWithDiff_TransparentCompositesOntoWhite(t *testing.T) {
+	// NewRGBA はゼロ初期化のため全ピクセルが (0,0,0,0) の全面透過画像になる。
+	transparent := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	white := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	draw.Draw(white, white.Bounds(), &image.Uniform{color.RGBA{255, 255, 255, 255}}, image.Point{}, draw.Src)
+
+	matchRate, diffBits, _, _, _, err := CalculateLayoutSimilarityWithDiff(transparent, white, false, nil)
+	if err != nil {
+		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
+	}
+	if matchRate != 100 {
+		t.Errorf("Expected matchRate=100 (full transparent vs solid white after white compositing), got %v", matchRate)
+	}
+	if diffBits != 0 {
+		t.Errorf("Expected diffBits=0, got %d", diffBits)
+	}
+}
+
 // TestCalculateLayoutSimilarityWithDiff_DiffBits verifies that the number of
 // differing aHash cells (diffBits) is returned alongside the match rate so
 // callers can report it as "N of 256 blocks differ" (Issue #141)。
