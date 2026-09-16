@@ -352,6 +352,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(treeResult.ExtraWebNodes) > 0 {
 			responseMap["extra_web_nodes"] = treeResult.ExtraWebNodes
 		}
+		// width/height などキー名の揺れで幾何が全て 0 になると一致率 100% になるため、
+		// unmatched_ignores と同様に誤用検出のフィードバックを載せる（status は非破壊）。
+		if treeResult.ZeroGeometryWarning != "" {
+			responseMap["zero_geometry_warning"] = treeResult.ZeroGeometryWarning
+		}
 
 	case "perceptual":
 		// =================================================================
