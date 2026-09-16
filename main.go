@@ -207,12 +207,23 @@ var modeParamSupport = map[string]map[string]bool{
 	"generate_diff":   {"perceptual": true, "strict": true},
 }
 
+// modeParamAlternatives は、モード非対応パラメータのうち最頻出の混同ペアだけを
+// 代替ヒントとして載せる。min_match (perceptual/strict) と pass_rate
+// (layout_tree) はいずれも一致率%の合格ラインで、名前だけが違うため
+// layout_tree への min_match / 画像モードへの pass_rate が自然に起きる。
+// 未知モードが有効モードを列挙するのと同様、1 リトライで自己修復できるようにする。
+var modeParamAlternatives = map[string]string{
+	"min_match": "pass_rate",
+	"pass_rate": "min_match",
+}
+
 // validateModeParams は、指定された引数の中に当該モードで効果を持たない
 // (指定しても警告なく無視されるだけの) パラメータがないかを modeParamSupport
 // と照合して検証する。非対応キーは無視せず "parameter 'X' is not supported in
 // mode 'Y'" を返し、除外・合格ラインが効いていない判定結果を静かに受け取るのを
-// 防ぐ。mode 自身とここに列挙していない未知のキーは検証対象外とする (未知の
-// モードは handler の switch で "Unknown comparison mode" としてエラーになる)。
+// 防ぐ。既知の代替があるキーは "(use 'Z' instead)" を追記する。mode 自身と
+// ここに列挙していない未知のキーは検証対象外とする (未知のモードは handler
+// の switch で "Unknown comparison mode" としてエラーになる)。
 func validateModeParams(args map[string]any, mode string) error {
 	switch mode {
 	case "layout_tree", "perceptual", "strict":
@@ -231,7 +242,11 @@ func validateModeParams(args map[string]any, mode string) error {
 		if !isToolParam || supported[mode] {
 			continue
 		}
-		return fmt.Errorf("parameter '%s' is not supported in mode '%s'", key, mode)
+		msg := fmt.Sprintf("parameter '%s' is not supported in mode '%s'", key, mode)
+		if alt, ok := modeParamAlternatives[key]; ok {
+			msg += fmt.Sprintf(" (use '%s' instead)", alt)
+		}
+		return fmt.Errorf("%s", msg)
 	}
 	return nil
 }
