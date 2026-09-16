@@ -2679,54 +2679,56 @@ func TestVRTUnifiedCompare(t *testing.T) {
 
 		// mode × param の組合せ。wantErr=true はモード非対応のため IsError、
 		// false は対応パラメータなので比較が実行されてエラーにならない。
+		// hint は min_match ↔ pass_rate の混同だけ付与する (Issue #171)。
 		cases := []struct {
 			mode    string
 			param   string
 			value   any
 			wantErr bool
+			hint    string
 		}{
 			// layout_tree: 画像入力・画像系モード専用パラメータは非対応
-			{"layout_tree", "image_path_a", pathA, true},
-			{"layout_tree", "image_path_b", pathC, true},
-			{"layout_tree", "image_a_base64", "not-base64", true},
-			{"layout_tree", "image_b_base64", "not-base64", true},
-			{"layout_tree", "max_diff_pixels", 10.0, true},
-			{"layout_tree", "generate_diff", false, true},
-			{"layout_tree", "min_match", 90.0, true},
+			{"layout_tree", "image_path_a", pathA, true, ""},
+			{"layout_tree", "image_path_b", pathC, true, ""},
+			{"layout_tree", "image_a_base64", "not-base64", true, ""},
+			{"layout_tree", "image_b_base64", "not-base64", true, ""},
+			{"layout_tree", "max_diff_pixels", 10.0, true, ""},
+			{"layout_tree", "generate_diff", false, true, ""},
+			{"layout_tree", "min_match", 90.0, true, " (use 'pass_rate' instead)"},
 			// layout_tree: 対応パラメータはエラーにならない
-			{"layout_tree", "ignore_nodes", "a", false},
-			{"layout_tree", "ignore_region", "0,0,10,10", false},
-			{"layout_tree", "count_extra_web", true, false},
-			{"layout_tree", "pass_rate", 90.0, false},
-			{"layout_tree", "threshold", 0.15, false},
+			{"layout_tree", "ignore_nodes", "a", false, ""},
+			{"layout_tree", "ignore_region", "0,0,10,10", false, ""},
+			{"layout_tree", "count_extra_web", true, false, ""},
+			{"layout_tree", "pass_rate", 90.0, false, ""},
+			{"layout_tree", "threshold", 0.15, false, ""},
 			// perceptual: レイアウト入力・layout_tree 専用パラメータは非対応
-			{"perceptual", "figma_layout", figmaLayout, true},
-			{"perceptual", "figma_layout_path", "/tmp/nonexistent.json", true},
-			{"perceptual", "web_layout", webLayout, true},
-			{"perceptual", "web_layout_path", "/tmp/nonexistent.json", true},
-			{"perceptual", "ignore_nodes", "nav", true},
-			{"perceptual", "count_extra_web", true, true},
-			{"perceptual", "pass_rate", 90.0, true},
-			{"perceptual", "max_diff_pixels", 10.0, true},
+			{"perceptual", "figma_layout", figmaLayout, true, ""},
+			{"perceptual", "figma_layout_path", "/tmp/nonexistent.json", true, ""},
+			{"perceptual", "web_layout", webLayout, true, ""},
+			{"perceptual", "web_layout_path", "/tmp/nonexistent.json", true, ""},
+			{"perceptual", "ignore_nodes", "nav", true, ""},
+			{"perceptual", "count_extra_web", true, true, ""},
+			{"perceptual", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
+			{"perceptual", "max_diff_pixels", 10.0, true, ""},
 			// perceptual: 対応パラメータはエラーにならない
-			{"perceptual", "min_match", 98.0, false},
-			{"perceptual", "threshold", 98.0, false},
-			{"perceptual", "ignore_region", "0,0,10,10", false},
-			{"perceptual", "generate_diff", false, false},
+			{"perceptual", "min_match", 98.0, false, ""},
+			{"perceptual", "threshold", 98.0, false, ""},
+			{"perceptual", "ignore_region", "0,0,10,10", false, ""},
+			{"perceptual", "generate_diff", false, false, ""},
 			// strict: レイアウト入力・layout_tree 専用パラメータは非対応
-			{"strict", "figma_layout", figmaLayout, true},
-			{"strict", "figma_layout_path", "/tmp/nonexistent.json", true},
-			{"strict", "web_layout", webLayout, true},
-			{"strict", "web_layout_path", "/tmp/nonexistent.json", true},
-			{"strict", "ignore_nodes", "nav", true},
-			{"strict", "count_extra_web", true, true},
-			{"strict", "pass_rate", 90.0, true},
+			{"strict", "figma_layout", figmaLayout, true, ""},
+			{"strict", "figma_layout_path", "/tmp/nonexistent.json", true, ""},
+			{"strict", "web_layout", webLayout, true, ""},
+			{"strict", "web_layout_path", "/tmp/nonexistent.json", true, ""},
+			{"strict", "ignore_nodes", "nav", true, ""},
+			{"strict", "count_extra_web", true, true, ""},
+			{"strict", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			// strict: 対応パラメータはエラーにならない
-			{"strict", "max_diff_pixels", 100000.0, false},
-			{"strict", "min_match", 10.0, false},
-			{"strict", "threshold", 0.1, false},
-			{"strict", "ignore_region", "0,0,10,10", false},
-			{"strict", "generate_diff", false, false},
+			{"strict", "max_diff_pixels", 100000.0, false, ""},
+			{"strict", "min_match", 10.0, false, ""},
+			{"strict", "threshold", 0.1, false, ""},
+			{"strict", "ignore_region", "0,0,10,10", false, ""},
+			{"strict", "generate_diff", false, false, ""},
 		}
 
 		for _, c := range cases {
@@ -2744,9 +2746,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 					if !res.IsError {
 						t.Fatalf("Expected error for unsupported parameter %q in mode %q, got content=%v", c.param, c.mode, res.Content[0].(mcp.TextContent).Text)
 					}
-					wantMsg := fmt.Sprintf("parameter '%s' is not supported in mode '%s'", c.param, c.mode)
-					if got := res.Content[0].(mcp.TextContent).Text; !strings.Contains(got, wantMsg) {
+					got := res.Content[0].(mcp.TextContent).Text
+					wantMsg := fmt.Sprintf("parameter '%s' is not supported in mode '%s'%s", c.param, c.mode, c.hint)
+					if !strings.Contains(got, wantMsg) {
 						t.Errorf("Expected error message containing %q, got %q", wantMsg, got)
+					}
+					if c.hint == "" && strings.Contains(got, "instead") {
+						t.Errorf("Expected no alternative hint for parameter %q in mode %q, got %q", c.param, c.mode, got)
 					}
 				} else if res.IsError {
 					t.Fatalf("Expected no error for supported parameter %q in mode %q, got content=%v", c.param, c.mode, res.Content[0].(mcp.TextContent).Text)
