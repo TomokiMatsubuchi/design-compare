@@ -173,6 +173,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultMatch["ignored_count"]; got != float64(0) {
 			t.Errorf("Expected ignored_count=0, got %v", got)
 		}
+		if _, ok := resultMatch["zero_geometry_warning"]; ok {
+			t.Errorf("Expected no zero_geometry_warning for valid w/h keys, got %v", resultMatch["zero_geometry_warning"])
+		}
 		// 一致ペアが details に出力されることの検証
 		detailsMatch, ok := resultMatch["details"].([]interface{})
 		if !ok {
@@ -420,6 +423,48 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(resFail.Content[0].(mcp.TextContent).Text), &resultFail)
 		if resultFail["status"] != "mismatch" {
 			t.Errorf("Expected mismatch with pass_rate=70, got status=%v, rate=%v", resultFail["status"], resultFail["match_rate"])
+		}
+	})
+
+	// =================================================================
+	// 2.4.1. layout_tree モード: width/height キーによる零幾何の警告
+	// =================================================================
+	t.Run("LayoutTree_ZeroGeometryWarning", func(t *testing.T) {
+		// w/h の代わりに width/height を使うと Unmarshal は成功するが幾何は全て 0。
+		// status は従来どおり success のまま、zero_geometry_warning で誤用を知らせる。
+		figmaWrongKeys := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "width": 1000, "height": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "width": 100, "height": 80, "parent": "1"}
+		]`
+		webWrongKeys := `[
+			{"selector": "#header", "x": 0, "y": 0, "width": 1000, "height": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "width": 100, "height": 80, "parent": "#header"}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaWrongKeys,
+					"web_layout":   webWrongKeys,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected status to remain success, got %v", result["status"])
+		}
+		if result["match_rate"] != "100.00%" {
+			t.Errorf("Expected match_rate 100.00%% (all-zero geometry still matches), got %v", result["match_rate"])
+		}
+		got, ok := result["zero_geometry_warning"].(string)
+		if !ok || !strings.Contains(got, `{"id","name","x","y","w","h","parent"}`) {
+			t.Errorf("Expected zero_geometry_warning about layout JSON keys, got %v", result["zero_geometry_warning"])
 		}
 	})
 

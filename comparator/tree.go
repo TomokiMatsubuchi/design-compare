@@ -27,16 +27,19 @@ type WebNode struct {
 }
 
 type LayoutTreeResult struct {
-	MatchRate        float64  `json:"match_rate"`
-	Status           string   `json:"status"`
-	Details          []string `json:"details"`
-	MatchedNodes     int      `json:"matched_nodes"`
-	TotalNodes       int      `json:"total_nodes"`
-	IgnoredCount     int      `json:"ignored_count"`
-	UnmatchedIgnores []string `json:"unmatched_ignores,omitempty"`
-	ExtraWebCount    int      `json:"extra_web_count"`
-	ExtraWebNodes    []string `json:"extra_web_nodes,omitempty"`
+	MatchRate           float64  `json:"match_rate"`
+	Status              string   `json:"status"`
+	Details             []string `json:"details"`
+	MatchedNodes        int      `json:"matched_nodes"`
+	TotalNodes          int      `json:"total_nodes"`
+	IgnoredCount        int      `json:"ignored_count"`
+	UnmatchedIgnores    []string `json:"unmatched_ignores,omitempty"`
+	ExtraWebCount       int      `json:"extra_web_count"`
+	ExtraWebNodes       []string `json:"extra_web_nodes,omitempty"`
+	ZeroGeometryWarning string   `json:"zero_geometry_warning,omitempty"`
 }
+
+const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
 
 // CompareLayoutTrees performs structural layout comparison on element hierarchies.
 // countExtraWeb が true の場合、どの Figma ノードにもマッチしなかった Web ノード
@@ -62,6 +65,11 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	if err := json.Unmarshal([]byte(webJSON), &wNodes); err != nil {
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
 	}
+
+	// width/height などキー名が異なる JSON は Unmarshal が成功したまま
+	// w/h が 0 のノードになる。両側が全零だと差分 0・一致率 100% になるため、
+	// 過半数が零幾何なら非破壊の警告を応答へ載せる（status は変えない）。
+	zeroGeometryWarning := zeroGeometryWarningIfMajority(fNodes, wNodes)
 
 	// ignoreList に基づいてノードを除外し、適用結果（除外数・無効なエントリ）を集計する。
 	// 末尾が '*' のエントリはプレフィックス一致（例: '.ad-*' は '.ad-banner' に一致）として
@@ -171,11 +179,12 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				side = "Web"
 			}
 			return &LayoutTreeResult{
-				MatchRate:        0,
-				Status:           "skipped",
-				Details:          []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
-				IgnoredCount:     ignoredCount,
-				UnmatchedIgnores: unmatchedIgnores,
+				MatchRate:           0,
+				Status:              "skipped",
+				Details:             []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
+				IgnoredCount:        ignoredCount,
+				UnmatchedIgnores:    unmatchedIgnores,
+				ZeroGeometryWarning: zeroGeometryWarning,
 			}, nil
 		}
 		// どちら側の入力が空かを明示する。
@@ -189,11 +198,12 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			emptyDetail = "Web layout node data is empty"
 		}
 		return &LayoutTreeResult{
-			MatchRate:        0,
-			Status:           "mismatch",
-			Details:          []string{emptyDetail},
-			IgnoredCount:     ignoredCount,
-			UnmatchedIgnores: unmatchedIgnores,
+			MatchRate:           0,
+			Status:              "mismatch",
+			Details:             []string{emptyDetail},
+			IgnoredCount:        ignoredCount,
+			UnmatchedIgnores:    unmatchedIgnores,
+			ZeroGeometryWarning: zeroGeometryWarning,
 		}, nil
 	}
 
@@ -330,16 +340,52 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	details = append(details, extraWebDetails...)
 
 	return &LayoutTreeResult{
-		MatchRate:        matchRate,
-		Status:           status,
-		Details:          details,
-		MatchedNodes:     matchedCount,
-		TotalNodes:       totalCompared,
-		IgnoredCount:     ignoredCount,
-		UnmatchedIgnores: unmatchedIgnores,
-		ExtraWebCount:    len(extraWebSelectors),
-		ExtraWebNodes:    extraWebSelectors,
+		MatchRate:           matchRate,
+		Status:              status,
+		Details:             details,
+		MatchedNodes:        matchedCount,
+		TotalNodes:          totalCompared,
+		IgnoredCount:        ignoredCount,
+		UnmatchedIgnores:    unmatchedIgnores,
+		ExtraWebCount:       len(extraWebSelectors),
+		ExtraWebNodes:       extraWebSelectors,
+		ZeroGeometryWarning: zeroGeometryWarning,
 	}, nil
+}
+
+// zeroGeometryWarningIfMajority は Figma / Web のいずれかで、幅・高さがともに 0 の
+// ノードが過半数（半数超）なら警告文を返す。空配列は分母が無いので対象外。
+func zeroGeometryWarningIfMajority(fNodes []FigmaNode, wNodes []WebNode) string {
+	if majorityZeroFigmaGeometry(fNodes) || majorityZeroWebGeometry(wNodes) {
+		return zeroGeometryWarningMsg
+	}
+	return ""
+}
+
+func majorityZeroFigmaGeometry(nodes []FigmaNode) bool {
+	if len(nodes) == 0 {
+		return false
+	}
+	var zeros int
+	for _, n := range nodes {
+		if n.W == 0 && n.H == 0 {
+			zeros++
+		}
+	}
+	return zeros*2 > len(nodes)
+}
+
+func majorityZeroWebGeometry(nodes []WebNode) bool {
+	if len(nodes) == 0 {
+		return false
+	}
+	var zeros int
+	for _, n := range nodes {
+		if n.W == 0 && n.H == 0 {
+			zeros++
+		}
+	}
+	return zeros*2 > len(nodes)
 }
 
 // boundingBoxCenterInRegions はノードの BoundingBox 中心点が除外領域のいずれかに
