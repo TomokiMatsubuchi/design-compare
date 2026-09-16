@@ -254,6 +254,42 @@ func TestCalculateLayoutSimilarityWithDiff_UniformImageWarning(t *testing.T) {
 	})
 }
 
+// TestCalculateLayoutSimilarityWithDiff_TransparentCompositesOntoWhite verifies
+// that fully transparent pixels are composited onto white before aHash
+// (Issue #168)。RGBA() は premultiplied 値を返すため透過部分をそのまま輝度化
+// すると RGB=0（黒）になり、白背景の Web スクショと大規模な誤不一致になる。
+// aHash は各画像自身の平均輝度で2値化するため、全面透過 vs 全面白のような
+// 一様なペアは合成の有無にかかわらず全セルが同一ビット (diffBits=0) になり
+// 回帰を検出できない。そこで非一様な内容で検証する: 「透過背景＋右半分に黒
+// 矩形」vs「白背景＋同じ黒矩形」は、白合成されていれば 100% 一致し、合成が
+// 壊れて透過が黒として扱われると透過側がほぼ全面黒になって約半分のセルが
+// 不一致になる。
+func TestCalculateLayoutSimilarityWithDiff_TransparentCompositesOntoWhite(t *testing.T) {
+	black := color.RGBA{0, 0, 0, 255}
+	white := color.RGBA{255, 255, 255, 255}
+
+	// A: 透過背景 + 右半分に黒矩形 (Figma の背景透過書き出しを模擬)。
+	// NewRGBA はゼロ初期化のため、矩形を描いていない左半分は全面透過のまま。
+	imgA := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	draw.Draw(imgA, image.Rect(32, 0, 64, 64), &image.Uniform{black}, image.Point{}, draw.Src)
+
+	// B: 白背景 + 同じ黒矩形 (不透明な Web スクショ)。
+	imgB := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+	draw.Draw(imgB, image.Rect(32, 0, 64, 64), &image.Uniform{black}, image.Point{}, draw.Src)
+
+	matchRate, diffBits, _, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+	if err != nil {
+		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
+	}
+	if matchRate != 100 {
+		t.Errorf("Expected matchRate=100 (transparent-bg content vs white-bg content after white compositing), got %v", matchRate)
+	}
+	if diffBits != 0 {
+		t.Errorf("Expected diffBits=0, got %d", diffBits)
+	}
+}
+
 // TestCalculateLayoutSimilarityWithDiff_DiffBits verifies that the number of
 // differing aHash cells (diffBits) is returned alongside the match rate so
 // callers can report it as "N of 256 blocks differ" (Issue #141)。
