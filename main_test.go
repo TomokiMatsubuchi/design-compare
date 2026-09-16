@@ -1704,7 +1704,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	t.Run("Perceptual_MinMatch_PrefersOverThreshold", func(t *testing.T) {
-		// min_match と threshold が両方指定された場合は min_match を優先する
+		// min_match と threshold の同時指定は相互排他エラーにする
+		// (threshold=0.1 は min_match 単独時に strict スケール混同として拒否される値)
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
@@ -1720,13 +1721,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handler failed: %v", err)
 		}
-		if res.IsError {
-			t.Errorf("Expected no error when min_match overrides threshold, got content=%v", res.Content[0].(mcp.TextContent).Text)
-		}
-		var result map[string]interface{}
-		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
-		if result["status"] != "mismatch" {
-			t.Errorf("Expected mismatch (min_match=98.0 should be used, not threshold=0.1), got status=%v", result["status"])
+		if !res.IsError {
+			t.Errorf("Expected error when both min_match and threshold are specified, got content=%v", res.Content[0].(mcp.TextContent).Text)
 		}
 	})
 
