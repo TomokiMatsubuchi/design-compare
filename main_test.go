@@ -1627,6 +1627,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "success" {
 			t.Errorf("Expected success with min_match=98.0, got status=%v", result["status"])
 		}
+		if v, ok := result["min_match"].(float64); !ok || v != 98.0 {
+			t.Errorf("Expected min_match=98.0 in response, got %v", result["min_match"])
+		}
 	})
 
 	t.Run("Perceptual_MinMatch_Mismatch", func(t *testing.T) {
@@ -2003,6 +2006,28 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	t.Run("Strict_EffectiveThreshold_Echo", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+					"threshold":    0.25,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if v, ok := result["effective_threshold"].(float64); !ok || v != 0.25 {
+			t.Errorf("Expected effective_threshold=0.25 in response, got %v", result["effective_threshold"])
+		}
+	})
+
 	t.Run("StrictMode_MismatchColor", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -2039,6 +2064,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		expectedRate := (totalPixels - diffPixels) / totalPixels * 100.0
 		if v, ok := result["match_rate_value"].(float64); !ok || v != expectedRate {
 			t.Errorf("Expected match_rate_value=%v (consistent with diff/total pixels), got %v", expectedRate, result["match_rate_value"])
+		}
+		// 色差許容は常に判定に使うため、未指定時もデフォルト 0.1 を echo する
+		if v, ok := result["effective_threshold"].(float64); !ok || v != 0.1 {
+			t.Errorf("Expected default effective_threshold=0.1 in response, got %v", result["effective_threshold"])
 		}
 	})
 

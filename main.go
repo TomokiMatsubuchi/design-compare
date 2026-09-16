@@ -546,19 +546,20 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		responseMap = map[string]interface{}{
-			"status":           status,
-			"mode":             "strict",
-			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
-			"match_rate_value": matchRate,
-			"total_pixels":     totalPixels,
-			"diff_pixels":      diffPixels,
-			"details":          []string{details},
-			"diff_image":       diffImage,
-			"ignored_regions":  len(ignoreRegions),
+			"status":              status,
+			"mode":                "strict",
+			"match_rate":          fmt.Sprintf("%.2f%%", matchRate),
+			"match_rate_value":    matchRate,
+			"total_pixels":        totalPixels,
+			"diff_pixels":         diffPixels,
+			"effective_threshold": threshold,
+			"details":             []string{details},
+			"diff_image":          diffImage,
+			"ignored_regions":     len(ignoreRegions),
 		}
-		// min_match 指定時のみ実効値を応答に echo する (layout_tree の effective_threshold と
-		// 同様に、どの閾値で合否判定されたかを検証可能にする。未指定なら判定に使って
-		// いないため含めない)。
+		// 色差許容 (threshold) は常に判定に使うため、layout_tree の effective_threshold
+		// と同様に既定値適用時も含めて応答へ echo する。min_match は指定時のみ判定に
+		// 使うため、未指定なら含めない。
 		if hasMinMatch {
 			responseMap["min_match"] = minMatchRate
 		}
