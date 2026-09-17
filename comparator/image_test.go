@@ -60,7 +60,7 @@ func TestRunPixelMatch_AntiAliasExclusion(t *testing.T) {
 		draw.Draw(imgB, image.Rect(0, 0, 5, h), &image.Uniform{black}, image.Point{}, draw.Src)
 		draw.Draw(imgB, image.Rect(5, 0, 6, h), &image.Uniform{grayLight}, image.Point{}, draw.Src)
 
-		_, _, diffCount, _, _, _, err := RunPixelMatch(
+		_, _, diffCount, _, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, nil,
 		)
@@ -83,7 +83,7 @@ func TestRunPixelMatch_AntiAliasExclusion(t *testing.T) {
 		draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
 		imgB.SetRGBA(6, 6, black) // single black pixel in flat white region
 
-		_, _, diffCount, _, _, _, err := RunPixelMatch(
+		_, _, diffCount, _, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, nil,
 		)
@@ -117,7 +117,7 @@ func newIgnoreRegionTestImages() (image.Image, image.Image) {
 func TestRunPixelMatch_IgnoreRegionOutOfBounds(t *testing.T) {
 	t.Run("out_of_bounds_region_reported", func(t *testing.T) {
 		imgA, imgB := newIgnoreRegionTestImages()
-		_, _, _, _, outOfBounds, _, err := RunPixelMatch(
+		_, _, _, _, outOfBounds, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, []Region{{X: 500, Y: 500, W: 100, H: 100}},
 		)
@@ -133,7 +133,7 @@ func TestRunPixelMatch_IgnoreRegionOutOfBounds(t *testing.T) {
 		imgA, imgB := newIgnoreRegionTestImages()
 		// "0,0,100,100" は画像内 / "150,150,100,100" は右下が画像外にはみ出すが
 		// 一部だけクリップされてマスクは機能するため、いずれも警告対象外。
-		_, _, _, _, outOfBounds, _, err := RunPixelMatch(
+		_, _, _, _, outOfBounds, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, []Region{{X: 0, Y: 0, W: 100, H: 100}, {X: 150, Y: 150, W: 100, H: 100}},
 		)
@@ -151,7 +151,7 @@ func TestRunPixelMatch_IgnoreRegionOutOfBounds(t *testing.T) {
 // totalPixels (w*h) alone.
 func TestRunPixelMatch_ImageSize(t *testing.T) {
 	imgA, imgB := newIgnoreRegionTestImages()
-	_, totalPixels, _, _, _, imageSize, err := RunPixelMatch(
+	_, totalPixels, _, _, _, imageSize, _, err := RunPixelMatch(
 		encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 		0.1, false, nil,
 	)
@@ -415,7 +415,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 	// strict モード: 上限を 1px 超える 8193x1 の PNG はエラーになる
 	t.Run("RunPixelMatch_rejects_oversized", func(t *testing.T) {
 		img := image.NewRGBA(image.Rect(0, 0, maxImageDimension+1, 1))
-		_, _, _, _, _, _, err := RunPixelMatch(
+		_, _, _, _, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, img), encodePNGBytes(t, img),
 			0.1, false, nil,
 		)
@@ -431,7 +431,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 	// strict モード: 上限ピッタリ (8192x1) はエラーにならない (実用画像を弾かない)
 	t.Run("RunPixelMatch_allows_max_dimension", func(t *testing.T) {
 		img := image.NewRGBA(image.Rect(0, 0, maxImageDimension, 1))
-		_, _, diffCount, _, _, _, err := RunPixelMatch(
+		_, _, diffCount, _, _, _, _, err := RunPixelMatch(
 			encodePNGBytes(t, img), encodePNGBytes(t, img),
 			0.1, false, nil,
 		)
@@ -477,7 +477,7 @@ func TestRunPixelMatch_DecodeErrorListsSupportedFormats(t *testing.T) {
 	valid := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
 
 	t.Run("empty_design_bytes", func(t *testing.T) {
-		_, _, _, _, _, _, err := RunPixelMatch(nil, valid, 0.1, false, nil)
+		_, _, _, _, _, _, _, err := RunPixelMatch(nil, valid, 0.1, false, nil)
 		if err == nil {
 			t.Fatal("Expected decode error for empty design image bytes, got nil")
 		}
@@ -490,7 +490,7 @@ func TestRunPixelMatch_DecodeErrorListsSupportedFormats(t *testing.T) {
 	})
 
 	t.Run("text_web_screenshot", func(t *testing.T) {
-		_, _, _, _, _, _, err := RunPixelMatch(valid, []byte("this is not an image"), 0.1, false, nil)
+		_, _, _, _, _, _, _, err := RunPixelMatch(valid, []byte("this is not an image"), 0.1, false, nil)
 		if err == nil {
 			t.Fatal("Expected decode error for text web screenshot bytes, got nil")
 		}
@@ -499,6 +499,95 @@ func TestRunPixelMatch_DecodeErrorListsSupportedFormats(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), supportedImageFormatsHint) {
 			t.Errorf("Expected supported-formats hint, got %q", err.Error())
+		}
+	})
+}
+
+// TestCollectDiffRegions verifies 4-neighborhood components, yellow AA exclusion,
+// ranking by pixel count, and the max-10 cap (Issue #187).
+func TestCollectDiffRegions(t *testing.T) {
+	red := color.RGBA{255, 0, 0, 255}
+	yellow := color.RGBA{255, 255, 0, 255}
+	gray := color.RGBA{200, 200, 200, 255}
+
+	t.Run("yellow_excluded_and_4_neighborhood", func(t *testing.T) {
+		img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+		draw.Draw(img, img.Bounds(), &image.Uniform{gray}, image.Point{}, draw.Src)
+		img.SetRGBA(1, 1, red)
+		img.SetRGBA(2, 2, red) // 斜めのみ接続 → 別成分
+		img.SetRGBA(4, 1, yellow)
+
+		got := collectDiffRegions(img)
+		if len(got) != 2 {
+			t.Fatalf("Expected 2 red 4-neighborhood regions (yellow ignored), got %v", got)
+		}
+		for _, r := range got {
+			if r.W != 1 || r.H != 1 || r.DiffPixels != 1 {
+				t.Errorf("Expected 1x1 regions, got %+v", r)
+			}
+		}
+	})
+
+	t.Run("ranked_by_diff_pixels_capped_at_10", func(t *testing.T) {
+		img := image.NewRGBA(image.Rect(0, 0, 40, 4))
+		draw.Draw(img, img.Bounds(), &image.Uniform{gray}, image.Point{}, draw.Src)
+		// 11 個の孤立した赤ピクセル列 (1 行目、偶数列)。11 件目は捨てられる。
+		for i := 0; i < 11; i++ {
+			img.SetRGBA(i*2, 0, red)
+		}
+		// より大きい成分を (0,2)-(4,2) に置き、先頭になることを確認する。
+		for x := 0; x < 5; x++ {
+			img.SetRGBA(x, 2, red)
+		}
+
+		got := collectDiffRegions(img)
+		if len(got) != maxDiffRegions {
+			t.Fatalf("Expected %d regions, got %d: %v", maxDiffRegions, len(got), got)
+		}
+		if got[0] != (DiffRegion{X: 0, Y: 2, W: 5, H: 1, DiffPixels: 5}) {
+			t.Errorf("Expected largest region first, got %+v", got[0])
+		}
+	})
+}
+
+// TestRunPixelMatch_DiffRegions は左上 100x100 の黒矩形 vs 全面白で
+// generateDiff=true のときその bounding box が返り、false では返らないこと。
+func TestRunPixelMatch_DiffRegions(t *testing.T) {
+	imgA, imgB := newIgnoreRegionTestImages()
+
+	t.Run("top_left_100x100_when_generate_diff", func(t *testing.T) {
+		_, _, diffCount, _, _, _, regions, err := RunPixelMatch(
+			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
+			0.1, true, nil,
+		)
+		if err != nil {
+			t.Fatalf("RunPixelMatch failed: %v", err)
+		}
+		if diffCount == 0 {
+			t.Fatal("Expected positive diffCount")
+		}
+		if len(regions) != 1 {
+			t.Fatalf("Expected 1 diff region, got %v", regions)
+		}
+		want := DiffRegion{X: 0, Y: 0, W: 100, H: 100, DiffPixels: 10000}
+		if regions[0] != want {
+			t.Errorf("Expected %+v, got %+v", want, regions[0])
+		}
+	})
+
+	t.Run("omitted_when_generate_diff_false", func(t *testing.T) {
+		_, _, diffCount, _, _, _, regions, err := RunPixelMatch(
+			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
+			0.1, false, nil,
+		)
+		if err != nil {
+			t.Fatalf("RunPixelMatch failed: %v", err)
+		}
+		if diffCount == 0 {
+			t.Fatal("Expected positive diffCount even without a diff image")
+		}
+		if regions != nil {
+			t.Errorf("Expected no diff regions when generateDiff=false, got %v", regions)
 		}
 	})
 }
