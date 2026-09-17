@@ -498,3 +498,29 @@ func TestLayoutTree_UnresolvedParentRefs(t *testing.T) {
 		}
 	})
 }
+
+// TestLayoutTree_SelfReferentialParentNoFalseMatch verifies that a node whose
+// parent is its own id / selector is treated as having no parent. Self-parent
+// would otherwise yield relative coords (0,0,1,1) on both sides, so nodes at
+// completely different positions/sizes would match with diff=0.
+func TestLayoutTree_SelfReferentialParentNoFalseMatch(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100,"parent":"1"}]`
+	webJSON := `[{"selector":"A","x":900,"y":900,"w":400,"h":400,"parent":"A"}]`
+
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if result.MatchedNodes != 0 {
+		t.Errorf("Expected 0 matched nodes (self-parent must not inflate to (0,0,1,1)), got %d (matchRate=%.1f%%)", result.MatchedNodes, result.MatchRate)
+	}
+	if result.MatchRate >= 100.0 {
+		t.Errorf("Expected match rate < 100%% for geometrically different self-referential nodes, got %.1f%%", result.MatchRate)
+	}
+	if result.Status == "success" {
+		t.Errorf("Expected status not 'success' (false match), got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
+	}
+}
