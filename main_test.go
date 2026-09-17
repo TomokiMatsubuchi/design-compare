@@ -2251,6 +2251,62 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if diffImage, ok := result["diff_image"].(string); !ok || diffImage != "" {
 			t.Errorf("Expected empty diff_image with generate_diff=false, got %v", result["diff_image"])
 		}
+		if _, ok := result["diff_regions"]; ok {
+			t.Errorf("Expected no diff_regions with generate_diff=false, got %v", result["diff_regions"])
+		}
+	})
+
+	// Issue #187: pathE (左上 100x100 黒) vs pathF (全面白) の bounding box
+	t.Run("StrictMode_DiffRegions", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		raw, ok := result["diff_regions"].([]interface{})
+		if !ok || len(raw) != 1 {
+			t.Fatalf("Expected 1 diff_region for pathE vs pathF, got %v", result["diff_regions"])
+		}
+		region, ok := raw[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected diff_regions[0] object, got %T", raw[0])
+		}
+		if region["x"] != float64(0) || region["y"] != float64(0) || region["w"] != float64(100) || region["h"] != float64(100) {
+			t.Errorf("Expected top-left 100x100 region, got %v", region)
+		}
+		if region["diff_pixels"] != float64(10000) {
+			t.Errorf("Expected diff_pixels=10000, got %v", region["diff_pixels"])
+		}
+
+		reqOff := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "strict",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"generate_diff": false,
+				},
+			},
+		}
+		resOff, err := compareDesignHandler(context.Background(), reqOff)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOff map[string]interface{}
+		json.Unmarshal([]byte(resOff.Content[0].(mcp.TextContent).Text), &resultOff)
+		if _, ok := resultOff["diff_regions"]; ok {
+			t.Errorf("Expected no diff_regions with generate_diff=false, got %v", resultOff["diff_regions"])
+		}
 	})
 
 	// diff_on_mismatch=true: 同一画像の success では空、色差 mismatch では生成する

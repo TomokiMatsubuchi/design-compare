@@ -76,7 +76,7 @@ func main() {
 			mcp.Description("Maximum number of differing pixels allowed to still report success in 'strict' mode. Default 0 (any pixel difference causes mismatch). Useful to tolerate a few pixels of anti-aliasing or environment differences."),
 		),
 		mcp.WithBoolean("generate_diff",
-			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image' is empty for 'perceptual' and 'strict' modes. Useful to avoid large base64 payloads in responses."),
+			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image' is empty for 'perceptual' and 'strict' modes. In 'strict' mode, 'diff_regions' is also omitted because it is derived from the diff image. Useful to avoid large base64 payloads in responses."),
 		),
 		mcp.WithBoolean("diff_on_mismatch",
 			mcp.Description("For 'perceptual' and 'strict' modes: when true, omit the diff image from the response if the comparison status is 'success' (default false). Combined with generate_diff (default true), this still generates a diff internally but replaces 'diff_image' with an empty string on success so matching calls do not return a large base64 payload. On mismatch the diff image is returned as usual. Ignored when generate_diff is false (diff_image is already empty)."),
@@ -545,7 +545,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -589,6 +589,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// (perceptual モードや layout_tree の unmatched_ignores と同様)。
 		if len(outOfBounds) > 0 {
 			responseMap["out_of_bounds_regions"] = outOfBounds
+		}
+		// 赤ピクセルの bounding box。generate_diff=false では差分画像が無く算出しない
+		// (Issue #187)。差分ピクセル数の多い順に最大 10 件。
+		if len(diffRegions) > 0 {
+			responseMap["diff_regions"] = diffRegions
 		}
 
 	default:
