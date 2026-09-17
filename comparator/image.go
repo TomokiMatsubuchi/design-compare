@@ -228,10 +228,9 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 
 // maskRegions returns a copy of img with the given regions filled with white,
 // along with the list of regions that do not intersect the image rectangle at
-// all, formatted as "x,y,w,h" strings. 領域は描画先の画像範囲に合わせて自動的
-// にクリップされるため一部だけ交差する領域はマスクされるが、全く交差しない
-// 領域は何もマスクされず沈黙する。座標ミスに呼び出し側が気付けるよう、それら
-// の領域を検出して返す (w/h が 0 の退化した領域も何もマスクしないため検出対象)。
+// all, formatted as "x,y,w,h" strings. 画像矩形と全く交差しない領域は
+// draw.Draw の自動クリップにより何もマスクされないため、警告対象として検出して
+// 返す。零サイズ領域の入力レベル拒否は parseIgnoreRegions 側の役割である。
 func maskRegions(img image.Image, regions []Region) (image.Image, []string) {
 	bounds := img.Bounds()
 	dst := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
