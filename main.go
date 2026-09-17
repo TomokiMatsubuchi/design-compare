@@ -438,7 +438,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", boundsB.Dx(), boundsB.Dy())), nil
 		}
 
-		matchRate, diffBlocks, diffImage, outOfBounds, warnings, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
+		matchRate, diffBlocks, diffImage, outOfBounds, warnings, diffCells, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
@@ -481,6 +481,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 非空時のみ応答へ含めて呼び出し側に通知する。
 		if len(outOfBounds) > 0 {
 			responseMap["out_of_bounds_regions"] = outOfBounds
+		}
+		// aHash 不一致セルの 16x16 座標。generate_diff=false でも返す
+		// (画像ペイロードなしで修正箇所を特定するため。Issue #186)。
+		if len(diffCells) > 0 {
+			responseMap["diff_cells"] = diffCells
 		}
 		// 一様画像 (ベタ塗り) は aHash が退化するため比較として情報を持たず、
 		// 全面白 vs 全面黒でも一致率100% pass が誤った安心感を与える。status /
