@@ -225,9 +225,10 @@ var modeParamAlternatives = map[string]string{
 // (指定しても警告なく無視されるだけの) パラメータがないかを modeParamSupport
 // と照合して検証する。非対応キーは無視せず "parameter 'X' is not supported in
 // mode 'Y'" を返し、除外・合格ラインが効いていない判定結果を静かに受け取るのを
-// 防ぐ。既知の代替があるキーは "(use 'Z' instead)" を追記する。mode 自身と
-// ここに列挙していない未知のキーは検証対象外とする (未知のモードは handler
-// の switch で "Unknown comparison mode" としてエラーになる)。
+// 防ぐ。既知の代替があるキーは "(use 'Z' instead)" を追記し、続けて
+// modeParamSupport から有効モードを固定順で "(supported in: ...)" に列挙する。
+// mode 自身とここに列挙していない未知のキーは検証対象外とする (未知のモードは
+// handler の switch で "Unknown comparison mode" としてエラーになる)。
 func validateModeParams(args map[string]any, mode string) error {
 	switch mode {
 	case "layout_tree", "perceptual", "strict":
@@ -246,10 +247,17 @@ func validateModeParams(args map[string]any, mode string) error {
 		if !isToolParam || supported[mode] {
 			continue
 		}
+		var validModes []string
+		for _, m := range []string{"layout_tree", "perceptual", "strict"} {
+			if supported[m] {
+				validModes = append(validModes, m)
+			}
+		}
 		msg := fmt.Sprintf("parameter '%s' is not supported in mode '%s'", key, mode)
 		if alt, ok := modeParamAlternatives[key]; ok {
 			msg += fmt.Sprintf(" (use '%s' instead)", alt)
 		}
+		msg += fmt.Sprintf(" (supported in: %s)", strings.Join(validModes, ", "))
 		return fmt.Errorf("%s", msg)
 	}
 	return nil
