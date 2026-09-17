@@ -263,6 +263,71 @@ func validateModeParams(args map[string]any, mode string) error {
 	return nil
 }
 
+// floatArg は数値引数を読む。キー未指定なら def を返す。キーがあるのに
+// 数値へ変換できない値 ("" / "abc" / null 等) は mcp-go の GetFloat のように
+// デフォルトへ落とさずエラーにする。文字列の "98" 等は従来通り受け付ける。
+func floatArg(request mcp.CallToolRequest, key string, def float64) (float64, error) {
+	args := request.GetArguments()
+	val, ok := args[key]
+	if !ok {
+		return def, nil
+	}
+	switch v := val.(type) {
+	case float64:
+		return v, nil
+	case int:
+		return float64(v), nil
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return f, nil
+		}
+	}
+	return 0, fmt.Errorf("argument '%s' must be a number", key)
+}
+
+// intArg は整数引数を読む。キー未指定なら def、変換不能ならエラー。
+func intArg(request mcp.CallToolRequest, key string, def int) (int, error) {
+	args := request.GetArguments()
+	val, ok := args[key]
+	if !ok {
+		return def, nil
+	}
+	switch v := val.(type) {
+	case int:
+		return v, nil
+	case float64:
+		return int(v), nil
+	case string:
+		if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("argument '%s' must be an integer", key)
+}
+
+// boolArg は真偽引数を読む。キー未指定なら def、変換不能ならエラー。
+// 文字列の "true"/"false" と、GetBool と同様の 0/1 数値も受け付ける。
+func boolArg(request mcp.CallToolRequest, key string, def bool) (bool, error) {
+	args := request.GetArguments()
+	val, ok := args[key]
+	if !ok {
+		return def, nil
+	}
+	switch v := val.(type) {
+	case bool:
+		return v, nil
+	case string:
+		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+			return b, nil
+		}
+	case int:
+		return v != 0, nil
+	case float64:
+		return v != 0, nil
+	}
+	return false, fmt.Errorf("argument '%s' must be a boolean", key)
+}
+
 // perceptualTotalBlocks は perceptual (aHash) 比較のブロック (セル) 総数。
 // aHash は画像を 16x16 = 256 セルに分割して比較するため画像サイズに依存せず
 // 固定。strict モードの total_pixels に対応する数量情報として、応答の
@@ -304,8 +369,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
 		}
 
-		tolerance := request.GetFloat("threshold", 0.15) // デフォルト許容差 15%
-		passRate := request.GetFloat("pass_rate", 98.0)  // デフォルト合格ライン 98%
+		tolerance, err := floatArg(request, "threshold", 0.15) // デフォルト許容差 15%
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		passRate, err := floatArg(request, "pass_rate", 98.0) // デフォルト合格ライン 98%
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// 範囲バリデーション: threshold は 0.0–1.0、pass_rate は 0.0–100.0
 		if args := request.GetArguments(); args != nil {
@@ -327,7 +398,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 				}
 			}
 		}
-		countExtraWeb := request.GetBool("count_extra_web", false)
+		countExtraWeb, err := boolArg(request, "count_extra_web", false)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
 		// layout_tree では BoundingBox の中心点が領域内にあるノードを両側から除外する。
@@ -401,7 +475,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		var minMatchRate float64
 		if hasMinMatch {
-			minMatchRate = request.GetFloat("min_match", 98.0)
+			minMatchRate, err = floatArg(request, "min_match", 98.0)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if minMatchRate < 0.0 || minMatchRate > 100.0 {
 				return mcp.NewToolResultError("min_match for perceptual mode must be between 0.0 and 100.0 (match percentage)."), nil
 			}
@@ -409,7 +486,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			// 後方互換: threshold を min_match のエイリアスとして受け付ける。
 			// 1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐため拒否し、
 			// 100 を超える値は到達不可能なため誤用として拒否する。
-			minMatchRate = request.GetFloat("threshold", 98.0)
+			minMatchRate, err = floatArg(request, "threshold", 98.0)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if hasThreshold && (minMatchRate < 1.0 || minMatchRate > 100.0) {
 				return mcp.NewToolResultError(
 					"threshold for perceptual mode must be 1.0–100.0 (match percentage). " +
@@ -446,7 +526,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", boundsB.Dx(), boundsB.Dy())), nil
 		}
 
-		matchRate, diffBlocks, diffImage, outOfBounds, warnings, diffCells, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
+		generateDiff, err := boolArg(request, "generate_diff", true)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		matchRate, diffBlocks, diffImage, outOfBounds, warnings, diffCells, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, generateDiff, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
@@ -519,8 +604,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
-		threshold := request.GetFloat("threshold", 0.1)
-		maxDiffPixels := request.GetInt("max_diff_pixels", 0)
+		threshold, err := floatArg(request, "threshold", 0.1)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		maxDiffPixels, err := intArg(request, "max_diff_pixels", 0)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// min_match: 一致率(%)による合格ライン (0.0–100.0)。strict ではデフォルト値を
 		// 持たず、未指定なら判定に使わない (max_diff_pixels のみで判定する従来挙動)。
@@ -531,7 +622,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		_, hasMinMatch := args["min_match"]
 		var minMatchRate float64
 		if hasMinMatch {
-			minMatchRate = request.GetFloat("min_match", 0.0)
+			minMatchRate, err = floatArg(request, "min_match", 0.0)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if minMatchRate < 0.0 || minMatchRate > 100.0 {
 				return mcp.NewToolResultError("min_match for strict mode must be between 0.0 and 100.0 (match percentage)."), nil
 			}
@@ -553,7 +647,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
+		generateDiff, err := boolArg(request, "generate_diff", true)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}

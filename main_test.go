@@ -3336,3 +3336,147 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 		t.Error("expected error for invalid base64, got nil")
 	}
 }
+
+func reqWithArgs(args map[string]any) mcp.CallToolRequest {
+	return mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
+}
+
+func TestTypedArgHelpers(t *testing.T) {
+	t.Run("missing key uses default", func(t *testing.T) {
+		req := reqWithArgs(map[string]any{})
+		if v, err := floatArg(req, "threshold", 0.15); err != nil || v != 0.15 {
+			t.Errorf("floatArg missing: got %v, %v", v, err)
+		}
+		if v, err := intArg(req, "max_diff_pixels", 0); err != nil || v != 0 {
+			t.Errorf("intArg missing: got %v, %v", v, err)
+		}
+		if v, err := boolArg(req, "generate_diff", true); err != nil || v != true {
+			t.Errorf("boolArg missing: got %v, %v", v, err)
+		}
+	})
+
+	t.Run("numeric strings are accepted", func(t *testing.T) {
+		req := reqWithArgs(map[string]any{
+			"threshold":       " 98 ",
+			"max_diff_pixels": "10",
+			"generate_diff":   "true",
+		})
+		if v, err := floatArg(req, "threshold", 0); err != nil || v != 98 {
+			t.Errorf("floatArg string: got %v, %v", v, err)
+		}
+		if v, err := intArg(req, "max_diff_pixels", 0); err != nil || v != 10 {
+			t.Errorf("intArg string: got %v, %v", v, err)
+		}
+		if v, err := boolArg(req, "generate_diff", false); err != nil || v != true {
+			t.Errorf("boolArg string: got %v, %v", v, err)
+		}
+	})
+
+	t.Run("unconvertible values error", func(t *testing.T) {
+		cases := []struct {
+			key string
+			val any
+		}{
+			{"threshold", ""},
+			{"threshold", "abc"},
+			{"threshold", nil},
+			{"max_diff_pixels", "abc"},
+			{"generate_diff", "abc"},
+			{"count_extra_web", ""},
+		}
+		for _, tc := range cases {
+			req := reqWithArgs(map[string]any{tc.key: tc.val})
+			var err error
+			switch tc.key {
+			case "threshold":
+				_, err = floatArg(req, tc.key, 0)
+			case "max_diff_pixels":
+				_, err = intArg(req, tc.key, 0)
+			default:
+				_, err = boolArg(req, tc.key, false)
+			}
+			if err == nil {
+				t.Errorf("expected error for %s=%#v", tc.key, tc.val)
+			}
+		}
+	})
+}
+
+func TestUnconvertibleNumericParams(t *testing.T) {
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+
+	tmpDir := t.TempDir()
+	img := generateSolidImage(8, 8, color.White)
+	pathA := saveTempImage(t, tmpDir, "a.png", img)
+	pathB := saveTempImage(t, tmpDir, "b.png", img)
+
+	cases := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "threshold abc",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "threshold": "abc"},
+			want: "argument 'threshold' must be a number",
+		},
+		{
+			name: "pass_rate abc",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "pass_rate": "abc"},
+			want: "argument 'pass_rate' must be a number",
+		},
+		{
+			name: "min_match empty string",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "min_match": ""},
+			want: "argument 'min_match' must be a number",
+		},
+		{
+			name: "max_diff_pixels abc",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": "abc"},
+			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			name: "count_extra_web abc",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "count_extra_web": "abc"},
+			want: "argument 'count_extra_web' must be a boolean",
+		},
+		{
+			name: "generate_diff abc",
+			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "generate_diff": "abc"},
+			want: "argument 'generate_diff' must be a boolean",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := compareDesignHandler(context.Background(), reqWithArgs(tc.args))
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("Expected IsError for %s, got content=%v", tc.name, res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("Expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+
+	t.Run("numeric string still accepted", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":         "layout_tree",
+			"figma_layout": figma,
+			"web_layout":   web,
+			"pass_rate":    "98",
+			"threshold":    "0.15",
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success for numeric strings, got %v", res.Content[0].(mcp.TextContent).Text)
+		}
+	})
+}
