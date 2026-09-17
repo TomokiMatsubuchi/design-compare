@@ -68,6 +68,35 @@ func assertDiffDataURI(t *testing.T, result map[string]interface{}) {
 	}
 }
 
+// pathA (左右分割) vs pathD (上下分割) の perceptual 不一致セル: 右上・左下の 128 セル。
+func assertPerceptualPathDDiffCells(t *testing.T, result map[string]interface{}) {
+	t.Helper()
+	raw, ok := result["diff_cells"].([]interface{})
+	if !ok {
+		t.Fatalf("Expected diff_cells array, got %v", result["diff_cells"])
+	}
+	if len(raw) != 128 {
+		t.Fatalf("Expected 128 diff_cells, got %d", len(raw))
+	}
+	idx := 0
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			if (x < 8) == (y < 8) {
+				continue
+			}
+			cell, ok := raw[idx].(map[string]interface{})
+			if !ok {
+				t.Fatalf("diff_cells[%d] is %T, want object", idx, raw[idx])
+			}
+			if cell["grid_x"] != float64(x) || cell["grid_y"] != float64(y) {
+				t.Errorf("diff_cells[%d]={grid_x:%v,grid_y:%v}, want {%d,%d}", idx, cell["grid_x"], cell["grid_y"], x, y)
+				return
+			}
+			idx++
+		}
+	}
+}
+
 // /tmp 内の差分PNG一時ファイル（perceptual-diff-*.png）の数を数える
 func countDiffTempFiles() (int, error) {
 	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "perceptual-diff-*.png"))
@@ -1210,6 +1239,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "success" || result["match_rate"] != "100.00%" {
 			t.Errorf("Expected perceptual layout success, got status=%v, rate=%v", result["status"], result["match_rate"])
 		}
+		if _, ok := result["diff_cells"]; ok {
+			t.Errorf("Expected no diff_cells on full match, got %v", result["diff_cells"])
+		}
 		assertDiffDataURI(t, result)
 		// 数値一致率フィールドの検証
 		if got := result["match_rate_value"]; got != float64(100) {
@@ -1245,6 +1277,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Errorf("Expected perceptual layout mismatch, got status=%v", result["status"])
 		}
 		assertDiffDataURI(t, result)
+		assertPerceptualPathDDiffCells(t, result)
 	})
 
 	// generate_diff=false で差分画像の生成を省略し、temp ファイルを作らない
@@ -1271,6 +1304,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if diffImg, ok := result["diff_image"].(string); !ok || diffImg != "" {
 			t.Errorf("Expected empty diff_image with generate_diff=false, got %v", result["diff_image"])
 		}
+		assertPerceptualPathDDiffCells(t, result)
 	})
 
 	// diff_on_mismatch=true: 成功時のみ diff_image を空にし、不一致では生成する
