@@ -1218,6 +1218,276 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 1.5. layout_integrity モード (Issue #271: iPad 縦/横の崩れ検知)
+	// =================================================================
+	t.Run("LayoutIntegrity_Compare", func(t *testing.T) {
+		inBounds := `[{"selector":"#page","x":0,"y":0,"w":768,"h":200}]`
+		overflow := `[{"selector":"#wide","x":0,"y":0,"w":900,"h":100}]`
+		parentOverflow := `[{"selector":"#card","x":0,"y":0,"w":400,"h":200},{"selector":"#child","x":0,"y":0,"w":500,"h":50,"parent":"#card"}]`
+		tall := `[{"selector":"#tall","x":0,"y":0,"w":768,"h":2000}]`
+		landscapeOverflow := `[{"selector":"#wide","x":0,"y":0,"w":1100,"h":100}]`
+
+		t.Run("InBounds_DefaultPortrait", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": inBounds,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" || result["mode"] != "layout_integrity" {
+				t.Fatalf("got %#v", result)
+			}
+			if result["viewport_width"] != float64(768) || result["viewport_height"] != float64(1024) {
+				t.Errorf("default viewport got %v x %v", result["viewport_width"], result["viewport_height"])
+			}
+			if result["issue_count"] != float64(0) {
+				t.Errorf("issue_count=%v", result["issue_count"])
+			}
+			if _, ok := result["issues"]; ok {
+				t.Errorf("issues should be omitted: %v", result["issues"])
+			}
+			if _, ok := result["match_rate"]; ok {
+				t.Errorf("match_rate should not be present: %v", result["match_rate"])
+			}
+		})
+
+		t.Run("ViewportOverflow_Portrait", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": overflow,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "mismatch" {
+				t.Fatalf("status=%v", result["status"])
+			}
+			issues, _ := result["issues"].([]interface{})
+			if len(issues) < 1 {
+				t.Fatalf("expected issues, got %#v", result)
+			}
+			issue := issues[0].(map[string]interface{})
+			if issue["type"] != "viewport_overflow_x" || issue["selector"] != "#wide" {
+				t.Errorf("issue=%v", issue)
+			}
+		})
+
+		t.Run("Wide900_OK_OnLandscapePreset", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":            "layout_integrity",
+						"web_layout":      overflow,
+						"viewport_preset": "ipad_landscape",
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("900px should fit landscape 1024, got %#v", result)
+			}
+			if result["viewport_width"] != float64(1024) || result["viewport_height"] != float64(768) {
+				t.Errorf("landscape size got %v x %v", result["viewport_width"], result["viewport_height"])
+			}
+			if result["viewport_preset"] != "ipad_landscape" {
+				t.Errorf("preset echo=%v", result["viewport_preset"])
+			}
+		})
+
+		t.Run("Wide1100_Mismatch_Landscape", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":            "layout_integrity",
+						"web_layout":      landscapeOverflow,
+						"viewport_width":  1024.0,
+						"viewport_height": 768.0,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "mismatch" {
+				t.Fatalf("got %#v", result)
+			}
+		})
+
+		t.Run("ParentOverflow", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": parentOverflow,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "mismatch" {
+				t.Fatalf("status=%v", result["status"])
+			}
+			issues, _ := result["issues"].([]interface{})
+			foundParent := false
+			for _, raw := range issues {
+				issue := raw.(map[string]interface{})
+				if issue["type"] == "parent_overflow" && issue["selector"] == "#child" {
+					foundParent = true
+				}
+				if issue["type"] == "viewport_overflow_x" {
+					t.Errorf("unexpected viewport overflow: %v", issue)
+				}
+			}
+			if !foundParent {
+				t.Fatalf("issues=%v", issues)
+			}
+		})
+
+		t.Run("ViewportWidthZero", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":           "layout_integrity",
+						"web_layout":     inBounds,
+						"viewport_width": 0.0,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatal("expected error")
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "viewport_width must be greater than 0") {
+				t.Errorf("got %q", got)
+			}
+		})
+
+		t.Run("MissingWebLayout", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode": "layout_integrity",
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatal("expected error")
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "either web_layout or web_layout_path is required") {
+				t.Errorf("got %q", got)
+			}
+		})
+
+		t.Run("FigmaLayoutUnsupported", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_integrity",
+						"web_layout":   inBounds,
+						"figma_layout": `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatal("expected error")
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "parameter 'figma_layout' is not supported in mode 'layout_integrity'") {
+				t.Errorf("got %q", got)
+			}
+		})
+
+		t.Run("UnknownPreset", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":            "layout_integrity",
+						"web_layout":      inBounds,
+						"viewport_preset": "iphone",
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatal("expected error")
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "unknown viewport_preset") {
+				t.Errorf("got %q", got)
+			}
+		})
+
+		t.Run("TallPage_Success", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": tall,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" || result["issue_count"] != float64(0) {
+				t.Fatalf("got %#v", result)
+			}
+		})
+	})
+
+	// =================================================================
 	// 2. perceptual モード (知覚的画像比較) のテスト
 	// =================================================================
 	t.Run("Perceptual_Layout_Match", func(t *testing.T) {
@@ -2987,6 +3257,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			case "layout_tree":
 				args["figma_layout"] = figmaLayout
 				args["web_layout"] = webLayout
+			case "layout_integrity":
+				args["web_layout"] = `[{"selector":"#page","x":0,"y":0,"w":100,"h":50}]`
 			default: // perceptual / strict
 				args["image_path_a"] = pathA
 				args["image_path_b"] = pathC
@@ -3049,6 +3321,23 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "ignore_region", "0,0,10,10", false, ""},
 			{"strict", "generate_diff", false, false, ""},
 			{"strict", "diff_on_mismatch", true, false, ""},
+			// layout_integrity: Figma/画像/閾値系は非対応。viewport と web 除外は対応
+			{"layout_integrity", "figma_layout", figmaLayout, true, ""},
+			{"layout_integrity", "image_path_a", pathA, true, ""},
+			{"layout_integrity", "min_match", 90.0, true, " (use 'pass_rate' instead)"},
+			{"layout_integrity", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
+			{"layout_integrity", "threshold", 0.15, true, ""},
+			{"layout_integrity", "max_diff_pixels", 10.0, true, ""},
+			{"layout_integrity", "generate_diff", false, true, ""},
+			{"layout_integrity", "count_extra_web", true, true, ""},
+			{"layout_integrity", "ignore_nodes", "#page", false, ""},
+			{"layout_integrity", "ignore_region", "0,0,10,10", false, ""},
+			{"layout_integrity", "viewport_width", 768.0, false, ""},
+			{"layout_integrity", "viewport_height", 1024.0, false, ""},
+			{"layout_integrity", "viewport_preset", "ipad_landscape", false, ""},
+			{"layout_tree", "viewport_width", 768.0, true, ""},
+			{"perceptual", "viewport_width", 768.0, true, ""},
+			{"strict", "viewport_width", 768.0, true, ""},
 		}
 
 		for _, c := range cases {
@@ -3173,7 +3462,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("Expected error for unknown mode, got content=%v", res.Content[0].(mcp.TextContent).Text)
 		}
 		got := res.Content[0].(mcp.TextContent).Text
-		for _, valid := range []string{"layout_tree", "perceptual", "strict"} {
+		for _, valid := range []string{"layout_tree", "perceptual", "strict", "layout_integrity"} {
 			if !strings.Contains(got, valid) {
 				t.Errorf("Expected unknown mode error to list valid mode %q, got %q", valid, got)
 			}
@@ -3199,7 +3488,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !strings.Contains(got, "mode parameter is required") {
 			t.Errorf("Expected missing mode error to state mode is required, got %q", got)
 		}
-		for _, valid := range []string{"layout_tree", "perceptual", "strict"} {
+		for _, valid := range []string{"layout_tree", "perceptual", "strict", "layout_integrity"} {
 			if !strings.Contains(got, valid) {
 				t.Errorf("Expected missing mode error to list valid mode %q, got %q", valid, got)
 			}
