@@ -27,16 +27,17 @@ type WebNode struct {
 }
 
 type LayoutTreeResult struct {
-	MatchRate           float64  `json:"match_rate"`
-	Status              string   `json:"status"`
-	Details             []string `json:"details"`
-	MatchedNodes        int      `json:"matched_nodes"`
-	TotalNodes          int      `json:"total_nodes"`
-	IgnoredCount        int      `json:"ignored_count"`
-	UnmatchedIgnores    []string `json:"unmatched_ignores,omitempty"`
-	ExtraWebCount       int      `json:"extra_web_count"`
-	ExtraWebNodes       []string `json:"extra_web_nodes,omitempty"`
-	ZeroGeometryWarning string   `json:"zero_geometry_warning,omitempty"`
+	MatchRate            float64  `json:"match_rate"`
+	Status               string   `json:"status"`
+	Details              []string `json:"details"`
+	MatchedNodes         int      `json:"matched_nodes"`
+	TotalNodes           int      `json:"total_nodes"`
+	IgnoredCount         int      `json:"ignored_count"`
+	UnmatchedIgnores     []string `json:"unmatched_ignores,omitempty"`
+	ExtraWebCount        int      `json:"extra_web_count"`
+	ExtraWebNodes        []string `json:"extra_web_nodes,omitempty"`
+	ZeroGeometryWarning  string   `json:"zero_geometry_warning,omitempty"`
+	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
 }
 
 const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
@@ -167,56 +168,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		wNodes = filteredWNodes
 	}
 
-	if len(fNodes) == 0 || len(wNodes) == 0 {
-		// ignore_nodes により比較対象が全件除外された場合は、実装不一致と区別して
-		// skipped ステータスで「比較できなかった」ことを明示する。
-		if ignoredCount > 0 {
-			side := "Figma and Web"
-			switch {
-			case len(fNodes) == 0 && len(wNodes) != 0:
-				side = "Figma"
-			case len(fNodes) != 0 && len(wNodes) == 0:
-				side = "Web"
-			}
-			return &LayoutTreeResult{
-				MatchRate:           0,
-				Status:              "skipped",
-				Details:             []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
-				IgnoredCount:        ignoredCount,
-				UnmatchedIgnores:    unmatchedIgnores,
-				ZeroGeometryWarning: zeroGeometryWarning,
-			}, nil
-		}
-		// どちら側の入力が空かを明示する。
-		var emptyDetail string
-		switch {
-		case len(fNodes) == 0 && len(wNodes) == 0:
-			emptyDetail = "Both Figma and Web layout node data are empty"
-		case len(fNodes) == 0:
-			emptyDetail = "Figma layout node data is empty"
-		default:
-			emptyDetail = "Web layout node data is empty"
-		}
-		return &LayoutTreeResult{
-			MatchRate:           0,
-			Status:              "mismatch",
-			Details:             []string{emptyDetail},
-			IgnoredCount:        ignoredCount,
-			UnmatchedIgnores:    unmatchedIgnores,
-			ZeroGeometryWarning: zeroGeometryWarning,
-		}, nil
-	}
-
-	// 2. マッチング処理
-	var matchedCount int
-	var totalCompared int
-	var matchedPairDetails []string
-	var mismatchDetails []string
-	var extraWebDetails []string
-
-	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
-	usedWeb := make(map[int]bool)
-
 	// 親ノード検索をループ内の線形走査で行うと全体で O(n_f × n_w²) になるため、
 	// フィルタリング後のリストから親参照用インデックスを一度だけ構築して O(1) 参照にする。
 	// 同一キー（Figma ID / Web セレクタ）が重複する場合は先勝ちとし、線形走査で
@@ -233,6 +184,59 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			webBySelector[wNodes[i].Selector] = &wNodes[i]
 		}
 	}
+	unresolvedParentRefs := collectUnresolvedParentRefs(fNodes, wNodes, figmaByID, webBySelector)
+
+	if len(fNodes) == 0 || len(wNodes) == 0 {
+		// ignore_nodes により比較対象が全件除外された場合は、実装不一致と区別して
+		// skipped ステータスで「比較できなかった」ことを明示する。
+		if ignoredCount > 0 {
+			side := "Figma and Web"
+			switch {
+			case len(fNodes) == 0 && len(wNodes) != 0:
+				side = "Figma"
+			case len(fNodes) != 0 && len(wNodes) == 0:
+				side = "Web"
+			}
+			return &LayoutTreeResult{
+				MatchRate:            0,
+				Status:               "skipped",
+				Details:              []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
+				IgnoredCount:         ignoredCount,
+				UnmatchedIgnores:     unmatchedIgnores,
+				ZeroGeometryWarning:  zeroGeometryWarning,
+				UnresolvedParentRefs: unresolvedParentRefs,
+			}, nil
+		}
+		// どちら側の入力が空かを明示する。
+		var emptyDetail string
+		switch {
+		case len(fNodes) == 0 && len(wNodes) == 0:
+			emptyDetail = "Both Figma and Web layout node data are empty"
+		case len(fNodes) == 0:
+			emptyDetail = "Figma layout node data is empty"
+		default:
+			emptyDetail = "Web layout node data is empty"
+		}
+		return &LayoutTreeResult{
+			MatchRate:            0,
+			Status:               "mismatch",
+			Details:              []string{emptyDetail},
+			IgnoredCount:         ignoredCount,
+			UnmatchedIgnores:     unmatchedIgnores,
+			ZeroGeometryWarning:  zeroGeometryWarning,
+			UnresolvedParentRefs: unresolvedParentRefs,
+		}, nil
+	}
+
+	// 2. マッチング処理
+	var matchedCount int
+	var totalCompared int
+	var matchedPairDetails []string
+	var mismatchDetails []string
+	var extraWebDetails []string
+
+	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
+	usedWeb := make(map[int]bool)
 
 	// 各Figmaノードと、Webの対応する要素を探して比較
 	// 簡単のため、Figmaの各要素と、Web側で最も「幾何学的位置（相対位置）が近いもの」を対応付ける
@@ -340,16 +344,17 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	details = append(details, extraWebDetails...)
 
 	return &LayoutTreeResult{
-		MatchRate:           matchRate,
-		Status:              status,
-		Details:             details,
-		MatchedNodes:        matchedCount,
-		TotalNodes:          totalCompared,
-		IgnoredCount:        ignoredCount,
-		UnmatchedIgnores:    unmatchedIgnores,
-		ExtraWebCount:       len(extraWebSelectors),
-		ExtraWebNodes:       extraWebSelectors,
-		ZeroGeometryWarning: zeroGeometryWarning,
+		MatchRate:            matchRate,
+		Status:               status,
+		Details:              details,
+		MatchedNodes:         matchedCount,
+		TotalNodes:           totalCompared,
+		IgnoredCount:         ignoredCount,
+		UnmatchedIgnores:     unmatchedIgnores,
+		ExtraWebCount:        len(extraWebSelectors),
+		ExtraWebNodes:        extraWebSelectors,
+		ZeroGeometryWarning:  zeroGeometryWarning,
+		UnresolvedParentRefs: unresolvedParentRefs,
 	}, nil
 }
 
@@ -420,6 +425,32 @@ func getWebParent(node WebNode, bySelector map[string]*WebNode) *WebNode {
 		return nil
 	}
 	return bySelector[node.Parent]
+}
+
+// collectUnresolvedParentRefs は parent が空でないのにインデックスから解決できない
+// 参照を列挙する（タイポ・余分な空白など）。合否や座標空間は変えず、
+// unmatched_ignores と同種の誤入力通知に使う。同一ラベルは先勝ちで重複しない。
+func collectUnresolvedParentRefs(fNodes []FigmaNode, wNodes []WebNode, figmaByID map[string]*FigmaNode, webBySelector map[string]*WebNode) []string {
+	var refs []string
+	seen := make(map[string]bool)
+	appendRef := func(label string) {
+		if seen[label] {
+			return
+		}
+		seen[label] = true
+		refs = append(refs, label)
+	}
+	for _, fn := range fNodes {
+		if fn.Parent != "" && figmaByID[fn.Parent] == nil {
+			appendRef(fmt.Sprintf("Figma: '%s'", fn.Parent))
+		}
+	}
+	for _, wn := range wNodes {
+		if wn.Parent != "" && webBySelector[wn.Parent] == nil {
+			appendRef(fmt.Sprintf("Web: '%s'", wn.Parent))
+		}
+	}
+	return refs
 }
 
 // getFigmaRelativeCoords はノードの親要素に対する相対比率 (0〜1) を返す。

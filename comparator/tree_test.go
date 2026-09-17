@@ -446,3 +446,55 @@ func TestLayoutTree_ZeroGeometryWarning(t *testing.T) {
 		}
 	})
 }
+
+// TestLayoutTree_UnresolvedParentRefs verifies that a non-empty parent that
+// matches no id / selector is reported in UnresolvedParentRefs without
+// changing match status (still falls back to absolute coordinates).
+func TestLayoutTree_UnresolvedParentRefs(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	t.Run("missing_parent_id_reported_status_unchanged", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"999"}
+		]`
+		webJSON := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":".foo"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success' (non-destructive fallback), got '%s' rate=%.1f%%", result.Status, result.MatchRate)
+		}
+		if result.MatchRate != 100.0 {
+			t.Errorf("Expected match rate 100%% with absolute-coordinate fallback, got %.1f%%", result.MatchRate)
+		}
+		if len(result.UnresolvedParentRefs) != 2 || result.UnresolvedParentRefs[0] != "Figma: '999'" || result.UnresolvedParentRefs[1] != "Web: '.foo'" {
+			t.Errorf("Expected unresolved_parent_refs=[Figma: '999' Web: '.foo'], got %v", result.UnresolvedParentRefs)
+		}
+	})
+
+	t.Run("resolved_parent_not_reported", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if len(result.UnresolvedParentRefs) != 0 {
+			t.Errorf("Expected no unresolved_parent_refs for valid parents, got %v", result.UnresolvedParentRefs)
+		}
+	})
+}

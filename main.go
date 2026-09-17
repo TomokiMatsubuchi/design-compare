@@ -443,6 +443,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if treeResult.ZeroGeometryWarning != "" {
 			responseMap["zero_geometry_warning"] = treeResult.ZeroGeometryWarning
 		}
+		// parent が空でないのに id / selector に解決できない参照（タイポ等）。
+		// 比較は従来どおり親なし＝絶対座標へフォールバックし、status は非破壊。
+		if len(treeResult.UnresolvedParentRefs) > 0 {
+			responseMap["unresolved_parent_refs"] = treeResult.UnresolvedParentRefs
+		}
 
 	case "perceptual":
 		// =================================================================

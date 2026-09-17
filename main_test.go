@@ -205,6 +205,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := resultMatch["zero_geometry_warning"]; ok {
 			t.Errorf("Expected no zero_geometry_warning for valid w/h keys, got %v", resultMatch["zero_geometry_warning"])
 		}
+		if _, ok := resultMatch["unresolved_parent_refs"]; ok {
+			t.Errorf("Expected no unresolved_parent_refs for valid parent ids, got %v", resultMatch["unresolved_parent_refs"])
+		}
 		// 一致ペアが details に出力されることの検証
 		detailsMatch, ok := resultMatch["details"].([]interface{})
 		if !ok {
@@ -494,6 +497,46 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		got, ok := result["zero_geometry_warning"].(string)
 		if !ok || !strings.Contains(got, `{"id","name","x","y","w","h","parent"}`) {
 			t.Errorf("Expected zero_geometry_warning about layout JSON keys, got %v", result["zero_geometry_warning"])
+		}
+	})
+
+	// =================================================================
+	// 2.4.2. layout_tree モード: 解決できない parent 参照の通知
+	// =================================================================
+	t.Run("LayoutTree_UnresolvedParentRefs", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "999"}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": ".foo"}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected status to remain success, got %v", result["status"])
+		}
+		if result["match_rate"] != "100.00%" {
+			t.Errorf("Expected match_rate 100.00%% with absolute-coordinate fallback, got %v", result["match_rate"])
+		}
+		refs, ok := result["unresolved_parent_refs"].([]interface{})
+		if !ok || len(refs) != 2 || refs[0] != "Figma: '999'" || refs[1] != "Web: '.foo'" {
+			t.Errorf("Expected unresolved_parent_refs=[Figma: '999' Web: '.foo'], got %v", result["unresolved_parent_refs"])
 		}
 	})
 
