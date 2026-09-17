@@ -409,9 +409,11 @@ func boundingBoxCenterInRegions(x, y, w, h float64, regions []Region) bool {
 
 // getFigmaParent は親参照用インデックス（ID → ノード）から親ノードを O(1) で引く。
 // インデックスは先勝ちで構築されるため、ID 重複時も従来の線形走査と同じく
-// 「最初に見つかったノード」が返る。見つからない場合は nil。
+// 「最初に見つかったノード」が返る。見つからない場合、空 parent、自己参照は nil。
 func getFigmaParent(node FigmaNode, byID map[string]*FigmaNode) *FigmaNode {
-	if node.Parent == "" {
+	if node.Parent == "" || node.Parent == node.ID {
+		// 自己参照は不正入力。自分を親として相対化すると常に (0,0,1,1) になり
+		// 幾何が違っても diff=0 で誤一致するため、親なし（絶対座標フォールバック）にする。
 		return nil
 	}
 	return byID[node.Parent]
@@ -419,9 +421,11 @@ func getFigmaParent(node FigmaNode, byID map[string]*FigmaNode) *FigmaNode {
 
 // getWebParent は親参照用インデックス（セレクタ → ノード）から親ノードを O(1) で引く。
 // インデックスは先勝ちで構築されるため、セレクタ重複時も従来の線形走査と同じく
-// 「最初に見つかったノード」が返る。見つからない場合は nil。
+// 「最初に見つかったノード」が返る。見つからない場合、空 parent、自己参照は nil。
 func getWebParent(node WebNode, bySelector map[string]*WebNode) *WebNode {
-	if node.Parent == "" {
+	if node.Parent == "" || node.Parent == node.Selector {
+		// 自己参照は不正入力。自分を親として相対化すると常に (0,0,1,1) になり
+		// 幾何が違っても diff=0 で誤一致するため、親なし（絶対座標フォールバック）にする。
 		return nil
 	}
 	return bySelector[node.Parent]
