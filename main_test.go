@@ -3107,6 +3107,32 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// 非対応パラメータのエラーには、そのキーが有効なモードを固定順で列挙する
+	// (未知モード時と同様、README を見ずに1回のリトライで自己修復できる)
+	t.Run("UnsupportedParam_ListsSupportedModes", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+					"pass_rate":    90.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("Expected error for unsupported pass_rate in perceptual, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "supported in: layout_tree") {
+			t.Errorf("Expected error to list supported modes for pass_rate, got %q", got)
+		}
+	})
+
 	// 未知のモードはパラメータ検証より優先して "Unknown comparison mode" になる
 	t.Run("UnknownMode_ParamsNotValidated", func(t *testing.T) {
 		req := mcp.CallToolRequest{
