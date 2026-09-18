@@ -59,6 +59,23 @@ func encodePNGBase64(t *testing.T, img image.Image) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+// MIME スタイルに 76 文字ごとに改行を入れ、行頭スペースも混ぜる。
+func wrapBase64MIME(s string) string {
+	const lineLen = 76
+	var b strings.Builder
+	for i := 0; i < len(s); i += lineLen {
+		end := i + lineLen
+		if end > len(s) {
+			end = len(s)
+		}
+		if i > 0 {
+			b.WriteString("\n ")
+		}
+		b.WriteString(s[i:end])
+	}
+	return b.String()
+}
+
 // perceptual モードの応答に含まれる差分画像が base64 data URI であることを検証する
 func assertDiffDataURI(t *testing.T, result map[string]interface{}) {
 	t.Helper()
@@ -2080,6 +2097,49 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// 改行・スペース入り base64 はパス入力と同じ比較結果になる (Issue #207)
+	t.Run("Perceptual_Base64_Whitespace_Matches_Path", func(t *testing.T) {
+		reqPath := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+				},
+			},
+		}
+		resPath, err := compareDesignHandler(context.Background(), reqPath)
+		if err != nil {
+			t.Fatalf("path handler failed: %v", err)
+		}
+		var resultPath map[string]interface{}
+		if err := json.Unmarshal([]byte(resPath.Content[0].(mcp.TextContent).Text), &resultPath); err != nil {
+			t.Fatalf("path result json: %v", err)
+		}
+
+		reqWrapped := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":           "perceptual",
+					"image_a_base64": wrapBase64MIME(encodePNGBase64(t, imgA)),
+					"image_b_base64": wrapBase64MIME(encodePNGBase64(t, imgC)),
+				},
+			},
+		}
+		resWrapped, err := compareDesignHandler(context.Background(), reqWrapped)
+		if err != nil {
+			t.Fatalf("wrapped base64 handler failed: %v", err)
+		}
+		var resultWrapped map[string]interface{}
+		if err := json.Unmarshal([]byte(resWrapped.Content[0].(mcp.TextContent).Text), &resultWrapped); err != nil {
+			t.Fatalf("wrapped result json: %v", err)
+		}
+		if resultWrapped["status"] != resultPath["status"] || resultWrapped["match_rate"] != resultPath["match_rate"] {
+			t.Errorf("wrapped base64 status=%v rate=%v, want path status=%v rate=%v",
+				resultWrapped["status"], resultWrapped["match_rate"], resultPath["status"], resultPath["match_rate"])
+		}
+	})
+
 	t.Run("Strict_Base64_Input", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -3420,6 +3480,16 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Errorf("plain base64 decoded to %q, want %q", got, payload)
+	}
+
+	// MIME 折り返し (改行・スペース) 入りの base64 も同じバイト列になる (Issue #207)
+	wrapped := plain[:len(plain)/2] + "\n " + plain[len(plain)/2:]
+	got, err = resolveImageInput("", wrapped, "image_path_a", "image_a_base64")
+	if err != nil {
+		t.Fatalf("whitespace-wrapped base64 should decode: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("whitespace-wrapped base64 decoded to %q, want %q", got, payload)
 	}
 
 	// data URI はプレフィックスが除去されて同じバイト列になる
