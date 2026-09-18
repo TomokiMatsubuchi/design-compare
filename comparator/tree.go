@@ -57,6 +57,11 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// tolerance / passRate の範囲検証は呼び出し元 (main.go) で行われるため、
 	// ここでは負値のデフォルト補完は不要。
 
+	// 一部エディタ・ツール (PowerShell 等) は UTF-8 BOM 付きで JSON を書き出す。
+	// encoding/json は BOM を拒否するため、パース前に先頭の U+FEFF を除去する。
+	figmaJSON = strings.TrimPrefix(figmaJSON, "\uFEFF")
+	webJSON = strings.TrimPrefix(webJSON, "\uFEFF")
+
 	var fNodes []FigmaNode
 	if err := json.Unmarshal([]byte(figmaJSON), &fNodes); err != nil {
 		return nil, fmt.Errorf("failed to parse Figma layout JSON: %w", err)
