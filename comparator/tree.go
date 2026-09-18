@@ -27,17 +27,18 @@ type WebNode struct {
 }
 
 type LayoutTreeResult struct {
-	MatchRate            float64  `json:"match_rate"`
-	Status               string   `json:"status"`
-	Details              []string `json:"details"`
-	MatchedNodes         int      `json:"matched_nodes"`
-	TotalNodes           int      `json:"total_nodes"`
-	IgnoredCount         int      `json:"ignored_count"`
-	UnmatchedIgnores     []string `json:"unmatched_ignores,omitempty"`
-	ExtraWebCount        int      `json:"extra_web_count"`
-	ExtraWebNodes        []string `json:"extra_web_nodes,omitempty"`
-	ZeroGeometryWarning  string   `json:"zero_geometry_warning,omitempty"`
-	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
+	MatchRate              float64  `json:"match_rate"`
+	Status                 string   `json:"status"`
+	Details                []string `json:"details"`
+	MatchedNodes           int      `json:"matched_nodes"`
+	TotalNodes             int      `json:"total_nodes"`
+	IgnoredCount           int      `json:"ignored_count"`
+	UnmatchedIgnores       []string `json:"unmatched_ignores,omitempty"`
+	UnmatchedIgnoreRegions []string `json:"unmatched_ignore_regions,omitempty"`
+	ExtraWebCount          int      `json:"extra_web_count"`
+	ExtraWebNodes          []string `json:"extra_web_nodes,omitempty"`
+	ZeroGeometryWarning    string   `json:"zero_geometry_warning,omitempty"`
+	UnresolvedParentRefs   []string `json:"unresolved_parent_refs,omitempty"`
 }
 
 const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
@@ -52,6 +53,8 @@ const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the lay
 // 一致するノードが1つも無い場合のみ UnmatchedIgnores に入る。
 // ignoreRegions は画像モードの ignore_region 相当の領域除外で、BoundingBox の
 // 中心点が領域内にあるノードを両側から除外する（除外数は IgnoredCount に加算）。
+// どのノード中心とも重ならない領域は UnmatchedIgnoreRegions に "x,y,w,h" で入る
+// （ignore_nodes の unmatched_ignores / 画像モードの out_of_bounds_regions と同種）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
 func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool, ignoreRegions []Region) (*LayoutTreeResult, error) {
 	// tolerance / passRate の範囲検証は呼び出し元 (main.go) で行われるため、
@@ -150,11 +153,15 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// ignore_region による領域除外: BoundingBox の中心点が領域内にあるノードを
 	// 両側から除外し、ignore_nodes と同じく IgnoredCount に加算する。セレクタ名が
 	// 分からない動的要素（日付・広告バナー等）を領域だけで除外できるようにする。
-	// 全件除外された場合は下の skipped 判定にそのまま乗る。
+	// 領域ごとに両側のヒット数を数え、1件も一致しなかった領域は座標ミス等の
+	// 可能性が高いため UnmatchedIgnoreRegions に報告する。全件除外された場合は
+	// 下の skipped 判定にそのまま乗る。
+	var unmatchedIgnoreRegions []string
 	if len(ignoreRegions) > 0 {
+		regionHits := make([]int, len(ignoreRegions))
 		var filteredFNodes []FigmaNode
 		for _, fn := range fNodes {
-			if boundingBoxCenterInRegions(fn.X, fn.Y, fn.W, fn.H, ignoreRegions) {
+			if boundingBoxCenterInRegions(fn.X, fn.Y, fn.W, fn.H, ignoreRegions, regionHits) {
 				ignoredCount++
 				continue
 			}
@@ -164,13 +171,19 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 		var filteredWNodes []WebNode
 		for _, wn := range wNodes {
-			if boundingBoxCenterInRegions(wn.X, wn.Y, wn.W, wn.H, ignoreRegions) {
+			if boundingBoxCenterInRegions(wn.X, wn.Y, wn.W, wn.H, ignoreRegions, regionHits) {
 				ignoredCount++
 				continue
 			}
 			filteredWNodes = append(filteredWNodes, wn)
 		}
 		wNodes = filteredWNodes
+
+		for i, r := range ignoreRegions {
+			if regionHits[i] == 0 {
+				unmatchedIgnoreRegions = append(unmatchedIgnoreRegions, fmt.Sprintf("%d,%d,%d,%d", r.X, r.Y, r.W, r.H))
+			}
+		}
 	}
 
 	// 親ノード検索をループ内の線形走査で行うと全体で O(n_f × n_w²) になるため、
@@ -203,13 +216,14 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				side = "Web"
 			}
 			return &LayoutTreeResult{
-				MatchRate:            0,
-				Status:               "skipped",
-				Details:              []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
-				IgnoredCount:         ignoredCount,
-				UnmatchedIgnores:     unmatchedIgnores,
-				ZeroGeometryWarning:  zeroGeometryWarning,
-				UnresolvedParentRefs: unresolvedParentRefs,
+				MatchRate:              0,
+				Status:                 "skipped",
+				Details:                []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
+				IgnoredCount:           ignoredCount,
+				UnmatchedIgnores:       unmatchedIgnores,
+				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
+				ZeroGeometryWarning:    zeroGeometryWarning,
+				UnresolvedParentRefs:   unresolvedParentRefs,
 			}, nil
 		}
 		// どちら側の入力が空かを明示する。
@@ -223,13 +237,14 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			emptyDetail = "Web layout node data is empty"
 		}
 		return &LayoutTreeResult{
-			MatchRate:            0,
-			Status:               "mismatch",
-			Details:              []string{emptyDetail},
-			IgnoredCount:         ignoredCount,
-			UnmatchedIgnores:     unmatchedIgnores,
-			ZeroGeometryWarning:  zeroGeometryWarning,
-			UnresolvedParentRefs: unresolvedParentRefs,
+			MatchRate:              0,
+			Status:                 "mismatch",
+			Details:                []string{emptyDetail},
+			IgnoredCount:           ignoredCount,
+			UnmatchedIgnores:       unmatchedIgnores,
+			UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
+			ZeroGeometryWarning:    zeroGeometryWarning,
+			UnresolvedParentRefs:   unresolvedParentRefs,
 		}, nil
 	}
 
@@ -349,17 +364,18 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	details = append(details, extraWebDetails...)
 
 	return &LayoutTreeResult{
-		MatchRate:            matchRate,
-		Status:               status,
-		Details:              details,
-		MatchedNodes:         matchedCount,
-		TotalNodes:           totalCompared,
-		IgnoredCount:         ignoredCount,
-		UnmatchedIgnores:     unmatchedIgnores,
-		ExtraWebCount:        len(extraWebSelectors),
-		ExtraWebNodes:        extraWebSelectors,
-		ZeroGeometryWarning:  zeroGeometryWarning,
-		UnresolvedParentRefs: unresolvedParentRefs,
+		MatchRate:              matchRate,
+		Status:                 status,
+		Details:                details,
+		MatchedNodes:           matchedCount,
+		TotalNodes:             totalCompared,
+		IgnoredCount:           ignoredCount,
+		UnmatchedIgnores:       unmatchedIgnores,
+		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
+		ExtraWebCount:          len(extraWebSelectors),
+		ExtraWebNodes:          extraWebSelectors,
+		ZeroGeometryWarning:    zeroGeometryWarning,
+		UnresolvedParentRefs:   unresolvedParentRefs,
 	}, nil
 }
 
@@ -400,16 +416,21 @@ func majorityZeroWebGeometry(nodes []WebNode) bool {
 
 // boundingBoxCenterInRegions はノードの BoundingBox 中心点が除外領域のいずれかに
 // 含まれるかを判定する。領域は画像ピクセルの矩形と同じ半開区間
-// [X, X+W) × [Y, Y+H) として中心点を判定する。
-func boundingBoxCenterInRegions(x, y, w, h float64, regions []Region) bool {
+// [X, X+W) × [Y, Y+H) として中心点を判定する。hits が非 nil なら、中心点が入った
+// 領域ごとにカウントを加算する（1ノードが複数領域に入ればそれぞれ加算）。
+func boundingBoxCenterInRegions(x, y, w, h float64, regions []Region, hits []int) bool {
 	cx, cy := x+w/2, y+h/2
-	for _, r := range regions {
+	matched := false
+	for i, r := range regions {
 		rx, ry := float64(r.X), float64(r.Y)
 		if cx >= rx && cx < rx+float64(r.W) && cy >= ry && cy < ry+float64(r.H) {
-			return true
+			if hits != nil && i < len(hits) {
+				hits[i]++
+			}
+			matched = true
 		}
 	}
-	return false
+	return matched
 }
 
 // getFigmaParent は親参照用インデックス（ID → ノード）から親ノードを O(1) で引く。

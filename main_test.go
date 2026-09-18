@@ -1337,6 +1337,15 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if got := result["match_rate"]; got != c.wantMatchRate {
 				t.Errorf("ignore_region=%q: expected match_rate=%v, got %v", c.region, c.wantMatchRate, got)
 			}
+			// 中心点に当たらない領域だけ unmatched_ignore_regions に出る（非空時のみ）。
+			if c.region == "600,400,100,100" {
+				gotRegions, ok := result["unmatched_ignore_regions"].([]interface{})
+				if !ok || len(gotRegions) != 1 || gotRegions[0] != "600,400,100,100" {
+					t.Errorf("ignore_region=%q: expected unmatched_ignore_regions=[600,400,100,100], got %v", c.region, result["unmatched_ignore_regions"])
+				}
+			} else if _, ok := result["unmatched_ignore_regions"]; ok {
+				t.Errorf("ignore_region=%q: expected no unmatched_ignore_regions, got %v", c.region, result["unmatched_ignore_regions"])
+			}
 		}
 	})
 

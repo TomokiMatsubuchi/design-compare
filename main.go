@@ -68,7 +68,7 @@ func main() {
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode). An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'; regions that contain no node center on either side exclude nothing and are reported in 'unmatched_ignore_regions'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
@@ -450,6 +450,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// ignore_nodes 指定時に一致しなかったエントリ（スペルミス等）のフィードバックを返す
 		if len(treeResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = treeResult.UnmatchedIgnores
+		}
+		// ignore_region のうち両側どのノード中心とも重ならない領域（座標ミス等）。
+		// unmatched_ignores / 画像モードの out_of_bounds_regions と同様、非空時のみ返す。
+		if len(treeResult.UnmatchedIgnoreRegions) > 0 {
+			responseMap["unmatched_ignore_regions"] = treeResult.UnmatchedIgnoreRegions
 		}
 		// どの Figma ノードにもマッチしなかった余分な Web ノード（実装側の過剰要素）を
 		// 文字列パースなしで扱えるよう、セレクタを構造化フィールドでも返す（0件時は省略）。

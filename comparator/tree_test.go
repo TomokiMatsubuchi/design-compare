@@ -240,6 +240,9 @@ func TestLayoutTree_IgnoreRegion(t *testing.T) {
 	if result.Status != "success" {
 		t.Errorf("Expected status 'success', got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
 	}
+	if len(result.UnmatchedIgnoreRegions) != 0 {
+		t.Errorf("Expected no unmatched_ignore_regions when the region hits node centers, got %v", result.UnmatchedIgnoreRegions)
+	}
 
 	// Region [600,700)x[400,500) overlaps the Web banner bbox but contains
 	// neither center point: nothing is excluded (center-point semantics) and
@@ -254,6 +257,9 @@ func TestLayoutTree_IgnoreRegion(t *testing.T) {
 	}
 	if resultOverlap.Status != "mismatch" {
 		t.Errorf("Expected status 'mismatch' when nothing is ignored, got '%s'", resultOverlap.Status)
+	}
+	if len(resultOverlap.UnmatchedIgnoreRegions) != 1 || resultOverlap.UnmatchedIgnoreRegions[0] != "600,400,100,100" {
+		t.Errorf("Expected unmatched_ignore_regions=[600,400,100,100], got %v", resultOverlap.UnmatchedIgnoreRegions)
 	}
 
 	// A region containing every node center excludes all nodes on both sides
@@ -271,6 +277,58 @@ func TestLayoutTree_IgnoreRegion(t *testing.T) {
 	}
 	if len(resultAll.Details) == 0 || !strings.Contains(resultAll.Details[0], "ignore_region") {
 		t.Errorf("Expected skipped detail to mention ignore_region, got %v", resultAll.Details)
+	}
+	if len(resultAll.UnmatchedIgnoreRegions) != 0 {
+		t.Errorf("Expected no unmatched_ignore_regions when the region hits every node, got %v", resultAll.UnmatchedIgnoreRegions)
+	}
+}
+
+// TestLayoutTree_UnmatchedIgnoreRegions verifies that ignore_region rectangles
+// whose half-open bounds contain no BoundingBox center on either side are
+// reported as "x,y,w,h" strings (same format as out_of_bounds_regions), only
+// when at least one such region exists.
+func TestLayoutTree_UnmatchedIgnoreRegions(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"2","name":"banner","x":400,"y":400,"w":200,"h":80}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":".banner","x":650,"y":420,"w":200,"h":80}
+	]`
+
+	// Typo-like coordinates far from every node center: nothing is excluded
+	// and the region is reported so the caller can see the ignore did not apply.
+	miss := []Region{{X: 10, Y: 800, W: 50, H: 50}}
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, miss)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if result.IgnoredCount != 0 {
+		t.Errorf("Expected IgnoredCount=0 for a region hitting no node center, got %d", result.IgnoredCount)
+	}
+	if len(result.UnmatchedIgnoreRegions) != 1 || result.UnmatchedIgnoreRegions[0] != "10,800,50,50" {
+		t.Errorf("Expected unmatched_ignore_regions=[10,800,50,50], got %v", result.UnmatchedIgnoreRegions)
+	}
+
+	// Mixed list: a region that hits both banner centers stays off the list;
+	// only the miss is reported.
+	mixed := []Region{
+		{X: 400, Y: 400, W: 500, H: 100},
+		{X: 10, Y: 800, W: 50, H: 50},
+	}
+	resultMixed, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, mixed)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if resultMixed.IgnoredCount != 2 {
+		t.Errorf("Expected IgnoredCount=2 from the matching region, got %d", resultMixed.IgnoredCount)
+	}
+	if len(resultMixed.UnmatchedIgnoreRegions) != 1 || resultMixed.UnmatchedIgnoreRegions[0] != "10,800,50,50" {
+		t.Errorf("Expected unmatched_ignore_regions=[10,800,50,50] (miss only), got %v", resultMixed.UnmatchedIgnoreRegions)
 	}
 }
 
