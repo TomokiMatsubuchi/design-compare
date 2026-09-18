@@ -166,6 +166,26 @@ func TestRunPixelMatch_ImageSize(t *testing.T) {
 	}
 }
 
+// TestRunPixelMatch_IdenticalGenerateDiff は同一画像でも generateDiff=true なら
+// 差分 PNG を返すこと。pixelmatch の同一画像 fast path は WriteTo を差し替えない
+// ため、事前確保をやめたあと nil で Encode しないことを回帰防止する。
+func TestRunPixelMatch_IdenticalGenerateDiff(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{200, 200, 200, 255}}, image.Point{}, draw.Src)
+	pngBytes := encodePNGBytes(t, img)
+
+	_, _, diffCount, diffURI, _, _, _, err := RunPixelMatch(pngBytes, pngBytes, 0.1, true, nil)
+	if err != nil {
+		t.Fatalf("RunPixelMatch failed: %v", err)
+	}
+	if diffCount != 0 {
+		t.Errorf("Expected diffCount=0 for identical images, got %d", diffCount)
+	}
+	if !strings.HasPrefix(diffURI, "data:image/png;base64,") {
+		t.Errorf("Expected PNG data URI for generateDiff=true, got %q", diffURI)
+	}
+}
+
 // TestCalculateLayoutSimilarityWithDiff_IgnoreRegionOutOfBounds verifies the
 // same out-of-bounds detection for the perceptual (aHash) comparison path.
 // 両画像の寸法が異なる場合は、いずれかの画像で範囲外の領域も報告される
