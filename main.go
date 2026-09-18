@@ -714,6 +714,16 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if hasMinMatch {
 			responseMap["min_match"] = minMatchRate
 		}
+		// min_match だけ指定して max_diff_pixels を省略すると既定 0 が判定を支配し、
+		// 差分が 1px でも mismatch になる。status / match_rate は変えず、
+		// perceptual の一様画像 warnings と同様に応答へ通知する (Issue #206)。
+		if hasMinMatch {
+			if _, hasMaxDiffPixels := args["max_diff_pixels"]; !hasMaxDiffPixels {
+				responseMap["warnings"] = []string{
+					"max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)",
+				}
+			}
+		}
 		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず
 		// 座標ミスの可能性が高いため、非空時のみ応答へ含めて通知する
 		// (perceptual モードや layout_tree の unmatched_ignores と同様)。
