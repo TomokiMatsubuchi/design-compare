@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -172,6 +173,9 @@ func parseIgnoreRegions(s string) ([]comparator.Region, error) {
 			v, err := strconv.Atoi(strings.TrimSpace(f))
 			if err != nil {
 				return nil, fmt.Errorf("ignore_region values must be integers (got %q in %q)", strings.TrimSpace(f), trimmed)
+			}
+			if v > math.MaxInt32 {
+				return nil, fmt.Errorf("ignore_region values must be <= %d (got %q)", int32(math.MaxInt32), trimmed)
 			}
 			vals[i] = v
 		}
