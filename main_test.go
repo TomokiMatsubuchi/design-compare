@@ -1193,6 +1193,69 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.12b. layout_tree モード: UTF-8 BOM 付き JSON（インライン / パス）
+	// =================================================================
+	t.Run("LayoutTree_UTF8BOM", func(t *testing.T) {
+		figmaLayout := `[{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100}]`
+		webLayout := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100}]`
+		bomFigma := "\uFEFF" + figmaLayout
+		bomWeb := "\uFEFF" + webLayout
+
+		reqInline := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": bomFigma,
+					"web_layout":   bomWeb,
+				},
+			},
+		}
+		resInline, err := compareDesignHandler(context.Background(), reqInline)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resInline.IsError {
+			t.Fatalf("Expected BOM-prefixed inline JSON to parse, got error: %v", resInline.Content[0].(mcp.TextContent).Text)
+		}
+		var resultInline map[string]interface{}
+		json.Unmarshal([]byte(resInline.Content[0].(mcp.TextContent).Text), &resultInline)
+		if resultInline["status"] != "success" || resultInline["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match with BOM-prefixed inline JSON, got status=%v, rate=%v", resultInline["status"], resultInline["match_rate"])
+		}
+
+		figmaPath := filepath.Join(tmpDir, "figma-layout-bom.json")
+		if err := os.WriteFile(figmaPath, []byte(bomFigma), 0o644); err != nil {
+			t.Fatalf("failed to write figma layout file: %v", err)
+		}
+		webPath := filepath.Join(tmpDir, "web-layout-bom.json")
+		if err := os.WriteFile(webPath, []byte(bomWeb), 0o644); err != nil {
+			t.Fatalf("failed to write web layout file: %v", err)
+		}
+
+		reqPath := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":              "layout_tree",
+					"figma_layout_path": figmaPath,
+					"web_layout_path":   webPath,
+				},
+			},
+		}
+		resPath, err := compareDesignHandler(context.Background(), reqPath)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resPath.IsError {
+			t.Fatalf("Expected BOM-prefixed layout files to parse, got error: %v", resPath.Content[0].(mcp.TextContent).Text)
+		}
+		var resultPath map[string]interface{}
+		json.Unmarshal([]byte(resPath.Content[0].(mcp.TextContent).Text), &resultPath)
+		if resultPath["status"] != "success" || resultPath["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match via BOM-prefixed layout file paths, got status=%v, rate=%v", resultPath["status"], resultPath["match_rate"])
+		}
+	})
+
+	// =================================================================
 	// 2.13. layout_tree モード: ignore_region による領域除外
 	// =================================================================
 	// 画像モードと同じ ignore_region を layout_tree でも受け付ける。
