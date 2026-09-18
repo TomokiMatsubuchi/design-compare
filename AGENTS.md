@@ -17,9 +17,10 @@ frontend — the "application" is a stdio JSON-RPC MCP server.
 - Vet: `go vet ./...`
 
 ### Running the server (non-obvious)
-- It communicates over **stdio using newline-delimited MCP JSON-RPC**, not HTTP.
+- With **no arguments**, it communicates over **stdio using newline-delimited MCP JSON-RPC**, not HTTP.
   Running `./design-compare` alone just blocks waiting for stdin — that is normal.
-- To exercise it manually, pipe an `initialize` request, an
+- With **arguments**, it runs a one-shot CLI compare (no MCP handshake) and prints the same JSON as the `compare_design` tool, then exits (`0` success / `2` mismatch / `1` error). Example: `./design-compare --mode strict --image-a a.png --image-b b.png`.
+- To exercise the MCP server manually, pipe an `initialize` request, an
   `notifications/initialized` message, then `tools/list` / `tools/call` into the
   binary's stdin (see the handshake used during setup). The only tool is
   `compare_design` with modes `layout_tree`, `perceptual`, and `strict`.

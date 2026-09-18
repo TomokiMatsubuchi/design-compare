@@ -140,6 +140,18 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 go build -o design-compare
 ```
 
+### CLI ワンショット比較
+
+引数付きで起動すると MCP ハンドシェイクなしで `compare_design` を1回実行し、ツールと同じ応答 JSON を stdout に出して終了します（`0` = success / `2` = mismatch / `1` = エラー）。引数なし起動は従来どおり stdio MCP サーバーです。
+
+```bash
+./design-compare --mode strict --image-a a.png --image-b b.png
+./design-compare --mode layout_tree --figma-layout-file figma.json --web-layout-file web.json
+./design-compare --help
+```
+
+主なフラグ: `--mode` / `--image-a` / `--image-b` / `--figma-layout-file` / `--web-layout-file` / `--threshold` / `--min-match` / `--pass-rate` / `--max-diff-pixels` / `--ignore-region` / `--generate-diff`
+
 ### 単体テストの実行
 ブラウザの起動を必要としない超高速なメモリ内画像/ツリーデータ検証テストが実行できます。
 
