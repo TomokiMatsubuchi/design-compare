@@ -20,6 +20,12 @@ import (
 )
 
 func main() {
+	// 引数付き起動は MCP ハンドシェイクなしのワンショット比較。
+	// 引数なしは従来どおり stdio MCP サーバー（既存クライアント互換）。
+	if useCLI(os.Args) {
+		os.Exit(runCLI(os.Args[1:]))
+	}
+
 	s := server.NewMCPServer("design-compare", "1.0.0")
 
 	// compare_design ツール定義 (3つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
