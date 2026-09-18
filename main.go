@@ -25,6 +25,10 @@ func main() {
 	// compare_design ツール定義 (3つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
 	compareDesignTool := mcp.NewTool("compare_design",
 		mcp.WithDescription("Compare designs against implementations using three deterministic modes: 'layout_tree' (structural data), 'perceptual' (macro-layout image match), or 'strict' (exact pixel match)."),
+		mcp.WithTitleAnnotation("Compare Designs"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("mode",
 			mcp.Required(),
 			mcp.Enum("layout_tree", "perceptual", "strict"),
