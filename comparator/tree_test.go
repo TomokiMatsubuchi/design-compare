@@ -524,3 +524,36 @@ func TestLayoutTree_SelfReferentialParentNoFalseMatch(t *testing.T) {
 		t.Errorf("Expected status not 'success' (false match), got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
 	}
 }
+
+// TestLayoutTree_UTF8BOMStripped verifies that a leading UTF-8 BOM (U+FEFF)
+// on either JSON input is stripped before Unmarshal, so BOM-prefixed payloads
+// parse the same as BOM-less ones. Editors and tools such as PowerShell often
+// emit UTF-8 with BOM; without stripping, json.Unmarshal fails with
+// `invalid character 'ï' looking for beginning of value`.
+func TestLayoutTree_UTF8BOMStripped(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100}]`
+	webJSON := `[{"selector":"A","x":0,"y":0,"w":100,"h":100}]`
+
+	t.Run("without_bom", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.Status != "success" || result.MatchedNodes != 1 {
+			t.Errorf("Expected success with 1 matched node, got status=%s matched=%d", result.Status, result.MatchedNodes)
+		}
+	})
+
+	t.Run("with_bom", func(t *testing.T) {
+		result, err := CompareLayoutTrees("\uFEFF"+figmaJSON, "\uFEFF"+webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed with BOM-prefixed JSON: %v", err)
+		}
+		if result.Status != "success" || result.MatchedNodes != 1 {
+			t.Errorf("Expected success with 1 matched node, got status=%s matched=%d", result.Status, result.MatchedNodes)
+		}
+	})
+}
