@@ -43,6 +43,8 @@
 
 image A / B のいずれかが一様と検出された場合、status / match_rate は従来どおり変えず、代わりに応答へ `warnings` フィールド（例: `["degenerate aHash: image A is uniform; perceptual match may be unreliable"]`）を付けて通知します。通常の明暗パターンを持つ画像ペアではこのフィールドは含まれません。
 
+両画像のアスペクト比（幅/高さ）の大きい方と小さい方の比が 2.0 を超える場合も、16x16 への引き伸ばしで幾何が歪むため同じ `warnings` に `aspect ratio mismatch: ...` を追加します。status / match_rate は変えません。
+
 ---
 
 ## 2. パラメータリファレンス (`compare_design`)
