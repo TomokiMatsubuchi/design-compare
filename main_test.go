@@ -2728,6 +2728,76 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// min_match のみ指定し max_diff_pixels を省略すると既定 0 が判定を支配する。
+	// status / match_rate は変えず、warnings で呼び出し側に気付かせる (Issue #206)
+	t.Run("StrictMode_MinMatch_DefaultMaxDiffPixels_Warning", func(t *testing.T) {
+		const wantWarning = "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)"
+
+		reqWarn := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+					"min_match":    50.0,
+				},
+			},
+		}
+		resWarn, err := compareDesignHandler(context.Background(), reqWarn)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultWarn map[string]interface{}
+		json.Unmarshal([]byte(resWarn.Content[0].(mcp.TextContent).Text), &resultWarn)
+		if resultWarn["status"] != "mismatch" {
+			t.Errorf("Expected mismatch to be unchanged, got status=%v", resultWarn["status"])
+		}
+		gotWarnings, ok := resultWarn["warnings"].([]interface{})
+		if !ok || len(gotWarnings) != 1 || gotWarnings[0] != wantWarning {
+			t.Errorf("Expected warnings=[%q], got %v", wantWarning, resultWarn["warnings"])
+		}
+
+		reqBoth := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "strict",
+					"image_path_a":    pathE,
+					"image_path_b":    pathF,
+					"min_match":       50.0,
+					"max_diff_pixels": 100000.0,
+				},
+			},
+		}
+		resBoth, err := compareDesignHandler(context.Background(), reqBoth)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultBoth map[string]interface{}
+		json.Unmarshal([]byte(resBoth.Content[0].(mcp.TextContent).Text), &resultBoth)
+		if _, ok := resultBoth["warnings"]; ok {
+			t.Errorf("Expected no warnings when max_diff_pixels is set, got %v", resultBoth["warnings"])
+		}
+
+		reqNone := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resNone, err := compareDesignHandler(context.Background(), reqNone)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNone map[string]interface{}
+		json.Unmarshal([]byte(resNone.Content[0].(mcp.TextContent).Text), &resultNone)
+		if _, ok := resultNone["warnings"]; ok {
+			t.Errorf("Expected no warnings when min_match is omitted, got %v", resultNone["warnings"])
+		}
+	})
+
 	// min_match の範囲バリデーション: 0.0–100.0 外の値はエラーになる
 	t.Run("StrictMode_MinMatch_OutOfRange", func(t *testing.T) {
 		for _, val := range []float64{-1.0, 101.0} {
