@@ -251,6 +251,9 @@ func collectDiffRegions(img image.Image) []DiffRegion {
 // 画像で範囲外の領域を報告する)。grayA / grayB のいずれかが一様 (ベタ塗り) の
 // 場合は aHash が退化するため、status / match_rate には影響させず警告
 // メッセージのリスト (warnings) を返す (非一様な通常のペアでは空)。
+// 両画像のアスペクト比 (w/h) の max/min が aspectRatioMismatchThreshold を
+// 超える場合も、16x16 への引き伸ばしで幾何が歪むため同様に warnings へ追加する
+// (status / match_rate は変えない)。
 // あわせて不一致セル数 (diffBits) を 0–256 の int で返す (aHash は 16x16 =
 // 256 セルのため画像サイズによらず固定)。一致率はこの 256 段階の離散値から
 // 算出されるため、呼び出し側が "N of 256 blocks differ" のように数量として
@@ -308,6 +311,9 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	}
 	if isUniformGray(grayB) {
 		warnings = append(warnings, "degenerate aHash: image B is uniform; perceptual match may be unreliable")
+	}
+	if msg := aspectRatioMismatchWarning(imgA, imgB); msg != "" {
+		warnings = append(warnings, msg)
 	}
 
 	const cellScale = 16 // each aHash cell rendered as 16x16 px → 256x256 image
@@ -404,6 +410,29 @@ func mergeOutOfBoundsRegions(lists ...[]string) []string {
 // (一様 = ベタ塗り) かどうかを判定する。aHash は各画像自身の平均輝度で
 // 2値化するため、一様な画像は全セルが同一ビットになり (255>=255 も 0>=0 も
 // true)、画像間で内容が全く異なっても diffBits=0 (一致率100%) になってしまう。
+// aspectRatioMismatchThreshold は perceptual 比較で警告するアスペクト比の
+// 相対差 (大きい方 / 小さい方)。16x16 への独立リサイズは縦横比を捨てるため、
+// この倍率を超えるペアは一致率が高くても幾何が全く異なる可能性がある。
+const aspectRatioMismatchThreshold = 2.0
+
+// aspectRatioMismatchWarning は両画像のアスペクト比 (幅/高さ) の比が
+// aspectRatioMismatchThreshold を超えるとき警告文を返す。超えない場合は空文字。
+func aspectRatioMismatchWarning(imgA, imgB image.Image) string {
+	bA, bB := imgA.Bounds(), imgB.Bounds()
+	wA, hA := bA.Dx(), bA.Dy()
+	wB, hB := bB.Dx(), bB.Dy()
+	aspectA := float64(wA) / float64(hA)
+	aspectB := float64(wB) / float64(hB)
+	minAspect, maxAspect := aspectA, aspectB
+	if minAspect > maxAspect {
+		minAspect, maxAspect = maxAspect, minAspect
+	}
+	if minAspect == 0 || maxAspect/minAspect <= aspectRatioMismatchThreshold {
+		return ""
+	}
+	return fmt.Sprintf("aspect ratio mismatch: image A is %dx%d (aspect %.2f), image B is %dx%d (aspect %.2f); perceptual comparison stretches both to 16x16", wA, hA, aspectA, wB, hB, aspectB)
+}
+
 func isUniformGray(gray []byte) bool {
 	minVal, maxVal := gray[0], gray[0]
 	for _, v := range gray[1:] {
