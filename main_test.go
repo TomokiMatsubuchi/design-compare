@@ -1751,6 +1751,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := result["match_rate_value"]; got != float64(100) {
 			t.Errorf("Expected match_rate_value=100, got %v", got)
 		}
+		// 実効パラメータ min_match (デフォルト 98.0) が応答に含まれることの検証
+		if got := result["min_match"]; got != float64(98) {
+			t.Errorf("Expected min_match=98 (default), got %v", got)
+		}
 		// details は全モードで文字列配列に統一されている (perceptual は単一要素)
 		details, ok := result["details"].([]interface{})
 		if !ok {
@@ -2340,6 +2344,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["status"] != "success" {
 			t.Errorf("Expected success with min_match=0.5, got status=%v", result["status"])
 		}
+		// 指定した min_match が実効値としてそのまま応答に echo されることの検証
+		if got := result["min_match"]; got != float64(0.5) {
+			t.Errorf("Expected min_match=0.5, got %v", got)
+		}
 	})
 
 	t.Run("Perceptual_MinMatch_OutOfRange", func(t *testing.T) {
@@ -2769,6 +2777,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if v, ok := result["effective_threshold"].(float64); !ok || v != 0.1 {
 			t.Errorf("Expected default effective_threshold=0.1 in response, got %v", result["effective_threshold"])
 		}
+		// 実効パラメータ max_diff_pixels も未指定時の既定値 0 が応答に含まれることの検証
+		if got := result["max_diff_pixels"]; got != float64(0) {
+			t.Errorf("Expected max_diff_pixels=0 (default), got %v", got)
+		}
 		if result["image_size"] != "200x200" {
 			t.Errorf("Expected image_size=200x200, got %v", result["image_size"])
 		}
@@ -2967,6 +2979,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultOK["status"] != "success" {
 			t.Errorf("Expected success with max_diff_pixels=%d, got status=%v", diffPixels, resultOK["status"])
 		}
+		// 指定した max_diff_pixels が実効値としてそのまま応答に echo されることの検証
+		if got := resultOK["max_diff_pixels"]; got != float64(diffPixels) {
+			t.Errorf("Expected max_diff_pixels=%d, got %v", diffPixels, got)
+		}
 
 		// 許容数を 1 でも下回ると mismatch のまま
 		argsNG := map[string]any{
@@ -2981,6 +2997,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(resNG.Content[0].(mcp.TextContent).Text), &resultNG)
 		if resultNG["status"] != "mismatch" {
 			t.Errorf("Expected mismatch with max_diff_pixels=%d, got status=%v", diffPixels-1, resultNG["status"])
+		}
+		if got := resultNG["max_diff_pixels"]; got != float64(diffPixels-1) {
+			t.Errorf("Expected max_diff_pixels=%d, got %v", diffPixels-1, got)
 		}
 	})
 

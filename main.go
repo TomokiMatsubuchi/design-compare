@@ -745,6 +745,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			details += fmt.Sprintf(" Match rate %.2f%% must be at least %.2f%%.", matchRate, minMatchRate)
 		}
 
+		// 実効パラメータ (threshold / max_diff_pixels) を応答に含め、どの閾値で判定されたかを
+		// 検証可能にする (layout_tree の effective_threshold / pass_rate と同じ方針)。
 		responseMap = map[string]interface{}{
 			"status":              status,
 			"mode":                "strict",
@@ -754,6 +756,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"diff_pixels":         diffPixels,
 			"image_size":          imageSize,
 			"effective_threshold": threshold,
+			"max_diff_pixels":     maxDiffPixels,
 			"details":             []string{details},
 			"diff_image":          diffImage,
 			"ignored_regions":     len(ignoreRegions),
