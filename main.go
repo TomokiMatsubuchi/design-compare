@@ -20,11 +20,21 @@ import (
 )
 
 func main() {
+	// 引数付き起動は MCP ハンドシェイクなしのワンショット比較。
+	// 引数なしは従来どおり stdio MCP サーバー（既存クライアント互換）。
+	if useCLI(os.Args) {
+		os.Exit(runCLI(os.Args[1:]))
+	}
+
 	s := server.NewMCPServer("design-compare", "1.0.0")
 
 	// compare_design ツール定義 (4つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
 	compareDesignTool := mcp.NewTool("compare_design",
 		mcp.WithDescription("Compare designs against implementations using four deterministic modes: 'layout_tree' (structural data), 'perceptual' (macro-layout image match), 'strict' (exact pixel match), or 'layout_integrity' (web layout breakage at a CSS viewport without Figma; default iPad portrait 768x1024, landscape via viewport_preset=ipad_landscape)."),
+		mcp.WithTitleAnnotation("Compare Designs"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("mode",
 			mcp.Required(),
 			mcp.Enum("layout_tree", "perceptual", "strict", "layout_integrity"),
@@ -37,10 +47,10 @@ func main() {
 			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_a_base64",
-			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding"),
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
 		),
 		mcp.WithString("image_b_base64",
-			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding"),
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
@@ -55,20 +65,20 @@ func main() {
 			mcp.Description("Path to a JSON file containing the Web DOM node list layout (alternative to web_layout for 'layout_tree' and 'layout_integrity' modes; mutually exclusive with web_layout). The file content is a JSON array like [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("viewport_preset",
-			mcp.Description("Named CSS viewport for 'layout_integrity' only: 'ipad_portrait' (768x1024, default) or 'ipad_landscape' (1024x768). Ignored in other modes; passing it to a mode that does not support it is rejected. Optional viewport_width / viewport_height override the preset size (must be greater than 0)"),
+			mcp.Description("Named CSS viewport for 'layout_integrity' only: 'ipad_portrait' (768x1024, default) or 'ipad_landscape' (1024x768); passing it in another mode is rejected as an unsupported parameter. Optional viewport_width / viewport_height override the preset size (must be greater than 0)"),
 			mcp.Enum("ipad_portrait", "ipad_landscape"),
 		),
 		mcp.WithNumber("viewport_width",
-			mcp.Description("CSS pixel viewport width for 'layout_integrity' only (default 768, iPad portrait). Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset width. Ignored in other modes; passing it to a mode that does not support it is rejected as an unsupported parameter"),
+			mcp.Description("CSS pixel viewport width for 'layout_integrity' only (default 768, iPad portrait); passing it in another mode is rejected as an unsupported parameter. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset width"),
 		),
 		mcp.WithNumber("viewport_height",
-			mcp.Description("CSS pixel viewport height for 'layout_integrity' only (default 1024, iPad portrait). Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset height. Ignored in other modes; passing it to a mode that does not support it is rejected as an unsupported parameter"),
+			mcp.Description("CSS pixel viewport height for 'layout_integrity' only (default 1024, iPad portrait); passing it in another mode is rejected as an unsupported parameter. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset height"),
 		),
 		mcp.WithString("ignore_nodes",
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
@@ -77,12 +87,17 @@ func main() {
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
 		),
 		mcp.WithNumber("min_match",
+			mcp.Min(0),
+			mcp.Max(100),
 			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass. For 'perceptual' mode: default 98.0; use this instead of 'threshold' (mutually exclusive with 'threshold' in perceptual mode), since 'threshold' uses a 0.0–1.0 scale in other modes. For 'strict' mode: optional with no default; when omitted, strict mode judges only by 'max_diff_pixels', and when specified the match rate must be at least this value (combinable with 'max_diff_pixels'; exceeding either causes mismatch)."),
 		),
 		mcp.WithNumber("pass_rate",
+			mcp.Min(0),
+			mcp.Max(100),
 			mcp.Description("Minimum match percentage (0.0 to 100.0) required to pass in 'layout_tree' mode. Default 98.0."),
 		),
 		mcp.WithNumber("max_diff_pixels",
+			mcp.Min(0),
 			mcp.Description("Maximum number of differing pixels allowed to still report success in 'strict' mode. Default 0 (any pixel difference causes mismatch). Useful to tolerate a few pixels of anti-aliasing or environment differences."),
 		),
 		mcp.WithBoolean("generate_diff",
@@ -106,7 +121,8 @@ func main() {
 // For base64 input, a data URI prefix ("data:<mime>;base64,...") such as the one
 // returned by screenshot tools (e.g. chrome-devtools-mcp) or by this tool's own
 // diff_image responses is stripped before decoding; a bare base64 string is
-// accepted unchanged.
+// accepted unchanged. ASCII whitespace in the payload (newlines, spaces, tabs)
+// is removed so MIME-style wrapped copies still decode.
 func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
 	switch {
 	case pathValue != "" && base64Value != "":
@@ -121,6 +137,8 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 				payload = payload[i+len(";base64,"):]
 			}
 		}
+		// ログ等からコピーした MIME 折り返し (改行・スペース) を除去してからデコードする。
+		payload = strings.Join(strings.Fields(payload), "")
 		data, err := base64.StdEncoding.DecodeString(payload)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode %s: %w", base64Param, err)
@@ -276,6 +294,71 @@ func validateModeParams(args map[string]any, mode string) error {
 	return nil
 }
 
+// floatArg は数値引数を読む。キー未指定なら def を返す。キーがあるのに
+// 数値へ変換できない値 ("" / "abc" / null 等) は mcp-go の GetFloat のように
+// デフォルトへ落とさずエラーにする。文字列の "98" 等は従来通り受け付ける。
+func floatArg(request mcp.CallToolRequest, key string, def float64) (float64, error) {
+	args := request.GetArguments()
+	val, ok := args[key]
+	if !ok {
+		return def, nil
+	}
+	switch v := val.(type) {
+	case float64:
+		return v, nil
+	case int:
+		return float64(v), nil
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return f, nil
+		}
+	}
+	return 0, fmt.Errorf("argument '%s' must be a number", key)
+}
+
+// intArg は整数引数を読む。キー未指定なら def、変換不能ならエラー。
+func intArg(request mcp.CallToolRequest, key string, def int) (int, error) {
+	args := request.GetArguments()
+	val, ok := args[key]
+	if !ok {
+		return def, nil
+	}
+	switch v := val.(type) {
+	case int:
+		return v, nil
+	case float64:
+		return int(v), nil
+	case string:
+		if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("argument '%s' must be an integer", key)
+}
+
+// boolArg は真偽引数を読む。キー未指定なら def、変換不能ならエラー。
+// 文字列の "true"/"false" と、GetBool と同様の 0/1 数値も受け付ける。
+func boolArg(request mcp.CallToolRequest, key string, def bool) (bool, error) {
+	args := request.GetArguments()
+	val, ok := args[key]
+	if !ok {
+		return def, nil
+	}
+	switch v := val.(type) {
+	case bool:
+		return v, nil
+	case string:
+		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+			return b, nil
+		}
+	case int:
+		return v != 0, nil
+	case float64:
+		return v != 0, nil
+	}
+	return false, fmt.Errorf("argument '%s' must be a boolean", key)
+}
+
 // perceptualTotalBlocks は perceptual (aHash) 比較のブロック (セル) 総数。
 // aHash は画像を 16x16 = 256 セルに分割して比較するため画像サイズに依存せず
 // 固定。strict モードの total_pixels に対応する数量情報として、応答の
@@ -317,8 +400,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
 		}
 
-		tolerance := request.GetFloat("threshold", 0.15) // デフォルト許容差 15%
-		passRate := request.GetFloat("pass_rate", 98.0)  // デフォルト合格ライン 98%
+		tolerance, err := floatArg(request, "threshold", 0.15) // デフォルト許容差 15%
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		passRate, err := floatArg(request, "pass_rate", 98.0) // デフォルト合格ライン 98%
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// 範囲バリデーション: threshold は 0.0–1.0、pass_rate は 0.0–100.0
 		if args := request.GetArguments(); args != nil {
@@ -340,7 +429,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 				}
 			}
 		}
-		countExtraWeb := request.GetBool("count_extra_web", false)
+		countExtraWeb, err := boolArg(request, "count_extra_web", false)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
 		// layout_tree では BoundingBox の中心点が領域内にあるノードを両側から除外する。
@@ -372,6 +464,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(treeResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = treeResult.UnmatchedIgnores
 		}
+		// ignore_region のうち両側どのノード中心とも重ならない領域（座標ミス等）。
+		// unmatched_ignores / 画像モードの out_of_bounds_regions と同様、非空時のみ返す。
+		if len(treeResult.UnmatchedIgnoreRegions) > 0 {
+			responseMap["unmatched_ignore_regions"] = treeResult.UnmatchedIgnoreRegions
+		}
 		// どの Figma ノードにもマッチしなかった余分な Web ノード（実装側の過剰要素）を
 		// 文字列パースなしで扱えるよう、セレクタを構造化フィールドでも返す（0件時は省略）。
 		if len(treeResult.ExtraWebNodes) > 0 {
@@ -381,6 +478,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// unmatched_ignores と同様に誤用検出のフィードバックを載せる（status は非破壊）。
 		if treeResult.ZeroGeometryWarning != "" {
 			responseMap["zero_geometry_warning"] = treeResult.ZeroGeometryWarning
+		}
+		// parent が空でないのに id / selector に解決できない参照（タイポ等）。
+		// 比較は従来どおり親なし＝絶対座標へフォールバックし、status は非破壊。
+		if len(treeResult.UnresolvedParentRefs) > 0 {
+			responseMap["unresolved_parent_refs"] = treeResult.UnresolvedParentRefs
 		}
 
 	case "perceptual":
@@ -414,7 +516,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		var minMatchRate float64
 		if hasMinMatch {
-			minMatchRate = request.GetFloat("min_match", 98.0)
+			minMatchRate, err = floatArg(request, "min_match", 98.0)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if minMatchRate < 0.0 || minMatchRate > 100.0 {
 				return mcp.NewToolResultError("min_match for perceptual mode must be between 0.0 and 100.0 (match percentage)."), nil
 			}
@@ -422,7 +527,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			// 後方互換: threshold を min_match のエイリアスとして受け付ける。
 			// 1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐため拒否し、
 			// 100 を超える値は到達不可能なため誤用として拒否する。
-			minMatchRate = request.GetFloat("threshold", 98.0)
+			minMatchRate, err = floatArg(request, "threshold", 98.0)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if hasThreshold && (minMatchRate < 1.0 || minMatchRate > 100.0) {
 				return mcp.NewToolResultError(
 					"threshold for perceptual mode must be 1.0–100.0 (match percentage). " +
@@ -459,7 +567,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", boundsB.Dx(), boundsB.Dy())), nil
 		}
 
-		matchRate, diffBlocks, diffImage, outOfBounds, warnings, diffCells, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, request.GetBool("generate_diff", true), ignoreRegions)
+		generateDiff, err := boolArg(request, "generate_diff", true)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		matchRate, diffBlocks, diffImage, outOfBounds, warnings, diffCells, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, generateDiff, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
@@ -532,8 +645,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
-		threshold := request.GetFloat("threshold", 0.1)
-		maxDiffPixels := request.GetInt("max_diff_pixels", 0)
+		threshold, err := floatArg(request, "threshold", 0.1)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		maxDiffPixels, err := intArg(request, "max_diff_pixels", 0)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// min_match: 一致率(%)による合格ライン (0.0–100.0)。strict ではデフォルト値を
 		// 持たず、未指定なら判定に使わない (max_diff_pixels のみで判定する従来挙動)。
@@ -544,7 +663,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		_, hasMinMatch := args["min_match"]
 		var minMatchRate float64
 		if hasMinMatch {
-			minMatchRate = request.GetFloat("min_match", 0.0)
+			minMatchRate, err = floatArg(request, "min_match", 0.0)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if minMatchRate < 0.0 || minMatchRate > 100.0 {
 				return mcp.NewToolResultError("min_match for strict mode must be between 0.0 and 100.0 (match percentage)."), nil
 			}
@@ -566,7 +688,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, request.GetBool("generate_diff", true), ignoreRegions)
+		generateDiff, err := boolArg(request, "generate_diff", true)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -605,6 +732,16 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if hasMinMatch {
 			responseMap["min_match"] = minMatchRate
 		}
+		// min_match だけ指定して max_diff_pixels を省略すると既定 0 が判定を支配し、
+		// 差分が 1px でも mismatch になる。status / match_rate は変えず、
+		// perceptual の一様画像 warnings と同様に応答へ通知する (Issue #206)。
+		if hasMinMatch {
+			if _, hasMaxDiffPixels := args["max_diff_pixels"]; !hasMaxDiffPixels {
+				responseMap["warnings"] = []string{
+					"max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)",
+				}
+			}
+		}
 		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず
 		// 座標ミスの可能性が高いため、非空時のみ応答へ含めて通知する
 		// (perceptual モードや layout_tree の unmatched_ignores と同様)。
@@ -640,13 +777,20 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if _, ok := args["viewport_width"]; ok {
-			viewportW = request.GetFloat("viewport_width", 0)
+			// 変換不能な値はサイレントに 0 へ落とさずエラーにする (floatArg, Issue #188)
+			viewportW, err = floatArg(request, "viewport_width", viewportW)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if viewportW <= 0 {
 				return mcp.NewToolResultError("viewport_width must be greater than 0"), nil
 			}
 		}
 		if _, ok := args["viewport_height"]; ok {
-			viewportH = request.GetFloat("viewport_height", 0)
+			viewportH, err = floatArg(request, "viewport_height", viewportH)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			if viewportH <= 0 {
 				return mcp.NewToolResultError("viewport_height must be greater than 0"), nil
 			}
@@ -690,6 +834,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		if len(integrityResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = integrityResult.UnmatchedIgnores
+		}
+		// ignore_region のうちどのノード中心とも重ならない領域（座標ミス等）。
+		// layout_tree と同様、非空時のみ返す (Issue #208)。
+		if len(integrityResult.UnmatchedIgnoreRegions) > 0 {
+			responseMap["unmatched_ignore_regions"] = integrityResult.UnmatchedIgnoreRegions
 		}
 
 	default:

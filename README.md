@@ -13,8 +13,8 @@
 | モード名 (`mode`) | 検証アプローチ | 比較対象となるデータ | 主な用途 |
 | :--- | :--- | :--- | :--- |
 | **`layout_tree`**<br>(構造的比較) | **DOM構造 vs Figma構造** | FigmaとWebそれぞれの要素の幾何位置 (Bounding Box JSON) | 親要素に対する相対的なX, Y, Width, Height比率を算出し、要素の並び順や階層が合っているかをデータレベルで比較します。文字や色の違いを完全に無視して**「配置テンプレート（木）」**を検証します。 |
-| **`perceptual`**<br>(知覚的画像VRT) | **空間の明暗配置パターン** | Figmaの画像 vs Webスクショ of 画像パス | 画像を粗く縮小（16x16）してグレースケール化し、Average Hash（aHash）の明暗パターンとして比較します。文字内容やフォント・色の違いを無視し、**「見た目の大まかなレイアウト配置」**が合っているかを判定します。 |
-| **`strict`**<br>(厳密画素VRT) | **画素単位のビジュアル比較** | Figmaの画像 vs Webスクショ of 画像パス | pixelmatch アルゴリズム（Go 実装: github.com/orisano/pixelmatch）を用い、画素単位で色の違いを厳密に比較します（アンチエイリアスの境界は自動除外）。色味や余白、線の太さなど、**微細なビジュアル差異の検知**に使用します。**両画像はピクセル寸法（縦横の画素数）が完全に一致している必要があります。** Retina 環境の DPR（device pixel ratio）差やフルページ撮影などでサイズが異なる場合は `image size mismatch` エラーになるため、同じビューポートサイズと DPR で両スクリーンショットを撮り直すか、サイズの異なる画像も比較できる `perceptual` モードを使用してください。 |
+| **`perceptual`**<br>(知覚的画像VRT) | **空間の明暗配置パターン** | 画像パス / base64 で指定した Figma の画像 vs Web スクショ | 画像を粗く縮小（16x16）してグレースケール化し、Average Hash（aHash）の明暗パターンとして比較します。文字内容やフォント・色の違いを無視し、**「見た目の大まかなレイアウト配置」**が合っているかを判定します。 |
+| **`strict`**<br>(厳密画素VRT) | **画素単位のビジュアル比較** | 画像パス / base64 で指定した Figma の画像 vs Web スクショ | pixelmatch アルゴリズム（Go 実装: github.com/orisano/pixelmatch）を用い、画素単位で色の違いを厳密に比較します（アンチエイリアスの境界は自動除外）。色味や余白、線の太さなど、**微細なビジュアル差異の検知**に使用します。**両画像はピクセル寸法（縦横の画素数）が完全に一致している必要があります。** Retina 環境の DPR（device pixel ratio）差やフルページ撮影などでサイズが異なる場合は `image size mismatch` エラーになるため、同じビューポートサイズと DPR で両スクリーンショットを撮り直すか、サイズの異なる画像も比較できる `perceptual` モードを使用してください。 |
 | **`layout_integrity`**<br>(レイアウト崩れ検査) | **Web DOMボックス vs CSSビューポート** | Web側の要素の幾何位置 (Bounding Box JSON) のみ（**Figma不要**） | Figmaのデスクトップ/モバイル フレームがピクセルパーフェクトでも、タブレット幅では崩れることがあります。Web DOMのBounding BoxとCSSビューポートだけを比較し、横方向のはみ出し（`viewport_overflow_x`）と親要素からの逸脱（`parent_overflow`）を検出します。既定は iPad **縦向き 768x1024** CSS px。**横向き 1024x768** は `viewport_preset=ipad_landscape`（または `viewport_width`/`viewport_height`）で検査します。縦スクロール（高さ超え）は失敗にしません。 |
 
 ### 差分画像 (`diff_image`) の見方 (`perceptual` モード)
@@ -47,8 +47,8 @@ Figma 比較は「あるキャンバス幅での再現」しか見ないため�
 - **横向き:** `viewport_preset=ipad_landscape`（1024×768）。任意サイズは `viewport_width` / `viewport_height`（0 より大きい値。指定時はプリセットを上書き）。
 - **`viewport_overflow_x`:** `x < 0` または `x+w > viewport_width`（1px の丸めは許容）。ビューポート高さ超えはページスクロールとして扱い、失敗にしません。
 - **`parent_overflow`:** 子ボックスが親ボックスからいずれかの辺で 1px 超えてはみ出す。親が JSON に無い場合はこの検査をスキップします。
-- **合否:** 崩れ 0 件 → `success` / 1 件以上 → `mismatch` / 検査対象がすべて除外 → `skipped`。`match_rate` は返しません。
-- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`unmatched_ignores` は該当時のみ。
+- **合否:** 崩れ 0 件 → `success` / 1 件以上 → `mismatch` / 検査対象がすべて除外 → `skipped`。Web ノードが 1 件もない、または全ノードで `w`/`h` が 0 以下（`width`/`height` 等のキー名ミス疑い）の場合も `mismatch` です。`match_rate` は返しません。
+- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`unmatched_ignores` / `unmatched_ignore_regions` は該当時のみ。
 
 横向きを検査するときは、ブラウザを **1024×768 にリサイズしたあと** の DOM 座標を渡してください。縦向きで撮った座標に横向きの幅を当てても意味がありません。
 
@@ -59,6 +59,8 @@ Figma 比較は「あるキャンバス幅での再現」しか見ないため�
 `perceptual` モードでは、aHash が各画像自身の平均輝度で明暗を2値化するため、一様（単色のベタ塗り）画像は全セルが同一ビットになります。その結果、全面白 vs 全面黒のようなペアでも一致率100%・`success` となり、撮影失敗（真っ黒スクショ等）が無検証で合格する恐れがあります。
 
 image A / B のいずれかが一様と検出された場合、status / match_rate は従来どおり変えず、代わりに応答へ `warnings` フィールド（例: `["degenerate aHash: image A is uniform; perceptual match may be unreliable"]`）を付けて通知します。通常の明暗パターンを持つ画像ペアではこのフィールドは含まれません。
+
+両画像のアスペクト比（幅/高さ）の大きい方と小さい方の比が 2.0 を超える場合も、16x16 への引き伸ばしで幾何が歪むため同じ `warnings` に `aspect ratio mismatch: ...` を追加します。status / match_rate は変えません。
 
 ---
 
@@ -74,8 +76,8 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | :--- | :--- | :--- | :--- |
 | `image_path_a` | string | `perceptual` / `strict` | 参照画像 A（Figma 側）のローカルファイルパス。`image_a_base64` と排他で、どちらか一方が必須。 |
 | `image_path_b` | string | `perceptual` / `strict` | 比較対象画像 B（Web 側）のローカルファイルパス。`image_b_base64` と排他で、どちらか一方が必須。 |
-| `image_a_base64` | string | `perceptual` / `strict` | 参照画像 A の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。`image_path_a` と排他。 |
-| `image_b_base64` | string | `perceptual` / `strict` | 比較対象画像 B の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。`image_path_b` と排他。 |
+| `image_a_base64` | string | `perceptual` / `strict` | 参照画像 A の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。改行・スペース等の ASCII 空白はデコード前に除去する（MIME 76 文字折り返しなど）。`image_path_a` と排他。 |
+| `image_b_base64` | string | `perceptual` / `strict` | 比較対象画像 B の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。改行・スペース等の ASCII 空白はデコード前に除去する（MIME 76 文字折り返しなど）。`image_path_b` と排他。 |
 | `figma_layout` | string | `layout_tree` | Figma ノードリストの JSON 文字列（インライン指定）。`figma_layout_path` と排他で、どちらか一方が必須。 |
 | `figma_layout_path` | string | `layout_tree` | Figma ノードリスト JSON ファイルのローカルパス。`figma_layout` と排他。 |
 | `web_layout` | string | `layout_tree` / `layout_integrity` | Web DOM ノードリストの JSON 文字列（インライン指定）。`web_layout_path` と排他で、どちらか一方が必須。 |
@@ -89,11 +91,11 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `threshold` | number | `perceptual` | 1.0–100.0 | 98.0 | 後方互換のため `min_match`（一致率%）のエイリアスとして受け付ける。1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐためエラーになる。`min_match` との同時指定もエラー。**`min_match` の使用を推奨。** |
 | `threshold` | number | `strict` | 0.0–1.0 | 0.1 | 色差の許容度（pixelmatch の color diff tolerance）。 |
 | `min_match` | number | `perceptual` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。実効値（`threshold` エイリアス解決後を含む）は応答の `min_match` として常に返される。 |
-| `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。 |
+| `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。`max_diff_pixels` を省略したまま指定すると既定 0 が判定を支配するため、status / match_rate は変えず応答へ `warnings` を付ける。 |
 | `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。 |
 | `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
-| `ignore_nodes` | string | `layout_tree` / `layout_integrity` | — | 空 | 比較から除外する識別子のカンマ区切りリスト。`layout_tree` では Figma Node ID / Node Name / Web Selector、`layout_integrity` では Web Selector。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。 |
-| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、パースできた領域数は応答の `ignored_regions` に常に含まれる。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`perceptual` で両画像のサイズが異なる場合、同じ座標は各画像の絶対ピクセルとして適用され、`details` に注記が入る。`layout_tree` / `layout_integrity` では BoundingBox の中心点が領域内にあるノードを除外し、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。 |
+| `ignore_nodes` | string | `layout_tree` / `layout_integrity` | — | 空 | 比較から除外する識別子のカンマ区切りリスト。`layout_tree` では Figma Node ID / Node Name / Web Selector、`layout_integrity` では Web Selector。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。全ノードが除外されて比較ペアがなくなった場合は比較を実施せず、status は `skipped`（比較未実施）になる。 |
+| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、パースできた領域数は応答の `ignored_regions` に常に含まれる。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`perceptual` で両画像のサイズが異なる場合、同じ座標は各画像の絶対ピクセルとして適用され、`details` に注記が入る。`layout_tree` / `layout_integrity` では BoundingBox の中心点が領域内にあるノードを除外し（`layout_tree` では両側から、`layout_integrity` では Web ノードを）、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。どのノード中心とも重ならない領域は `unmatched_ignore_regions` として応答される。 |
 | `viewport_preset` | string | `layout_integrity` | `ipad_portrait` / `ipad_landscape` | 未指定時は縦向き相当 | iPad 既定サイズ。`ipad_portrait` = 768×1024、`ipad_landscape` = 1024×768。 |
 | `viewport_width` | number | `layout_integrity` | 0 より大 | 768 | CSS ピクセルのビューポート幅。指定時は `viewport_preset` の幅を上書きする。 |
 | `viewport_height` | number | `layout_integrity` | 0 より大 | 1024 | CSS ピクセルのビューポート高さ。指定時は `viewport_preset` の高さを上書きする。 |
@@ -112,7 +114,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `id` | string | ○ | Figma ノード ID。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。 |
 | `name` | string | ○ | Figma ノード名。details 出力、および `ignore_nodes` の除外対象としても使用される。 |
 | `x` / `y` / `w` / `h` | number | ○ | ノードの BoundingBox（Figma キャンバス上の絶対座標とサイズ）。 |
-| `parent` | string | — | 親ノードの `id`。省略時は親なしとして扱われる。 |
+| `parent` | string | — | 親ノードの `id`。省略時は親なしとして扱われる。入力内のどの `id` にも一致しない場合は絶対座標比較へフォールバックし、応答に `unresolved_parent_refs` が付く。 |
 
 **Web 側（WebNode）:**
 
@@ -120,7 +122,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | :--- | :--- | :--- | :--- |
 | `selector` | string | ○ | 要素識別子（CSS セレクタ等）。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。 |
 | `x` / `y` / `w` / `h` | number | ○ | 要素の BoundingBox（ページ上の絶対座標とサイズ）。 |
-| `parent` | string | — | 親要素の `selector`。省略時は親なしとして扱われる。 |
+| `parent` | string | — | 親要素の `selector`。省略時は親なしとして扱われる。入力内のどの `selector` にも一致しない場合は絶対座標比較へフォールバックし、応答に `unresolved_parent_refs` が付く。 |
 
 最小例 — `figma_layout`（`figma_layout_path` で指定するファイルも同じ形式）:
 
@@ -140,7 +142,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 ]
 ```
 
-`parent` を持つノードは「親の BoundingBox に対する相対的な位置・サイズ（比率 0–1）」で比較され、レスポンシブなスケール差が吸収されます。親を持たないノード（および幅・高さが 0 の親を持つノード）は絶対座標のまま比較され、比較ペアの両側で座標空間は自動的に揃えられます。
+`parent` を持つノードは「親の BoundingBox に対する相対的な位置・サイズ（比率 0–1）」で比較され、レスポンシブなスケール差が吸収されます。親を持たないノード（および幅・高さが 0 の親を持つノード）は絶対座標のまま比較され、比較ペアの両側で座標空間は自動的に揃えられます。`parent` が空でないのに解決できない参照は `status` を変えず `unresolved_parent_refs`（例: `Figma: '999'` / `Web: '.foo'`）として応答されます（`unmatched_ignores` と同様の誤用検出）。
 
 `width` / `height` など `w` / `h` 以外のキー名は Unmarshal 時に無視され、幾何値がすべて 0 のノードになります。Figma または Web のいずれかで過半数のノードが幅・高さともに 0 の場合、`status` は変えず応答に `zero_geometry_warning` を付けます（`unmatched_ignores` と同様の誤用検出）。
 
@@ -157,6 +159,18 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 ```bash
 go build -o design-compare
 ```
+
+### CLI ワンショット比較
+
+引数付きで起動すると MCP ハンドシェイクなしで `compare_design` を1回実行し、ツールと同じ応答 JSON を stdout に出して終了します（`0` = success / `2` = mismatch / `1` = エラー）。引数なし起動は従来どおり stdio MCP サーバーです。
+
+```bash
+./design-compare --mode strict --image-a a.png --image-b b.png
+./design-compare --mode layout_tree --figma-layout-file figma.json --web-layout-file web.json
+./design-compare --help
+```
+
+主なフラグ: `--mode` / `--image-a` / `--image-b` / `--figma-layout-file` / `--web-layout-file` / `--threshold` / `--min-match` / `--pass-rate` / `--max-diff-pixels` / `--ignore-region` / `--generate-diff`
 
 ### 単体テストの実行
 ブラウザの起動を必要としない超高速なメモリ内画像/ツリーデータ検証テストが実行できます。

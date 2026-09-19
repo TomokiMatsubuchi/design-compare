@@ -275,6 +275,58 @@ func TestCalculateLayoutSimilarityWithDiff_UniformImageWarning(t *testing.T) {
 	})
 }
 
+// TestCalculateLayoutSimilarityWithDiff_AspectRatioMismatchWarning verifies that
+// pairs whose aspect ratios (w/h) differ by more than 2.0 are reported in
+// warnings while match_rate is left unchanged. perceptual は各画像を独立に
+// 16x16 へ引き伸ばすため、幾何が大きく違うペアでも明暗パターンが似ていれば
+// 高一致率になる。status/match_rate は変えずに警告で気付かせる (Issue #199)。
+func TestCalculateLayoutSimilarityWithDiff_AspectRatioMismatchWarning(t *testing.T) {
+	white := color.RGBA{255, 255, 255, 255}
+	black := color.RGBA{0, 0, 0, 255}
+
+	// 左右分割の非一様パターンを塗り、一様画像警告と混ざらないようにする。
+	splitLR := func(w, h int) *image.RGBA {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.Draw(img, image.Rect(0, 0, w/2, h), &image.Uniform{white}, image.Point{}, draw.Src)
+		draw.Draw(img, image.Rect(w/2, 0, w, h), &image.Uniform{black}, image.Point{}, draw.Src)
+		return img
+	}
+
+	t.Run("mismatched_aspect_warns", func(t *testing.T) {
+		imgA := splitLR(100, 100)  // aspect 1.00
+		imgB := splitLR(1000, 100) // aspect 10.00
+		_, _, _, _, warnings, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+		if err != nil {
+			t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
+		}
+		want := "aspect ratio mismatch: image A is 100x100 (aspect 1.00), image B is 1000x100 (aspect 10.00); perceptual comparison stretches both to 16x16"
+		found := false
+		for _, w := range warnings {
+			if w == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected warnings to contain %q, got %v", want, warnings)
+		}
+	})
+
+	t.Run("same_aspect_no_warning", func(t *testing.T) {
+		imgA := splitLR(100, 100) // aspect 1.00
+		imgB := splitLR(200, 200) // aspect 1.00
+		_, _, _, _, warnings, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+		if err != nil {
+			t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
+		}
+		for _, w := range warnings {
+			if strings.Contains(w, "aspect ratio mismatch") {
+				t.Errorf("Expected no aspect ratio warning for same-aspect pair, got %v", warnings)
+			}
+		}
+	})
+}
+
 // TestCalculateLayoutSimilarityWithDiff_TransparentCompositesOntoWhite verifies
 // that fully transparent pixels are composited onto white before aHash
 // (Issue #168)。RGBA() は premultiplied 値を返すため透過部分をそのまま輝度化
