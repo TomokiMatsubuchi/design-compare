@@ -398,6 +398,20 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	}, nil
 }
 
+// LimitLayoutTreeDetails は layout_tree の details を maxDetails 件に切り詰める。
+// maxDetails <= 0 のときは無制限（現行どおり全件）。件数を超える場合は
+// summary 行を先頭に残したまま先頭 maxDetails 件を残し、末尾に省略行を付ける。
+func LimitLayoutTreeDetails(details []string, maxDetails int) []string {
+	if maxDetails <= 0 || len(details) <= maxDetails {
+		return details
+	}
+	omitted := len(details) - maxDetails
+	limited := make([]string, 0, maxDetails+1)
+	limited = append(limited, details[:maxDetails]...)
+	limited = append(limited, fmt.Sprintf("... and %d more details omitted (max_details=%d)", omitted, maxDetails))
+	return limited
+}
+
 func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
 	var raws []json.RawMessage
 	if err := json.Unmarshal([]byte(figmaJSON), &raws); err != nil {
