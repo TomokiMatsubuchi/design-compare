@@ -108,6 +108,9 @@ func main() {
 		mcp.WithBoolean("diff_on_mismatch",
 			mcp.Description("For 'perceptual' and 'strict' modes: when true, omit the diff image from the response if the comparison status is 'success' (default false). Combined with generate_diff (default true), this still generates a diff internally but replaces 'diff_image' with an empty string on success so matching calls do not return a large base64 payload. On mismatch the diff image is returned as usual. Ignored when generate_diff is false (diff_image is already empty)."),
 		),
+		mcp.WithBoolean("diff_image_content",
+			mcp.Description("For 'perceptual' and 'strict' modes: when true, also return the generated diff image as an MCP image content block (MIME type image/png) after the JSON text result (default false). Existing clients that only read content[0] keep working. The extra block is added only when generate_diff produced a non-empty 'diff_image' (so generate_diff=false, or diff_on_mismatch=true on success, still return JSON alone)."),
+		),
 	)
 	s.AddTool(compareDesignTool, compareDesignHandler)
 
@@ -253,8 +256,9 @@ var modeParamSupport = map[string]map[string]bool{
 	"ignore_nodes":     {"layout_tree": true, "layout_integrity": true},
 	"ignore_region":    {"layout_tree": true, "perceptual": true, "strict": true, "layout_integrity": true},
 	"count_extra_web":  {"layout_tree": true},
-	"generate_diff":    {"perceptual": true, "strict": true},
-	"diff_on_mismatch": {"perceptual": true, "strict": true},
+	"generate_diff":      {"perceptual": true, "strict": true},
+	"diff_on_mismatch":   {"perceptual": true, "strict": true},
+	"diff_image_content": {"perceptual": true, "strict": true},
 	"viewport_preset":  {"layout_integrity": true},
 	"viewport_width":   {"layout_integrity": true},
 	"viewport_height":  {"layout_integrity": true},
@@ -899,5 +903,39 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal comparison result: %v", err)), nil
 	}
-	return mcp.NewToolResultText(string(responseJSON)), nil
+	jsonText := string(responseJSON)
+
+	// MCP クライアントが差分 PNG をネイティブ描画できるよう、オプトイン時だけ
+	// JSON テキストの後に image コンテンツを付ける。content[0] は従来どおり JSON。
+	diffImageContent, err := boolArg(request, "diff_image_content", false)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if diffImageContent {
+		if diffImage, _ := responseMap["diff_image"].(string); diffImage != "" {
+			if payload, ok := pngPayloadFromDiffImage(diffImage); ok {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						mcp.NewTextContent(jsonText),
+						mcp.NewImageContent(payload, "image/png"),
+					},
+				}, nil
+			}
+		}
+	}
+	return mcp.NewToolResultText(jsonText), nil
+}
+
+// pngPayloadFromDiffImage は JSON の diff_image (PNG data URI) から
+// MCP ImageContent 用の素の base64 を取り出す。空や非 PNG なら ok=false。
+func pngPayloadFromDiffImage(diffImage string) (string, bool) {
+	const prefix = "data:image/png;base64,"
+	if !strings.HasPrefix(diffImage, prefix) {
+		return "", false
+	}
+	payload := diffImage[len(prefix):]
+	if payload == "" {
+		return "", false
+	}
+	return payload, true
 }

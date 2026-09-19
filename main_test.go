@@ -85,6 +85,33 @@ func assertDiffDataURI(t *testing.T, result map[string]interface{}) {
 	}
 }
 
+// diff_image_content=true のとき content が Text + Image(png) になり、
+// image の payload が JSON の diff_image data URI と一致することを検証する。
+func assertDiffImageContent(t *testing.T, res *mcp.CallToolResult, result map[string]interface{}) {
+	t.Helper()
+	if len(res.Content) != 2 {
+		t.Fatalf("Expected 2 content blocks (text + image), got %d", len(res.Content))
+	}
+	if _, ok := res.Content[0].(mcp.TextContent); !ok {
+		t.Fatalf("Expected TextContent as content[0], got %T", res.Content[0])
+	}
+	img, ok := res.Content[1].(mcp.ImageContent)
+	if !ok {
+		t.Fatalf("Expected ImageContent as content[1], got %T", res.Content[1])
+	}
+	if img.MIMEType != "image/png" {
+		t.Errorf("Expected MIMEType image/png, got %q", img.MIMEType)
+	}
+	diffImage, _ := result["diff_image"].(string)
+	payload, ok := pngPayloadFromDiffImage(diffImage)
+	if !ok {
+		t.Fatalf("Expected PNG data URI in JSON diff_image, got %v", result["diff_image"])
+	}
+	if img.Data != payload {
+		t.Errorf("Image content data does not match JSON diff_image payload")
+	}
+}
+
 // pathA (左右分割) vs pathD (上下分割) の perceptual 不一致セル: 右上・左下の 128 セル。
 func assertPerceptualPathDDiffCells(t *testing.T, result map[string]interface{}) {
 	t.Helper()
@@ -1887,6 +1914,72 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// diff_image_content=true: 差分 PNG を MCP image コンテンツでも返す (Issue #219)
+	t.Run("Perceptual_DiffImageContent", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":               "perceptual",
+					"image_path_a":       pathA,
+					"image_path_b":       pathD,
+					"diff_image_content": true,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success, got error %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Fatalf("Expected perceptual mismatch, got status=%v", result["status"])
+		}
+		assertDiffDataURI(t, result)
+		assertDiffImageContent(t, res, result)
+
+		// 既定 (false) では content は JSON テキストのみ
+		reqDefault := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathD,
+				},
+			},
+		}
+		resDefault, err := compareDesignHandler(context.Background(), reqDefault)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if len(resDefault.Content) != 1 {
+			t.Errorf("Expected 1 content block by default, got %d", len(resDefault.Content))
+		}
+
+		// generate_diff=false では差分が無いので image ブロックを付けない
+		reqNoDiff := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":               "perceptual",
+					"image_path_a":       pathA,
+					"image_path_b":       pathD,
+					"generate_diff":      false,
+					"diff_image_content": true,
+				},
+			},
+		}
+		resNoDiff, err := compareDesignHandler(context.Background(), reqNoDiff)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if len(resNoDiff.Content) != 1 {
+			t.Errorf("Expected 1 content block when generate_diff=false, got %d", len(resNoDiff.Content))
+		}
+	})
+
 	// ignore_region: 既知の差分領域をマスクして比較する
 	t.Run("Perceptual_IgnoreRegion", func(t *testing.T) {
 		// 指定なし: 左上の黒矩形 (pathE) と全面白 (pathF) は一致率75%で mismatch
@@ -2941,6 +3034,33 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// diff_image_content=true: 差分 PNG を MCP image コンテンツでも返す (Issue #219)
+	t.Run("Strict_DiffImageContent", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":               "strict",
+					"image_path_a":       pathA,
+					"image_path_b":       pathC,
+					"diff_image_content": true,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success, got error %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Fatalf("Expected strict mismatch, got status=%v", result["status"])
+		}
+		assertDiffImageContent(t, res, result)
+	})
+
 	// max_diff_pixels: 差分ピクセル数が許容値以下なら success と判定する
 	t.Run("StrictMode_MaxDiffPixels", func(t *testing.T) {
 		baseArgs := map[string]any{
@@ -3659,6 +3779,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_tree", "max_diff_pixels", 10.0, true, ""},
 			{"layout_tree", "generate_diff", false, true, ""},
 			{"layout_tree", "diff_on_mismatch", true, true, ""},
+			{"layout_tree", "diff_image_content", true, true, ""},
 			{"layout_tree", "min_match", 90.0, true, " (use 'pass_rate' instead)"},
 			// layout_tree: 対応パラメータはエラーにならない
 			{"layout_tree", "ignore_nodes", "a", false, ""},
@@ -3681,6 +3802,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"perceptual", "ignore_region", "0,0,10,10", false, ""},
 			{"perceptual", "generate_diff", false, false, ""},
 			{"perceptual", "diff_on_mismatch", true, false, ""},
+			{"perceptual", "diff_image_content", true, false, ""},
 			// strict: レイアウト入力・layout_tree 専用パラメータは非対応
 			{"strict", "figma_layout", figmaLayout, true, ""},
 			{"strict", "figma_layout_path", "/tmp/nonexistent.json", true, ""},
@@ -3696,6 +3818,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "ignore_region", "0,0,10,10", false, ""},
 			{"strict", "generate_diff", false, false, ""},
 			{"strict", "diff_on_mismatch", true, false, ""},
+			{"strict", "diff_image_content", true, false, ""},
 			// layout_integrity: Figma/画像/閾値系は非対応。viewport と web 除外は対応
 			{"layout_integrity", "figma_layout", figmaLayout, true, ""},
 			{"layout_integrity", "image_path_a", pathA, true, ""},
@@ -3704,6 +3827,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_integrity", "threshold", 0.15, true, ""},
 			{"layout_integrity", "max_diff_pixels", 10.0, true, ""},
 			{"layout_integrity", "generate_diff", false, true, ""},
+			{"layout_integrity", "diff_image_content", true, true, ""},
 			{"layout_integrity", "count_extra_web", true, true, ""},
 			{"layout_integrity", "ignore_nodes", "#page", false, ""},
 			{"layout_integrity", "ignore_region", "0,0,10,10", false, ""},
