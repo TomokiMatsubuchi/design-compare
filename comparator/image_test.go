@@ -136,6 +136,29 @@ func TestRunPixelMatch_UnsupportedFormatHint(t *testing.T) {
 	}
 }
 
+// TestRunPixelMatch_CorruptImageOmitsFormatHint verifies that decode failures
+// for a recognized but corrupted/truncated PNG (image.ErrFormat ではない失敗、
+// 例: unexpected EOF) do NOT append UnsupportedImageFormatHint. PNG/JPEG/GIF
+// だが破損・途中切れのファイルで「WebP/SVG は非対応」と読める文面が付くと、
+// 原因を形式違いだと誤認するためである (Issue #122)。
+func TestRunPixelMatch_CorruptImageOmitsFormatHint(t *testing.T) {
+	// PNG シグネチャは有効だが途中で切れたバイト列 → image.Decode は
+	// "unexpected EOF" を返し image.ErrFormat ではない。
+	corruptBytes := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 4, 4)))[:20]
+	validBytes := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+
+	_, _, _, _, _, _, _, err := RunPixelMatch(corruptBytes, validBytes, 0.1, false, nil)
+	if err == nil {
+		t.Fatal("expected decode error for truncated PNG bytes, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to decode design image") {
+		t.Errorf("expected decode error prefix, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), UnsupportedImageFormatHint) {
+		t.Errorf("expected no unsupported-format hint for a corrupted image, got %q", err.Error())
+	}
+}
+
 // newIgnoreRegionTestImages は ignore_region の範囲外検出テストで使う
 // 200x200 の画像ペア (A: 白地に左上100x100の黒矩形 / B: 全面白) を返す。
 func newIgnoreRegionTestImages() (image.Image, image.Image) {

@@ -4133,3 +4133,52 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 		})
 	}
 }
+
+// TestPerceptualDecodeError_CorruptImageOmitsFormatHint verifies that a
+// corrupted/truncated PNG (image.ErrFormat ではない失敗、例: unexpected EOF)
+// does NOT get the unsupported-format hint in perceptual mode. PNG/JPEG/GIF だが
+// 破損・途中切れのファイルで「WebP/SVG は非対応」と読める文面が付くと、原因を
+// 形式違いだと誤認するためである (Issue #122)。
+func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vrt-corrupt-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// PNG シグネチャは有効だが途中で切れたファイル → image.Decode は
+	// "unexpected EOF" を返し image.ErrFormat ではない。
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, generateSolidImage(4, 4, color.White)); err != nil {
+		t.Fatalf("failed to encode PNG fixture: %v", err)
+	}
+	corruptPath := filepath.Join(tmpDir, "corrupt.png")
+	if err := os.WriteFile(corruptPath, pngBuf.Bytes()[:20], 0o644); err != nil {
+		t.Fatalf("failed to write corrupted PNG: %v", err)
+	}
+	pngPath := saveTempImage(t, tmpDir, "valid.png", generateSolidImage(10, 10, color.White))
+
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Arguments: map[string]any{
+				"mode":         "perceptual",
+				"image_path_a": corruptPath,
+				"image_path_b": pngPath,
+			},
+		},
+	}
+	res, err := compareDesignHandler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler failed: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected decode error for corrupted PNG, got content=%v", res.Content[0].(mcp.TextContent).Text)
+	}
+	got := res.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(got, "Failed to decode image A") {
+		t.Errorf("expected decode error prefix, got %q", got)
+	}
+	if strings.Contains(got, "WebP/SVG are not supported") {
+		t.Errorf("expected no unsupported-format hint for a corrupted image, got %q", got)
+	}
+}
