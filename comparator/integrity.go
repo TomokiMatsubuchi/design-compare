@@ -38,15 +38,16 @@ type LayoutIssue struct {
 }
 
 type LayoutIntegrityResult struct {
-	Status           string        `json:"status"` // success | mismatch | skipped
-	ViewportWidth    float64       `json:"viewport_width"`
-	ViewportHeight   float64       `json:"viewport_height"`
-	CheckedNodes     int           `json:"checked_nodes"`
-	IssueCount       int           `json:"issue_count"`
-	Issues           []LayoutIssue `json:"issues,omitempty"`
-	Details          []string      `json:"details"`
-	IgnoredCount     int           `json:"ignored_count"`
-	UnmatchedIgnores []string      `json:"unmatched_ignores,omitempty"`
+	Status                 string        `json:"status"` // success | mismatch | skipped
+	ViewportWidth          float64       `json:"viewport_width"`
+	ViewportHeight         float64       `json:"viewport_height"`
+	CheckedNodes           int           `json:"checked_nodes"`
+	IssueCount             int           `json:"issue_count"`
+	Issues                 []LayoutIssue `json:"issues,omitempty"`
+	Details                []string      `json:"details"`
+	IgnoredCount           int           `json:"ignored_count"`
+	UnmatchedIgnores       []string      `json:"unmatched_ignores,omitempty"`
+	UnmatchedIgnoreRegions []string      `json:"unmatched_ignore_regions,omitempty"`
 }
 
 // ViewportSizeForPreset は既知プリセットの CSS px サイズを返す。
@@ -119,16 +120,27 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		}
 	}
 
+	// ignore_region のうちどのノード中心とも重ならない領域 (座標ミス等)。
+	var unmatchedIgnoreRegions []string
 	if len(ignoreRegions) > 0 {
+		// 領域ごとのヒット数を数え、どのノード中心とも重ならない領域は座標ミス等の
+		// 可能性が高いため UnmatchedIgnoreRegions に報告する (layout_tree の
+		// unmatched_ignore_regions と同種。Issue #208)。
+		regionHits := make([]int, len(ignoreRegions))
 		var filtered []WebNode
 		for _, wn := range wNodes {
-			if boundingBoxCenterInRegions(wn.X, wn.Y, wn.W, wn.H, ignoreRegions) {
+			if boundingBoxCenterInRegions(wn.X, wn.Y, wn.W, wn.H, ignoreRegions, regionHits) {
 				ignoredCount++
 				continue
 			}
 			filtered = append(filtered, wn)
 		}
 		wNodes = filtered
+		for i, r := range ignoreRegions {
+			if regionHits[i] == 0 {
+				unmatchedIgnoreRegions = append(unmatchedIgnoreRegions, fmt.Sprintf("%d,%d,%d,%d", r.X, r.Y, r.W, r.H))
+			}
+		}
 	}
 
 	var checkable []WebNode
@@ -140,10 +152,11 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	result := &LayoutIntegrityResult{
-		ViewportWidth:    viewportW,
-		ViewportHeight:   viewportH,
-		IgnoredCount:     ignoredCount,
-		UnmatchedIgnores: unmatchedIgnores,
+		ViewportWidth:          viewportW,
+		ViewportHeight:         viewportH,
+		IgnoredCount:           ignoredCount,
+		UnmatchedIgnores:       unmatchedIgnores,
+		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 	}
 
 	if len(checkable) == 0 {
@@ -153,6 +166,13 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 			return result, nil
 		}
 		result.Status = "mismatch"
+		if len(wNodes) > 0 {
+			// ノードは存在するが幾何 (w/h) が全て 0 以下。layout_tree の
+			// zero_geometry_warning と同様、キー名の揺れ (width/height 等) を
+			// 疑えるよう「データは空ではなく幾何が欠落」を区別して通知する。
+			result.Details = []string{fmt.Sprintf("no Web nodes have non-zero geometry (%d nodes parsed); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}", len(wNodes))}
+			return result, nil
+		}
 		result.Details = []string{"Web layout node data is empty"}
 		return result, nil
 	}
@@ -177,8 +197,8 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	result.CheckedNodes = len(checkable)
 	result.IssueCount = len(issues)
 	result.Issues = issues
-	summary := fmt.Sprintf("Checked %d nodes at viewport %.0fx%.0f CSS px (iPad portrait 768x1024, landscape 1024x768). Found %d layout issues.",
-		len(checkable), viewportW, viewportH, len(issues))
+	summary := fmt.Sprintf("Checked %d nodes at viewport %.0fx%.0f CSS px%s. Found %d layout issues.",
+		len(checkable), viewportW, viewportH, viewportPresetNote(viewportW, viewportH), len(issues))
 	details := []string{summary}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)
@@ -190,6 +210,20 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		result.Status = "mismatch"
 	}
 	return result, nil
+}
+
+// viewportPresetNote は、実効ビューポートが iPad プリセットと一致するときだけ
+// プリセット名の補足を返す。viewport_width / viewport_height でプリセットと異なる
+// サイズを指定した場合には、実際の検査サイズと食い違う「iPad 768x1024」等の注記を
+// 出さない (応答の viewport_width / viewport_height が実効値なので補足は一致させる)。
+func viewportPresetNote(viewportW, viewportH float64) string {
+	if viewportW == DefaultIPadViewportWidth && viewportH == DefaultIPadViewportHeight {
+		return " (iPad portrait 768x1024; use viewport_preset=ipad_landscape to check landscape 1024x768)"
+	}
+	if viewportW == DefaultIPadLandscapeViewportWidth && viewportH == DefaultIPadLandscapeViewportHeight {
+		return " (iPad landscape 1024x768; use viewport_preset=ipad_portrait to check portrait 768x1024)"
+	}
+	return ""
 }
 
 func viewportOverflowX(wn WebNode, viewportW float64) (LayoutIssue, bool) {

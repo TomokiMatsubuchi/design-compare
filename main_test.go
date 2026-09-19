@@ -59,6 +59,23 @@ func encodePNGBase64(t *testing.T, img image.Image) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+// MIME スタイルに 76 文字ごとに改行を入れ、行頭スペースも混ぜる。
+func wrapBase64MIME(s string) string {
+	const lineLen = 76
+	var b strings.Builder
+	for i := 0; i < len(s); i += lineLen {
+		end := i + lineLen
+		if end > len(s) {
+			end = len(s)
+		}
+		if i > 0 {
+			b.WriteString("\n ")
+		}
+		b.WriteString(s[i:end])
+	}
+	return b.String()
+}
+
 // perceptual モードの応答に含まれる差分画像が base64 data URI であることを検証する
 func assertDiffDataURI(t *testing.T, result map[string]interface{}) {
 	t.Helper()
@@ -204,6 +221,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if _, ok := resultMatch["zero_geometry_warning"]; ok {
 			t.Errorf("Expected no zero_geometry_warning for valid w/h keys, got %v", resultMatch["zero_geometry_warning"])
+		}
+		if _, ok := resultMatch["unresolved_parent_refs"]; ok {
+			t.Errorf("Expected no unresolved_parent_refs for valid parent ids, got %v", resultMatch["unresolved_parent_refs"])
 		}
 		// 一致ペアが details に出力されることの検証
 		detailsMatch, ok := resultMatch["details"].([]interface{})
@@ -494,6 +514,46 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		got, ok := result["zero_geometry_warning"].(string)
 		if !ok || !strings.Contains(got, `{"id","name","x","y","w","h","parent"}`) {
 			t.Errorf("Expected zero_geometry_warning about layout JSON keys, got %v", result["zero_geometry_warning"])
+		}
+	})
+
+	// =================================================================
+	// 2.4.2. layout_tree モード: 解決できない parent 参照の通知
+	// =================================================================
+	t.Run("LayoutTree_UnresolvedParentRefs", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "999"}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": ".foo"}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected status to remain success, got %v", result["status"])
+		}
+		if result["match_rate"] != "100.00%" {
+			t.Errorf("Expected match_rate 100.00%% with absolute-coordinate fallback, got %v", result["match_rate"])
+		}
+		refs, ok := result["unresolved_parent_refs"].([]interface{})
+		if !ok || len(refs) != 2 || refs[0] != "Figma: '999'" || refs[1] != "Web: '.foo'" {
+			t.Errorf("Expected unresolved_parent_refs=[Figma: '999' Web: '.foo'], got %v", result["unresolved_parent_refs"])
 		}
 	})
 
@@ -1150,6 +1210,69 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.12b. layout_tree モード: UTF-8 BOM 付き JSON（インライン / パス）
+	// =================================================================
+	t.Run("LayoutTree_UTF8BOM", func(t *testing.T) {
+		figmaLayout := `[{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100}]`
+		webLayout := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100}]`
+		bomFigma := "\uFEFF" + figmaLayout
+		bomWeb := "\uFEFF" + webLayout
+
+		reqInline := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": bomFigma,
+					"web_layout":   bomWeb,
+				},
+			},
+		}
+		resInline, err := compareDesignHandler(context.Background(), reqInline)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resInline.IsError {
+			t.Fatalf("Expected BOM-prefixed inline JSON to parse, got error: %v", resInline.Content[0].(mcp.TextContent).Text)
+		}
+		var resultInline map[string]interface{}
+		json.Unmarshal([]byte(resInline.Content[0].(mcp.TextContent).Text), &resultInline)
+		if resultInline["status"] != "success" || resultInline["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match with BOM-prefixed inline JSON, got status=%v, rate=%v", resultInline["status"], resultInline["match_rate"])
+		}
+
+		figmaPath := filepath.Join(tmpDir, "figma-layout-bom.json")
+		if err := os.WriteFile(figmaPath, []byte(bomFigma), 0o644); err != nil {
+			t.Fatalf("failed to write figma layout file: %v", err)
+		}
+		webPath := filepath.Join(tmpDir, "web-layout-bom.json")
+		if err := os.WriteFile(webPath, []byte(bomWeb), 0o644); err != nil {
+			t.Fatalf("failed to write web layout file: %v", err)
+		}
+
+		reqPath := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":              "layout_tree",
+					"figma_layout_path": figmaPath,
+					"web_layout_path":   webPath,
+				},
+			},
+		}
+		resPath, err := compareDesignHandler(context.Background(), reqPath)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resPath.IsError {
+			t.Fatalf("Expected BOM-prefixed layout files to parse, got error: %v", resPath.Content[0].(mcp.TextContent).Text)
+		}
+		var resultPath map[string]interface{}
+		json.Unmarshal([]byte(resPath.Content[0].(mcp.TextContent).Text), &resultPath)
+		if resultPath["status"] != "success" || resultPath["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match via BOM-prefixed layout file paths, got status=%v, rate=%v", resultPath["status"], resultPath["match_rate"])
+		}
+	})
+
+	// =================================================================
 	// 2.13. layout_tree モード: ignore_region による領域除外
 	// =================================================================
 	// 画像モードと同じ ignore_region を layout_tree でも受け付ける。
@@ -1213,6 +1336,15 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 			if got := result["match_rate"]; got != c.wantMatchRate {
 				t.Errorf("ignore_region=%q: expected match_rate=%v, got %v", c.region, c.wantMatchRate, got)
+			}
+			// 中心点に当たらない領域だけ unmatched_ignore_regions に出る（非空時のみ）。
+			if c.region == "600,400,100,100" {
+				gotRegions, ok := result["unmatched_ignore_regions"].([]interface{})
+				if !ok || len(gotRegions) != 1 || gotRegions[0] != "600,400,100,100" {
+					t.Errorf("ignore_region=%q: expected unmatched_ignore_regions=[600,400,100,100], got %v", c.region, result["unmatched_ignore_regions"])
+				}
+			} else if _, ok := result["unmatched_ignore_regions"]; ok {
+				t.Errorf("ignore_region=%q: expected no unmatched_ignore_regions, got %v", c.region, result["unmatched_ignore_regions"])
 			}
 		}
 	})
@@ -1483,6 +1615,58 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 			if result["status"] != "success" || result["issue_count"] != float64(0) {
 				t.Fatalf("got %#v", result)
+			}
+		})
+
+		// width/height など w/h 以外のキー名で幾何が全て 0 の場合、「データが空」ではなく
+		// 幾何欠落として区別されたメッセージが details に流れることを確認する。
+		t.Run("ZeroGeometry_DistinctDetail", func(t *testing.T) {
+			wrongKeys := `[{"selector":"#a","x":0,"y":0,"width":100,"height":50}]`
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": wrongKeys,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "mismatch" {
+				t.Fatalf("status=%v", result["status"])
+			}
+			details, _ := result["details"].([]interface{})
+			if len(details) != 1 || !strings.Contains(details[0].(string), "no Web nodes have non-zero geometry") {
+				t.Fatalf("details=%v", details)
+			}
+		})
+
+		t.Run("UnmatchedIgnoreRegions_Response", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":          "layout_integrity",
+						"web_layout":    inBounds,
+						"ignore_region": "900,900,10,10",
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("status=%v", result["status"])
+			}
+			got, _ := result["unmatched_ignore_regions"].([]interface{})
+			if len(got) != 1 || got[0] != "900,900,10,10" {
+				t.Fatalf("unmatched_ignore_regions=%v", got)
 			}
 		})
 	})
@@ -2244,6 +2428,49 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// 改行・スペース入り base64 はパス入力と同じ比較結果になる (Issue #207)
+	t.Run("Perceptual_Base64_Whitespace_Matches_Path", func(t *testing.T) {
+		reqPath := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathC,
+				},
+			},
+		}
+		resPath, err := compareDesignHandler(context.Background(), reqPath)
+		if err != nil {
+			t.Fatalf("path handler failed: %v", err)
+		}
+		var resultPath map[string]interface{}
+		if err := json.Unmarshal([]byte(resPath.Content[0].(mcp.TextContent).Text), &resultPath); err != nil {
+			t.Fatalf("path result json: %v", err)
+		}
+
+		reqWrapped := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":           "perceptual",
+					"image_a_base64": wrapBase64MIME(encodePNGBase64(t, imgA)),
+					"image_b_base64": wrapBase64MIME(encodePNGBase64(t, imgC)),
+				},
+			},
+		}
+		resWrapped, err := compareDesignHandler(context.Background(), reqWrapped)
+		if err != nil {
+			t.Fatalf("wrapped base64 handler failed: %v", err)
+		}
+		var resultWrapped map[string]interface{}
+		if err := json.Unmarshal([]byte(resWrapped.Content[0].(mcp.TextContent).Text), &resultWrapped); err != nil {
+			t.Fatalf("wrapped result json: %v", err)
+		}
+		if resultWrapped["status"] != resultPath["status"] || resultWrapped["match_rate"] != resultPath["match_rate"] {
+			t.Errorf("wrapped base64 status=%v rate=%v, want path status=%v rate=%v",
+				resultWrapped["status"], resultWrapped["match_rate"], resultPath["status"], resultPath["match_rate"])
+		}
+	})
+
 	t.Run("Strict_Base64_Input", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -2829,6 +3056,76 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(resOnly.Content[0].(mcp.TextContent).Text), &resultOnly)
 		if resultOnly["status"] != "mismatch" {
 			t.Errorf("Expected mismatch when max_diff_pixels is exceeded even if min_match is met, got status=%v", resultOnly["status"])
+		}
+	})
+
+	// min_match のみ指定し max_diff_pixels を省略すると既定 0 が判定を支配する。
+	// status / match_rate は変えず、warnings で呼び出し側に気付かせる (Issue #206)
+	t.Run("StrictMode_MinMatch_DefaultMaxDiffPixels_Warning", func(t *testing.T) {
+		const wantWarning = "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)"
+
+		reqWarn := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+					"min_match":    50.0,
+				},
+			},
+		}
+		resWarn, err := compareDesignHandler(context.Background(), reqWarn)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultWarn map[string]interface{}
+		json.Unmarshal([]byte(resWarn.Content[0].(mcp.TextContent).Text), &resultWarn)
+		if resultWarn["status"] != "mismatch" {
+			t.Errorf("Expected mismatch to be unchanged, got status=%v", resultWarn["status"])
+		}
+		gotWarnings, ok := resultWarn["warnings"].([]interface{})
+		if !ok || len(gotWarnings) != 1 || gotWarnings[0] != wantWarning {
+			t.Errorf("Expected warnings=[%q], got %v", wantWarning, resultWarn["warnings"])
+		}
+
+		reqBoth := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "strict",
+					"image_path_a":    pathE,
+					"image_path_b":    pathF,
+					"min_match":       50.0,
+					"max_diff_pixels": 100000.0,
+				},
+			},
+		}
+		resBoth, err := compareDesignHandler(context.Background(), reqBoth)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultBoth map[string]interface{}
+		json.Unmarshal([]byte(resBoth.Content[0].(mcp.TextContent).Text), &resultBoth)
+		if _, ok := resultBoth["warnings"]; ok {
+			t.Errorf("Expected no warnings when max_diff_pixels is set, got %v", resultBoth["warnings"])
+		}
+
+		reqNone := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resNone, err := compareDesignHandler(context.Background(), reqNone)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNone map[string]interface{}
+		json.Unmarshal([]byte(resNone.Content[0].(mcp.TextContent).Text), &resultNone)
+		if _, ok := resultNone["warnings"]; ok {
+			t.Errorf("Expected no warnings when min_match is omitted, got %v", resultNone["warnings"])
 		}
 	})
 
@@ -3605,6 +3902,16 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 		t.Errorf("plain base64 decoded to %q, want %q", got, payload)
 	}
 
+	// MIME 折り返し (改行・スペース) 入りの base64 も同じバイト列になる (Issue #207)
+	wrapped := plain[:len(plain)/2] + "\n " + plain[len(plain)/2:]
+	got, err = resolveImageInput("", wrapped, "image_path_a", "image_a_base64")
+	if err != nil {
+		t.Fatalf("whitespace-wrapped base64 should decode: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("whitespace-wrapped base64 decoded to %q, want %q", got, payload)
+	}
+
 	// data URI はプレフィックスが除去されて同じバイト列になる
 	got, err = resolveImageInput("", dataURI, "image_path_a", "image_a_base64")
 	if err != nil {
@@ -3624,4 +3931,148 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 	if _, err := resolveImageInput("", "not-base64", "image_path_a", "image_a_base64"); err == nil {
 		t.Error("expected error for invalid base64, got nil")
 	}
+}
+
+func reqWithArgs(args map[string]any) mcp.CallToolRequest {
+	return mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
+}
+
+func TestTypedArgHelpers(t *testing.T) {
+	t.Run("missing key uses default", func(t *testing.T) {
+		req := reqWithArgs(map[string]any{})
+		if v, err := floatArg(req, "threshold", 0.15); err != nil || v != 0.15 {
+			t.Errorf("floatArg missing: got %v, %v", v, err)
+		}
+		if v, err := intArg(req, "max_diff_pixels", 0); err != nil || v != 0 {
+			t.Errorf("intArg missing: got %v, %v", v, err)
+		}
+		if v, err := boolArg(req, "generate_diff", true); err != nil || v != true {
+			t.Errorf("boolArg missing: got %v, %v", v, err)
+		}
+	})
+
+	t.Run("numeric strings are accepted", func(t *testing.T) {
+		req := reqWithArgs(map[string]any{
+			"threshold":       " 98 ",
+			"max_diff_pixels": "10",
+			"generate_diff":   "true",
+		})
+		if v, err := floatArg(req, "threshold", 0); err != nil || v != 98 {
+			t.Errorf("floatArg string: got %v, %v", v, err)
+		}
+		if v, err := intArg(req, "max_diff_pixels", 0); err != nil || v != 10 {
+			t.Errorf("intArg string: got %v, %v", v, err)
+		}
+		if v, err := boolArg(req, "generate_diff", false); err != nil || v != true {
+			t.Errorf("boolArg string: got %v, %v", v, err)
+		}
+	})
+
+	t.Run("unconvertible values error", func(t *testing.T) {
+		cases := []struct {
+			key string
+			val any
+		}{
+			{"threshold", ""},
+			{"threshold", "abc"},
+			{"threshold", nil},
+			{"max_diff_pixels", "abc"},
+			{"generate_diff", "abc"},
+			{"count_extra_web", ""},
+		}
+		for _, tc := range cases {
+			req := reqWithArgs(map[string]any{tc.key: tc.val})
+			var err error
+			switch tc.key {
+			case "threshold":
+				_, err = floatArg(req, tc.key, 0)
+			case "max_diff_pixels":
+				_, err = intArg(req, tc.key, 0)
+			default:
+				_, err = boolArg(req, tc.key, false)
+			}
+			if err == nil {
+				t.Errorf("expected error for %s=%#v", tc.key, tc.val)
+			}
+		}
+	})
+}
+
+func TestUnconvertibleNumericParams(t *testing.T) {
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+
+	tmpDir := t.TempDir()
+	img := generateSolidImage(8, 8, color.White)
+	pathA := saveTempImage(t, tmpDir, "a.png", img)
+	pathB := saveTempImage(t, tmpDir, "b.png", img)
+
+	cases := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "threshold abc",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "threshold": "abc"},
+			want: "argument 'threshold' must be a number",
+		},
+		{
+			name: "pass_rate abc",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "pass_rate": "abc"},
+			want: "argument 'pass_rate' must be a number",
+		},
+		{
+			name: "min_match empty string",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "min_match": ""},
+			want: "argument 'min_match' must be a number",
+		},
+		{
+			name: "max_diff_pixels abc",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": "abc"},
+			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			name: "count_extra_web abc",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "count_extra_web": "abc"},
+			want: "argument 'count_extra_web' must be a boolean",
+		},
+		{
+			name: "generate_diff abc",
+			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "generate_diff": "abc"},
+			want: "argument 'generate_diff' must be a boolean",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := compareDesignHandler(context.Background(), reqWithArgs(tc.args))
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("Expected IsError for %s, got content=%v", tc.name, res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("Expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+
+	t.Run("numeric string still accepted", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":         "layout_tree",
+			"figma_layout": figma,
+			"web_layout":   web,
+			"pass_rate":    "98",
+			"threshold":    "0.15",
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success for numeric strings, got %v", res.Content[0].(mcp.TextContent).Text)
+		}
+	})
 }

@@ -292,6 +292,88 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 	})
 
+	t.Run("all_zero_geometry_mismatch_message", func(t *testing.T) {
+		// width/height など w/h 以外のキー名を使うと幾何が全て 0 になる。
+		// 「データが空」とは区別したメッセージで幾何欠落を通知する。
+		web := `[{"selector":"#a","x":0,"y":0,"width":100,"height":50}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" || res.CheckedNodes != 0 {
+			t.Fatalf("got %#v", res)
+		}
+		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "no Web nodes have non-zero geometry") {
+			t.Fatalf("details=%v", res.Details)
+		}
+		if !strings.Contains(res.Details[0], `check the layout JSON keys are {"selector","x","y","w","h","parent"}`) {
+			t.Errorf("details should mention the expected JSON keys, got %q", res.Details[0])
+		}
+		if strings.Contains(res.Details[0], "Web layout node data is empty") {
+			t.Errorf("zero geometry should not be reported as empty data: %q", res.Details[0])
+		}
+	})
+
+	t.Run("summary_viewport_preset_note", func(t *testing.T) {
+		web := `[{"selector":"#page","x":0,"y":0,"w":768,"h":200}]`
+
+		port, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(port.Details) == 0 || !strings.Contains(port.Details[0], "viewport 768x1024 CSS px (iPad portrait 768x1024") {
+			t.Fatalf("portrait summary=%v", port.Details)
+		}
+
+		land, err := CheckLayoutIntegrity(web, 1024, 768, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(land.Details[0], "viewport 1024x768 CSS px (iPad landscape 1024x768") {
+			t.Fatalf("landscape summary=%v", land.Details)
+		}
+
+		// 明示 viewport_width / viewport_height でプリセットと異なるサイズを指定した
+		// 場合は、実サイズと食い違う iPad プリセットの注記を出さない。
+		custom, err := CheckLayoutIntegrity(web, 1024, 600, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(custom.Details[0], "viewport 1024x600 CSS px") {
+			t.Fatalf("custom summary=%q", custom.Details[0])
+		}
+		if strings.Contains(custom.Details[0], "iPad") {
+			t.Errorf("custom viewport summary should not mention iPad presets: %q", custom.Details[0])
+		}
+	})
+
+	t.Run("unmatched_ignore_regions", func(t *testing.T) {
+		web := `[{"selector":"#ad","x":0,"y":0,"w":900,"h":50},{"selector":"#ok","x":0,"y":0,"w":100,"h":50}]`
+		// #ad center (450, 25) は 1 つ目の領域に含まれ、2 つ目（座標ミス相当）は
+		// どのノード中心にも当たらないため UnmatchedIgnoreRegions に報告される。
+		regions := []Region{{X: 400, Y: 0, W: 100, H: 50}, {X: 900, Y: 900, W: 10, H: 10}}
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, regions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IgnoredCount != 1 || res.Status != "success" {
+			t.Fatalf("got %#v", res)
+		}
+		if len(res.UnmatchedIgnoreRegions) != 1 || res.UnmatchedIgnoreRegions[0] != "900,900,10,10" {
+			t.Fatalf("unmatched_ignore_regions=%v", res.UnmatchedIgnoreRegions)
+		}
+
+		// 全領域がノード中心に当たる場合は何も報告しない。
+		hit := []Region{{X: 0, Y: 0, W: 100, H: 50}}
+		res2, err := CheckLayoutIntegrity(web, 768, 1024, nil, hit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res2.UnmatchedIgnoreRegions) != 0 {
+			t.Fatalf("expected no unmatched_ignore_regions, got %v", res2.UnmatchedIgnoreRegions)
+		}
+	})
+
 	t.Run("both_issue_types", func(t *testing.T) {
 		web := `[{"selector":"#card","x":0,"y":0,"w":400,"h":50},{"selector":"#child","x":0,"y":0,"w":900,"h":50,"parent":"#card"}]`
 		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
