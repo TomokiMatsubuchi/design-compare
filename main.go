@@ -85,6 +85,10 @@ func main() {
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
 		),
+		mcp.WithNumber("max_details",
+			mcp.Min(0),
+			mcp.Description("For 'layout_tree' mode: maximum number of 'details' lines to return (default 0 = unlimited). When greater than 0, the summary line is kept first, remaining details are truncated to this count, and a final '... and N more details omitted (max_details=M)' line is appended. Useful to keep large layout comparisons from flooding the MCP client context."),
+		),
 		mcp.WithNumber("threshold",
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
 		),
@@ -256,6 +260,7 @@ var modeParamSupport = map[string]map[string]bool{
 	"ignore_nodes":       {"layout_tree": true, "layout_integrity": true},
 	"ignore_region":      {"layout_tree": true, "perceptual": true, "strict": true, "layout_integrity": true},
 	"count_extra_web":    {"layout_tree": true},
+	"max_details":        {"layout_tree": true},
 	"generate_diff":      {"perceptual": true, "strict": true},
 	"diff_on_mismatch":   {"perceptual": true, "strict": true},
 	"diff_image_content": {"perceptual": true, "strict": true},
@@ -473,6 +478,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		maxDetails, err := intArg(request, "max_details", 0)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if maxDetails < 0 {
+			return mcp.NewToolResultError("max_details for layout_tree mode must be >= 0 (0 = unlimited)."), nil
+		}
 
 		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
 		// layout_tree では BoundingBox の中心点が領域内にあるノードを両側から除外する。
@@ -485,6 +497,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout Tree comparison failed: %v", err)), nil
 		}
+		treeResult.Details = comparator.LimitLayoutTreeDetails(treeResult.Details, maxDetails)
 
 		// 実効パラメータと除外件数を応答に含め、どの閾値で判定されたかを検証可能にする
 		responseMap = map[string]interface{}{
