@@ -26,5 +26,5 @@ frontend — the "application" is a stdio JSON-RPC MCP server.
   `compare_design` with modes `layout_tree`, `perceptual`, `strict`, and
   `layout_integrity` (Figma-free Web DOM check at a CSS viewport: default iPad
   portrait 768x1024; landscape 1024x768 via `viewport_preset=ipad_landscape`).
-- Logs (e.g. "VRT Unified Compare MCP Server starting...") are written to
+- Logs (e.g. "design-compare MCP server starting...") are written to
   **stderr**, so they do not corrupt the stdout JSON-RPC stream.
