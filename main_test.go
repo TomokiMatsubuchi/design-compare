@@ -1096,6 +1096,79 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.10b. layout_tree モード: max_details で details を切り詰める
+	// =================================================================
+	t.Run("LayoutTree_MaxDetails", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"},
+			{"id": "3", "name": "nav", "x": 600, "y": 10, "w": 380, "h": 80, "parent": "1"}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".nav", "x": 600, "y": 10, "w": 380, "h": 80, "parent": "#header"}
+		]`
+
+		reqAll := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.15,
+				},
+			},
+		}
+		resAll, err := compareDesignHandler(context.Background(), reqAll)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultAll map[string]interface{}
+		json.Unmarshal([]byte(resAll.Content[0].(mcp.TextContent).Text), &resultAll)
+		detailsAll, ok := resultAll["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array, got %v", resultAll["details"])
+		}
+		if len(detailsAll) != 4 {
+			t.Fatalf("Expected 4 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
+		}
+
+		reqCap := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.15,
+					"max_details":  2.0,
+				},
+			},
+		}
+		resCap, err := compareDesignHandler(context.Background(), reqCap)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultCap map[string]interface{}
+		json.Unmarshal([]byte(resCap.Content[0].(mcp.TextContent).Text), &resultCap)
+		detailsCap, ok := resultCap["details"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected details array, got %v", resultCap["details"])
+		}
+		if len(detailsCap) != 3 {
+			t.Fatalf("Expected 2 kept details + omit line, got %d: %v", len(detailsCap), detailsCap)
+		}
+		summary, _ := detailsCap[0].(string)
+		if !strings.Contains(summary, "Matched 3 out of 3") {
+			t.Errorf("Expected summary line first, got %v", detailsCap[0])
+		}
+		omit, _ := detailsCap[len(detailsCap)-1].(string)
+		if omit != "... and 2 more details omitted (max_details=2)" {
+			t.Errorf("Expected omit line, got %q", omit)
+		}
+	})
+
+	// =================================================================
 	// 2.11. layout_tree モード: threshold=0 / pass_rate=0 は有効値
 	// =================================================================
 	t.Run("LayoutTree_ZeroThresholdAndPassRate", func(t *testing.T) {
@@ -3785,6 +3858,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_tree", "ignore_nodes", "a", false, ""},
 			{"layout_tree", "ignore_region", "0,0,10,10", false, ""},
 			{"layout_tree", "count_extra_web", true, false, ""},
+			{"layout_tree", "max_details", 2.0, false, ""},
 			{"layout_tree", "pass_rate", 90.0, false, ""},
 			{"layout_tree", "threshold", 0.15, false, ""},
 			// perceptual: レイアウト入力・layout_tree 専用パラメータは非対応
@@ -3794,6 +3868,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"perceptual", "web_layout_path", "/tmp/nonexistent.json", true, ""},
 			{"perceptual", "ignore_nodes", "nav", true, ""},
 			{"perceptual", "count_extra_web", true, true, ""},
+			{"perceptual", "max_details", 2.0, true, ""},
 			{"perceptual", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			{"perceptual", "max_diff_pixels", 10.0, true, ""},
 			// perceptual: 対応パラメータはエラーにならない
@@ -3810,6 +3885,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "web_layout_path", "/tmp/nonexistent.json", true, ""},
 			{"strict", "ignore_nodes", "nav", true, ""},
 			{"strict", "count_extra_web", true, true, ""},
+			{"strict", "max_details", 2.0, true, ""},
 			{"strict", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			// strict: 対応パラメータはエラーにならない
 			{"strict", "max_diff_pixels", 100000.0, false, ""},
@@ -3829,6 +3905,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_integrity", "generate_diff", false, true, ""},
 			{"layout_integrity", "diff_image_content", true, true, ""},
 			{"layout_integrity", "count_extra_web", true, true, ""},
+			{"layout_integrity", "max_details", 2.0, true, ""},
 			{"layout_integrity", "ignore_nodes", "#page", false, ""},
 			{"layout_integrity", "ignore_region", "0,0,10,10", false, ""},
 			{"layout_integrity", "viewport_width", 768.0, false, ""},

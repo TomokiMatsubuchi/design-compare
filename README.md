@@ -44,7 +44,7 @@
 
 Figma 比較は「あるキャンバス幅での再現」しか見ないため、iPad 縦向き・横向きのような別幅での崩れは見逃します。`layout_integrity` は **Web の Bounding Box だけ**を見て、指定した CSS ビューポートではみ出していないかを判定します。
 
-- **入力:** `web_layout` または `web_layout_path`（`layout_tree` と同じ WebNode JSON）。`figma_*`・画像・`threshold` / `min_match` / `pass_rate` / `max_diff_pixels` / `generate_diff` / `diff_image_content` / `count_extra_web` は非対応です。
+- **入力:** `web_layout` または `web_layout_path`（`layout_tree` と同じ WebNode JSON）。`figma_*`・画像・`threshold` / `min_match` / `pass_rate` / `max_diff_pixels` / `generate_diff` / `diff_image_content` / `count_extra_web` / `max_details` は非対応です。
 - **既定ビューポート:** 768×1024 CSS px（`viewport_preset` 未指定 = `ipad_portrait`）。
 - **横向き:** `viewport_preset=ipad_landscape`（1024×768）。任意サイズは `viewport_width` / `viewport_height`（0 より大きい値。指定時はプリセットを上書き）。
 - **`viewport_overflow_x`:** `x < 0` または `x+w > viewport_width`（1px の丸めは許容）。ビューポート高さ超えはページスクロールとして扱い、失敗にしません。
@@ -102,6 +102,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `viewport_width` | number | `layout_integrity` | 0 より大 | 768 | CSS ピクセルのビューポート幅。指定時は `viewport_preset` の幅を上書きする。 |
 | `viewport_height` | number | `layout_integrity` | 0 より大 | 1024 | CSS ピクセルのビューポート高さ。指定時は `viewport_preset` の高さを上書きする。 |
 | `count_extra_web` | boolean | `layout_tree` | true / false | false | `true` の場合、どの Figma ノードにもマッチしなかった Web ノード（実装側の余分な要素）を一致率の分母に加算して一致率を下げる。 |
+| `max_details` | number | `layout_tree` | 0 以上 | 0 | `details` の最大件数。0（未指定）は無制限。1 以上のとき先頭の summary 行を残したまま指定件数に切り詰め、末尾に `... and N more details omitted (max_details=M)` を付ける。 |
 | `generate_diff` | boolean | `perceptual` / `strict` | true / false | true | `false` の場合は差分画像を生成せず、`diff_image` は空文字列で返される。`strict` の `diff_regions` も差分画像が無いため含まれない。 |
 | `diff_on_mismatch` | boolean | `perceptual` / `strict` | true / false | false | `true` かつ判定が `success` の場合、応答の `diff_image` を空文字列にする（失敗時の分析用に差分画像は残しつつ、成功時のトークン消費を抑える）。`generate_diff=false` のときはもともと空。 |
 | `diff_image_content` | boolean | `perceptual` / `strict` | true / false | false | `true` かつ `diff_image` が空でない場合、JSON テキストの後に MCP image コンテンツ（`image/png`）を付ける。既定は JSON のみ。 |
@@ -382,7 +383,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 | `figma_layout` / `figma_layout_path` | `layout_tree` |
 | `web_layout` / `web_layout_path` | `layout_tree`, `layout_integrity` |
 | `ignore_nodes` | `layout_tree`, `layout_integrity` |
-| `count_extra_web` / `pass_rate` | `layout_tree` |
+| `count_extra_web` / `pass_rate` / `max_details` | `layout_tree` |
 | `ignore_region` | `layout_tree`, `perceptual`, `strict`, `layout_integrity` |
 | `generate_diff` / `diff_on_mismatch` / `diff_image_content` / `min_match` | `perceptual`, `strict` |
 | `max_diff_pixels` | `strict` |

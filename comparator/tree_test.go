@@ -760,3 +760,41 @@ func TestLayoutTree_UTF8BOMStripped(t *testing.T) {
 		}
 	})
 }
+
+func TestLimitLayoutTreeDetails(t *testing.T) {
+	details := []string{
+		"Matched 3 out of 3 layout nodes.",
+		"Matched: 'header' ↔ '#header'",
+		"Matched: 'logo' ↔ '.logo'",
+		"Matched: 'nav' ↔ '.nav'",
+	}
+
+	t.Run("max_details_2_truncates_and_omits", func(t *testing.T) {
+		got := LimitLayoutTreeDetails(details, 2)
+		if len(got) != 3 {
+			t.Fatalf("expected 2 kept + omit line, got %d: %v", len(got), got)
+		}
+		if got[0] != details[0] {
+			t.Errorf("expected summary first, got %q", got[0])
+		}
+		if got[1] != details[1] {
+			t.Errorf("expected first pair kept, got %q", got[1])
+		}
+		wantOmit := "... and 2 more details omitted (max_details=2)"
+		if got[2] != wantOmit {
+			t.Errorf("expected omit line %q, got %q", wantOmit, got[2])
+		}
+	})
+
+	t.Run("unspecified_or_zero_keeps_all", func(t *testing.T) {
+		got := LimitLayoutTreeDetails(details, 0)
+		if len(got) != len(details) {
+			t.Fatalf("expected all %d details, got %d: %v", len(details), len(got), got)
+		}
+		for i := range details {
+			if got[i] != details[i] {
+				t.Errorf("details[%d]=%q, want %q", i, got[i], details[i])
+			}
+		}
+	})
+}
