@@ -3,6 +3,7 @@ package comparator
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -58,6 +59,24 @@ func isPixelmatchDiffColor(c color.Color) bool {
 // 上限を超えた画像は修復可能な明示的エラーとして弾く (Issue #158)。
 const maxImageDimension = 8192
 
+// UnsupportedImageFormatHint は image.Decode 失敗エラーに付ける対応フォーマットの
+// ヒント (Issue #122 の指定文面)。strict (RunPixelMatch) と perceptual (main.go)
+// の両モードで同じ文面を使うため exported の共有定数とし、文面修正はこの
+// 1 箇所で済むようにする。
+const UnsupportedImageFormatHint = "(supported: PNG, JPEG, GIF; WebP/SVG are not supported)"
+
+// decodeImageError は image.Decode の失敗エラーに "failed to decode <画像>" の
+// コンテキストを付けて返す。対応外の画像形式 (image.ErrFormat) のときだけ
+// UnsupportedImageFormatHint を付ける。PNG/JPEG/GIF だが破損・途中切れの
+// ファイル (例: unexpected EOF) では「WebP/SVG は非対応」と読める文面が
+// 原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
+func decodeImageError(what string, err error) error {
+	if errors.Is(err, image.ErrFormat) {
+		return fmt.Errorf("failed to decode %s: %w %s", what, err, UnsupportedImageFormatHint)
+	}
+	return fmt.Errorf("failed to decode %s: %w", what, err)
+}
+
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
 // generateDiff is false, the diff image is not rendered and an empty string
 // is returned instead of its base64 data URI. ignoreRegions are masked with
@@ -72,12 +91,12 @@ const maxImageDimension = 8192
 func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, error) {
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, fmt.Errorf("failed to decode design image: %w (supported formats: PNG, JPEG, GIF)", err)
+		return 0, 0, 0, "", nil, "", nil, decodeImageError("design image", err)
 	}
 
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, fmt.Errorf("failed to decode web screenshot: %w (supported formats: PNG, JPEG, GIF)", err)
+		return 0, 0, 0, "", nil, "", nil, decodeImageError("web screenshot", err)
 	}
 
 	normA, normB, err := EnsureSameSize(imgA, imgB)

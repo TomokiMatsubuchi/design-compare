@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"log"
@@ -153,6 +154,19 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 	default:
 		return nil, fmt.Errorf("either %s or %s is required", pathParam, base64Param)
 	}
+}
+
+// decodeImageErrorMessage は perceptual モードの image.Decode 失敗メッセージを
+// 組み立てる。対応外の画像形式 (image.ErrFormat) のときだけ、strict モード
+// (comparator.RunPixelMatch) と共通の対応フォーマットヒント
+// (comparator.UnsupportedImageFormatHint) を付ける。PNG/JPEG/GIF だが破損・
+// 途中切れのファイル (例: unexpected EOF) では「WebP/SVG は非対応」と読める
+// 文面が原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
+func decodeImageErrorMessage(what string, err error) string {
+	if errors.Is(err, image.ErrFormat) {
+		return fmt.Sprintf("Failed to decode %s: %v %s", what, err, comparator.UnsupportedImageFormatHint)
+	}
+	return fmt.Sprintf("Failed to decode %s: %v", what, err)
 }
 
 // resolveLayoutInput returns the layout JSON from either an inline JSON string or
@@ -548,12 +562,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image A: %v (supported formats: PNG, JPEG, GIF)", err)), nil
+			return mcp.NewToolResultError(decodeImageErrorMessage("image A", err)), nil
 		}
 
 		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to decode image B: %v (supported formats: PNG, JPEG, GIF)", err)), nil
+			return mcp.NewToolResultError(decodeImageErrorMessage("image B", err)), nil
 		}
 
 		boundsA := imgA.Bounds()
