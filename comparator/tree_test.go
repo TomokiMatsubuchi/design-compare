@@ -583,6 +583,45 @@ func TestLayoutTree_SelfReferentialParentNoFalseMatch(t *testing.T) {
 	}
 }
 
+// TestLayoutTree_NullArrayElementIsError verifies that a JSON null inside
+// figma_layout / web_layout is rejected as a parse error instead of becoming
+// a zero-value node (empty id/selector, w/h=0) that silently skews match rate.
+func TestLayoutTree_NullArrayElementIsError(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	validFigma := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100}]`
+	validWeb := `[{"selector":"A","x":0,"y":0,"w":100,"h":100}]`
+
+	t.Run("figma_null", func(t *testing.T) {
+		_, err := CompareLayoutTrees(`[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100},null]`, validWeb, tolerance, passRate, nil, false, nil)
+		if err == nil {
+			t.Fatal("expected parse error for null Figma array element")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "failed to parse Figma layout JSON") {
+			t.Errorf("error %q should mention Figma layout JSON", got)
+		}
+		if !strings.Contains(got, "element at index 1 is null") {
+			t.Errorf("error %q should name the null index", got)
+		}
+	})
+
+	t.Run("web_null", func(t *testing.T) {
+		_, err := CompareLayoutTrees(validFigma, `[null,{"selector":"A","x":0,"y":0,"w":100,"h":100}]`, tolerance, passRate, nil, false, nil)
+		if err == nil {
+			t.Fatal("expected parse error for null Web array element")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "failed to parse Web layout JSON") {
+			t.Errorf("error %q should mention Web layout JSON", got)
+		}
+		if !strings.Contains(got, "element at index 0 is null") {
+			t.Errorf("error %q should name the null index", got)
+		}
+	})
+}
+
 // TestLayoutTree_UTF8BOMStripped verifies that a leading UTF-8 BOM (U+FEFF)
 // on either JSON input is stripped before Unmarshal, so BOM-prefixed payloads
 // parse the same as BOM-less ones. Editors and tools such as PowerShell often
