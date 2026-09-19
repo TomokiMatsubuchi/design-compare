@@ -266,14 +266,26 @@ var modeParamAlternatives = map[string]string{
 	"pass_rate": "min_match",
 }
 
+// recognizedParamNames は modeParamSupport のキーをソートして結合する。
+// 未知パラメータのエラーに載せ、タイポ時に有効名へ自己修復できるようにする。
+func recognizedParamNames() string {
+	names := make([]string, 0, len(modeParamSupport))
+	for k := range modeParamSupport {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
 // validateModeParams は、指定された引数の中に当該モードで効果を持たない
 // (指定しても警告なく無視されるだけの) パラメータがないかを modeParamSupport
 // と照合して検証する。非対応キーは無視せず "parameter 'X' is not supported in
 // mode 'Y'" を返し、除外・合格ラインが効いていない判定結果を静かに受け取るのを
 // 防ぐ。既知の代替があるキーは "(use 'Z' instead)" を追記し、続けて
 // modeParamSupport から有効モードを固定順で "(supported in: ...)" に列挙する。
-// mode 自身とここに列挙していない未知のキーは検証対象外とする (未知のモードは
-// handler の switch で "Unknown comparison mode" としてエラーになる)。
+// mode 自身は検証対象外 (未知のモードは handler の switch で
+// "Unknown comparison mode" としてエラーになる)。modeParamSupport に無い
+// 未知キー (タイポ) は "parameter 'X' is not recognized" とし、サイレント無視しない。
 func validateModeParams(args map[string]any, mode string) error {
 	switch mode {
 	case "layout_tree", "perceptual", "strict", "layout_integrity":
@@ -288,8 +300,14 @@ func validateModeParams(args map[string]any, mode string) error {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
+		if key == "mode" {
+			continue
+		}
 		supported, isToolParam := modeParamSupport[key]
-		if !isToolParam || supported[mode] {
+		if !isToolParam {
+			return fmt.Errorf("parameter '%s' is not recognized; valid parameters are: %s", key, recognizedParamNames())
+		}
+		if supported[mode] {
 			continue
 		}
 		var validModes []string
