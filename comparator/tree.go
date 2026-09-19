@@ -1,6 +1,7 @@
 package comparator
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -65,31 +66,18 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	figmaJSON = strings.TrimPrefix(figmaJSON, "\uFEFF")
 	webJSON = strings.TrimPrefix(webJSON, "\uFEFF")
 
-	// []*T へ Unmarshal することで配列内の JSON null をゼロ値ノードと区別する。
-	// 値スライスだと null が id/selector 空・w/h=0 のノードになり、Figma 側は
-	// total_nodes に加算され、Web 側は extra 扱いで分母に乗らず誤った 100% になる。
-	var fPtrs []*FigmaNode
-	if err := json.Unmarshal([]byte(figmaJSON), &fPtrs); err != nil {
-		return nil, fmt.Errorf("failed to parse Figma layout JSON: %w", err)
+	// 配列全体ではなく要素ごとに Unmarshal し、型不一致の原因要素を特定する。
+	// 配列構造の崩れ（syntax error）は従来どおり配列全体のエラーにする。
+	// 配列内の JSON null はゼロ値ノードにしない。値スライスだと null が
+	// id/selector 空・w/h=0 のノードになり、Figma 側は total_nodes に加算され、
+	// Web 側は extra 扱いで分母に乗らず誤った 100% になる。
+	fNodes, err := parseFigmaLayoutNodes(figmaJSON)
+	if err != nil {
+		return nil, err
 	}
-	fNodes := make([]FigmaNode, len(fPtrs))
-	for i, p := range fPtrs {
-		if p == nil {
-			return nil, fmt.Errorf("failed to parse Figma layout JSON: element at index %d is null", i)
-		}
-		fNodes[i] = *p
-	}
-
-	var wPtrs []*WebNode
-	if err := json.Unmarshal([]byte(webJSON), &wPtrs); err != nil {
-		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
-	}
-	wNodes := make([]WebNode, len(wPtrs))
-	for i, p := range wPtrs {
-		if p == nil {
-			return nil, fmt.Errorf("failed to parse Web layout JSON: element at index %d is null", i)
-		}
-		wNodes[i] = *p
+	wNodes, err := parseWebLayoutNodes(webJSON)
+	if err != nil {
+		return nil, err
 	}
 
 	// BoundingBox の幅・高さは負になり得ない。負値は座標とサイズの取り違え等の
@@ -408,6 +396,44 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
 	}, nil
+}
+
+func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal([]byte(figmaJSON), &raws); err != nil {
+		return nil, fmt.Errorf("failed to parse Figma layout JSON: %w", err)
+	}
+	nodes := make([]FigmaNode, len(raws))
+	for i, raw := range raws {
+		if isJSONNull(raw) {
+			return nil, fmt.Errorf("failed to parse Figma layout JSON: element at index %d is null", i)
+		}
+		if err := json.Unmarshal(raw, &nodes[i]); err != nil {
+			return nil, fmt.Errorf("failed to parse Figma layout JSON at element %d: %w", i, err)
+		}
+	}
+	return nodes, nil
+}
+
+func parseWebLayoutNodes(webJSON string) ([]WebNode, error) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal([]byte(webJSON), &raws); err != nil {
+		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
+	}
+	nodes := make([]WebNode, len(raws))
+	for i, raw := range raws {
+		if isJSONNull(raw) {
+			return nil, fmt.Errorf("failed to parse Web layout JSON: element at index %d is null", i)
+		}
+		if err := json.Unmarshal(raw, &nodes[i]); err != nil {
+			return nil, fmt.Errorf("failed to parse Web layout JSON at element %d: %w", i, err)
+		}
+	}
+	return nodes, nil
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
 // zeroGeometryWarningIfMajority は Figma / Web のいずれかで、幅・高さがともに 0 の

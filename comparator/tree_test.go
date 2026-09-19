@@ -692,6 +692,42 @@ func TestLayoutTree_NullArrayElementIsError(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_TypeMismatchIncludesElementIndex verifies that a type error
+// on one node in a multi-element layout names the failing array index.
+func TestLayoutTree_TypeMismatchIncludesElementIndex(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	validFigma := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100},{"id":"2","name":"B","x":0,"y":100,"w":50,"h":50}]`
+	validWeb := `[{"selector":"A","x":0,"y":0,"w":100,"h":100},{"selector":"B","x":0,"y":100,"w":50,"h":50}]`
+
+	t.Run("figma_w_string", func(t *testing.T) {
+		_, err := CompareLayoutTrees(
+			`[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100},{"id":"2","name":"B","x":0,"y":100,"w":"50","h":50}]`,
+			validWeb, tolerance, passRate, nil, false, nil)
+		if err == nil {
+			t.Fatal("expected parse error for Figma w type mismatch")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "failed to parse Figma layout JSON at element 1") {
+			t.Errorf("error %q should include Figma element index 1", got)
+		}
+	})
+
+	t.Run("web_w_string", func(t *testing.T) {
+		_, err := CompareLayoutTrees(validFigma,
+			`[{"selector":"A","x":0,"y":0,"w":100,"h":100},{"selector":"B","x":0,"y":100,"w":"50","h":50}]`,
+			tolerance, passRate, nil, false, nil)
+		if err == nil {
+			t.Fatal("expected parse error for Web w type mismatch")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "failed to parse Web layout JSON at element 1") {
+			t.Errorf("error %q should include Web element index 1", got)
+		}
+	})
+}
+
 // TestLayoutTree_UTF8BOMStripped verifies that a leading UTF-8 BOM (U+FEFF)
 // on either JSON input is stripped before Unmarshal, so BOM-prefixed payloads
 // parse the same as BOM-less ones. Editors and tools such as PowerShell often
