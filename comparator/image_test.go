@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"math"
 	"strings"
 	"testing"
 )
@@ -189,6 +190,25 @@ func TestRunPixelMatch_IgnoreRegionOutOfBounds(t *testing.T) {
 		}
 		if len(outOfBounds) != 1 || outOfBounds[0] != "500,500,100,100" {
 			t.Errorf("Expected outOfBounds=[500,500,100,100], got %v", outOfBounds)
+		}
+	})
+
+	t.Run("overflowing_region_does_not_mask_entire_image", func(t *testing.T) {
+		imgA, imgB := newIgnoreRegionTestImages()
+		// x+w が int の最大値を超える値。image.Rect に渡すと正規化で全面マスクになる。
+		x := math.MaxInt/2 + 1
+		_, _, diffCount, _, outOfBounds, _, _, err := RunPixelMatch(
+			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
+			0.1, false, []Region{{X: x, Y: 0, W: x, H: 10}},
+		)
+		if err != nil {
+			t.Fatalf("RunPixelMatch failed: %v", err)
+		}
+		if diffCount == 0 {
+			t.Errorf("Expected remaining diffs (overflow region must not white-out the whole image), got 0")
+		}
+		if len(outOfBounds) != 1 {
+			t.Errorf("Expected overflowing region reported as out-of-bounds, got %v", outOfBounds)
 		}
 	})
 

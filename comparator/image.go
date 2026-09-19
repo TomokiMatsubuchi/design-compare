@@ -11,6 +11,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
+	"math"
 	"sort"
 
 	"github.com/orisano/pixelmatch"
@@ -393,16 +394,29 @@ func maskRegions(img image.Image, regions []Region) (image.Image, []string) {
 	white := &image.Uniform{color.RGBA{255, 255, 255, 255}}
 	var outOfBounds []string
 	for _, r := range regions {
-		rect := image.Rect(r.X, r.Y, r.X+r.W, r.Y+r.H)
-		// 画像矩形と全く交差しない領域は draw.Draw の自動クリップにより
-		// 何もマスクされないため、警告対象として検出する。
-		if rect.Intersect(dst.Bounds()).Empty() {
+		rect, ok := regionRect(r)
+		// 加算オーバーフローや画像矩形と全く交差しない領域はマスクしない。
+		// 前者を image.Rect に渡すと正規化で全面マスクになり誤 pass するため。
+		if !ok || rect.Intersect(dst.Bounds()).Empty() {
 			outOfBounds = append(outOfBounds, fmt.Sprintf("%d,%d,%d,%d", r.X, r.Y, r.W, r.H))
 			continue
 		}
 		draw.Draw(dst, rect, white, image.Point{}, draw.Src)
 	}
 	return dst, outOfBounds
+}
+
+// regionRect builds the ignore rectangle without overflowing x+w / y+h.
+// Overflowing addition wraps to a negative Max, and image.Rect then
+// normalizes into a huge covering rectangle that would mask the whole image.
+func regionRect(r Region) (image.Rectangle, bool) {
+	if r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 {
+		return image.Rectangle{}, false
+	}
+	if r.X > math.MaxInt-r.W || r.Y > math.MaxInt-r.H {
+		return image.Rectangle{}, false
+	}
+	return image.Rect(r.X, r.Y, r.X+r.W, r.Y+r.H), true
 }
 
 // mergeOutOfBoundsRegions merges the out-of-bounds region lists detected on
