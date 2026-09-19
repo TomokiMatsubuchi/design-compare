@@ -583,6 +583,76 @@ func TestLayoutTree_SelfReferentialParentNoFalseMatch(t *testing.T) {
 	}
 }
 
+// TestLayoutTree_NegativeWidthHeightIsError verifies that a node with negative
+// w or h is rejected as an input error after parse. Zero size remains valid
+// (collapsed nodes). The error must name the Figma node or Web selector.
+func TestLayoutTree_NegativeWidthHeightIsError(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	validFigma := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100}]`
+	validWeb := `[{"selector":".root","x":0,"y":0,"w":100,"h":100}]`
+
+	tests := []struct {
+		name      string
+		figmaJSON string
+		webJSON   string
+		wantSub   []string
+	}{
+		{
+			name:      "figma_negative_w",
+			figmaJSON: `[{"id":"1","name":"Hero","x":0,"y":0,"w":-50,"h":100}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma node", "Hero", "negative"},
+		},
+		{
+			name:      "figma_negative_h",
+			figmaJSON: `[{"id":"1","name":"Hero","x":0,"y":0,"w":100,"h":-1}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma node", "Hero", "negative"},
+		},
+		{
+			name:      "web_negative_w",
+			figmaJSON: validFigma,
+			webJSON:   `[{"selector":".banner","x":0,"y":0,"w":-50,"h":100}]`,
+			wantSub:   []string{"Web node", ".banner", "negative"},
+		},
+		{
+			name:      "web_negative_h",
+			figmaJSON: validFigma,
+			webJSON:   `[{"selector":".banner","x":0,"y":0,"w":100,"h":-8}]`,
+			wantSub:   []string{"Web node", ".banner", "negative"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := CompareLayoutTrees(tc.figmaJSON, tc.webJSON, tolerance, passRate, nil, false, nil)
+			if err == nil {
+				t.Fatal("expected input error for negative width/height")
+			}
+			got := err.Error()
+			for _, sub := range tc.wantSub {
+				if !strings.Contains(got, sub) {
+					t.Errorf("error %q should contain %q", got, sub)
+				}
+			}
+		})
+	}
+
+	t.Run("zero_size_allowed", func(t *testing.T) {
+		figmaJSON := `[{"id":"1","name":"Collapsed","x":0,"y":0,"w":0,"h":0}]`
+		webJSON := `[{"selector":".collapsed","x":0,"y":0,"w":0,"h":0}]`
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("zero w/h must remain valid: %v", err)
+		}
+		if result.Status != "success" {
+			t.Errorf("expected success for matching collapsed nodes, got %s", result.Status)
+		}
+	})
+}
+
 // TestLayoutTree_NullArrayElementIsError verifies that a JSON null inside
 // figma_layout / web_layout is rejected as a parse error instead of becoming
 // a zero-value node (empty id/selector, w/h=0) that silently skews match rate.
