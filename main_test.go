@@ -3717,6 +3717,50 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// タイポ等の未知キーはサイレント無視せず IsError にする (Issue #194)。
+	t.Run("UnknownParam_Error", func(t *testing.T) {
+		figmaLayout := `[{"id":"1","name":"a","x":0,"y":0,"w":100,"h":100}]`
+		webLayout := `[{"selector":".a","x":0,"y":0,"w":100,"h":100}]`
+		cases := []struct {
+			mode  string
+			param string
+			value any
+		}{
+			{"layout_tree", "passRate", 100.0},
+			{"perceptual", "minmatch", 90.0},
+			{"strict", "ignor_nodes", "nav"},
+		}
+		for _, c := range cases {
+			t.Run(fmt.Sprintf("%s_with_%s", c.mode, c.param), func(t *testing.T) {
+				args := map[string]any{"mode": c.mode}
+				switch c.mode {
+				case "layout_tree":
+					args["figma_layout"] = figmaLayout
+					args["web_layout"] = webLayout
+				default:
+					args["image_path_a"] = pathA
+					args["image_path_b"] = pathC
+				}
+				args[c.param] = c.value
+				req := mcp.CallToolRequest{
+					Params: mcp.CallToolParams{Arguments: args},
+				}
+				res, err := compareDesignHandler(context.Background(), req)
+				if err != nil {
+					t.Fatalf("handler failed: %v", err)
+				}
+				if !res.IsError {
+					t.Fatalf("Expected error for unknown parameter %q, got content=%v", c.param, res.Content[0].(mcp.TextContent).Text)
+				}
+				got := res.Content[0].(mcp.TextContent).Text
+				want := fmt.Sprintf("parameter '%s' is not recognized; valid parameters are: %s", c.param, recognizedParamNames())
+				if !strings.Contains(got, want) {
+					t.Errorf("Expected error containing %q, got %q", want, got)
+				}
+			})
+		}
+	})
+
 	// 複数の非対応パラメータを同時指定した場合も、アルファベット順で
 	// 決定論的なエラーメッセージを返す (map の反復順に依存しない)。
 	t.Run("MultipleUnsupportedParams_Deterministic", func(t *testing.T) {
