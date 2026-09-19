@@ -96,6 +96,69 @@ func TestRunPixelMatch_AntiAliasExclusion(t *testing.T) {
 	})
 }
 
+// TestRunPixelMatch_UnsupportedFormatHint verifies that decode failures caused
+// by unsupported image formats (e.g. WebP, SVG) include a hint about the
+// supported formats (PNG, JPEG, GIF) in the error message, so callers can
+// determine the corrective action (format conversion) without an extra
+// round-trip (Issue #122).
+func TestRunPixelMatch_UnsupportedFormatHint(t *testing.T) {
+	// WebP のマジックナンバー ("RIFF" + "WEBP") を含むバイト列。
+	// Go 標準の image パッケージはデコードできず "image: unknown format" になる。
+	webpBytes := []byte("RIFF\x00\x00\x00\x00WEBPVP8 fake payload")
+	pngBytes := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+
+	for _, tc := range []struct {
+		name        string
+		imgA, imgB  []byte
+		wantKeyword string
+	}{
+		{"webp_as_design_image", webpBytes, pngBytes, "failed to decode design image"},
+		{"webp_as_web_screenshot", pngBytes, webpBytes, "failed to decode web screenshot"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// RunPixelMatch は8戻り値 (matchRate, totalPixels, diffPixels, diffImage,
+			// outOfBounds, imageSize, diffRegions, err) を返すため、デコードエラー時の
+			// 不要な戻り値も含めて受ける。
+			_, _, _, _, _, _, _, err := RunPixelMatch(tc.imgA, tc.imgB, 0.1, false, nil)
+			if err == nil {
+				t.Fatal("expected decode error for WebP bytes, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantKeyword) {
+				t.Errorf("expected error to contain %q, got %q", tc.wantKeyword, err.Error())
+			}
+			if !strings.Contains(err.Error(), "supported: PNG, JPEG, GIF") {
+				t.Errorf("expected error to contain supported-format hint, got %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), "WebP/SVG are not supported") {
+				t.Errorf("expected error to mention unsupported formats, got %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestRunPixelMatch_CorruptImageOmitsFormatHint verifies that decode failures
+// for a recognized but corrupted/truncated PNG (image.ErrFormat ではない失敗、
+// 例: unexpected EOF) do NOT append UnsupportedImageFormatHint. PNG/JPEG/GIF
+// だが破損・途中切れのファイルで「WebP/SVG は非対応」と読める文面が付くと、
+// 原因を形式違いだと誤認するためである (Issue #122)。
+func TestRunPixelMatch_CorruptImageOmitsFormatHint(t *testing.T) {
+	// PNG シグネチャは有効だが途中で切れたバイト列 → image.Decode は
+	// "unexpected EOF" を返し image.ErrFormat ではない。
+	corruptBytes := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 4, 4)))[:20]
+	validBytes := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+
+	_, _, _, _, _, _, _, err := RunPixelMatch(corruptBytes, validBytes, 0.1, false, nil)
+	if err == nil {
+		t.Fatal("expected decode error for truncated PNG bytes, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to decode design image") {
+		t.Errorf("expected decode error prefix, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), UnsupportedImageFormatHint) {
+		t.Errorf("expected no unsupported-format hint for a corrupted image, got %q", err.Error())
+	}
+}
+
 // newIgnoreRegionTestImages は ignore_region の範囲外検出テストで使う
 // 200x200 の画像ペア (A: 白地に左上100x100の黒矩形 / B: 全面白) を返す。
 func newIgnoreRegionTestImages() (image.Image, image.Image) {
@@ -520,7 +583,8 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 	})
 }
 
-const supportedImageFormatsHint = "(supported formats: PNG, JPEG, GIF)"
+// strict と perceptual の両モードで共有される対応フォーマットヒント (Issue #122)。
+const supportedImageFormatsHint = "(supported: PNG, JPEG, GIF; WebP/SVG are not supported)"
 
 // TestRunPixelMatch_DecodeErrorListsSupportedFormats verifies that undecodable
 // input (empty bytes or a text payload) reports the formats callers can retry
