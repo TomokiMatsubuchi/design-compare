@@ -68,7 +68,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 `compare_design` ツールの全パラメータを以下に示します。`mode`（必須）には `layout_tree` / `perceptual` / `strict` / `layout_integrity` のいずれかを指定します（各モードの詳細は「1. 4つの検証モード (`mode`)」を参照）。なお `strict` では比較前に両画像のピクセル寸法（縦横の画素数）が完全に一致している必要があり、異なる場合は `image size mismatch` エラーになります（同一ビューポート・DPR で撮り直すか `perceptual` モードを使用）。
 
-**注意:** モードごとに意味やスケールが異なるパラメータ（特に `threshold`）があります。また、当該モードでは効果を持たないパラメータ（例: `layout_tree` への `min_match`、`perceptual` への `pass_rate`）を指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラーが返ります。パラメータと有効モードの対応表は「8. 破壊的変更」を参照してください。
+**注意:** モードごとに意味やスケールが異なるパラメータ（特に `threshold`）があります。また、当該モードでは効果を持たないパラメータ（例: `layout_tree` への `min_match`、`perceptual` への `pass_rate`）を指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラーが返ります。パラメータと有効モードの対応表は「9. 破壊的変更」を参照してください。
 
 ### 入力データ
 
@@ -148,7 +148,84 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 ---
 
-## 3. 開発とビルド方法
+## 3. レスポンスフィールド (`compare_design`)
+
+`compare_design` の成功時レスポンス（ツール実行エラーではない JSON）のフィールドをモード別に示します。合否分岐やリトライは文字列の `match_rate`（例: `"100.00%"`）ではなく数値の `match_rate_value`（0.0–100.0）と `status` を使ってください。
+
+### `status` の取りうる値
+
+| 値 | 意味 | 出るモード |
+| :--- | :--- | :--- |
+| `success` | 合格（閾値を満たした、または崩れ 0 件） | 全モード |
+| `mismatch` | 不合格（閾値未達、または崩れ 1 件以上 / 検査対象なし） | 全モード |
+| `skipped` | 比較・検査を実施していない（全ノードが `ignore_nodes` / `ignore_region` で除外された等） | `layout_tree` / `layout_integrity` のみ |
+
+`perceptual` / `strict` に `skipped` はありません。入力エラーやモード非対応パラメータは JSON 応答ではなくツール実行エラー (`IsError: true`) になります。
+
+### 比較モード共通（`layout_tree` / `perceptual` / `strict`）
+
+| フィールド | 型 | 説明 |
+| :--- | :--- | :--- |
+| `status` | string | 上記の合否。 |
+| `mode` | string | 実行したモード名。 |
+| `match_rate` | string | 一致率の表示用文字列（`%.2f%%`）。パースせず表示に使う。 |
+| `match_rate_value` | number | 一致率（0.0–100.0）。`pass_rate` / `min_match` と直接大小比較できる。 |
+| `details` | string / string[] | 人間向けの補足。`layout_tree` は文字列配列、画像モードも配列。 |
+
+`layout_integrity` は Figma 比較ではないため `match_rate` / `match_rate_value` を返しません（`status` / `mode` / `details` は返す）。
+
+### `layout_tree`
+
+| フィールド | 型 | 常に返す | 説明 |
+| :--- | :--- | :--- | :--- |
+| `matched_nodes` | number | ○ | 一致したノード対数。 |
+| `total_nodes` | number | ○ | 分母（比較ペア数。`count_extra_web=true` なら余分な Web ノードも含む）。 |
+| `ignored_count` | number | ○ | `ignore_nodes` / `ignore_region` で除外したノード数。 |
+| `effective_threshold` | number | ○ | 判定に使った BoundingBox 許容差（未指定時は既定 0.15）。 |
+| `pass_rate` | number | ○ | 合格に使った最低一致率 %（未指定時は既定 98.0）。 |
+| `extra_web_count` | number | ○ | どの Figma ノードにもマッチしなかった Web ノード数。 |
+| `unmatched_ignores` | string[] | 非空時のみ | `ignore_nodes` のうちどのノードにも一致しなかったエントリ。 |
+| `unmatched_ignore_regions` | string[] | 非空時のみ | どのノード中心とも重ならない `ignore_region`。 |
+| `extra_web_nodes` | string[] | 非空時のみ | 余分な Web ノードのセレクタ。 |
+| `zero_geometry_warning` | string | 非空時のみ | 過半数ノードの `w`/`h` が 0 のときの誤用検出。 |
+| `unresolved_parent_refs` | string[] | 非空時のみ | 解決できない `parent` 参照。 |
+
+### `perceptual`
+
+| フィールド | 型 | 常に返す | 説明 |
+| :--- | :--- | :--- | :--- |
+| `min_match` | number | ○ | 判定に使った最低一致率 %（`threshold` エイリアス解決後を含む。未指定時は既定 98.0）。 |
+| `diff_image` | string | ○ | 差分画像の base64 data URI。`generate_diff=false` または `diff_on_mismatch=true` かつ `success` のときは空文字列。 |
+| `total_blocks` | number | ○ | aHash セル総数（常に 256）。 |
+| `diff_blocks` | number | ○ | 不一致セル数。 |
+| `image_size_a` / `image_size_b` | string | ○ | 各画像のピクセル寸法（例: `"800x600"`）。 |
+| `ignored_regions` | number | ○ | パースできた `ignore_region` の件数。 |
+| `warnings` | string[] | 非空時のみ | 一様画像・アスペクト比差など。`status` / `match_rate` は変えない。 |
+| `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |
+| `diff_cells` | object[] | 非空時のみ | 不一致セルの `{grid_x, grid_y}`（16x16、0–15）。 |
+
+### `strict`
+
+| フィールド | 型 | 常に返す | 説明 |
+| :--- | :--- | :--- | :--- |
+| `total_pixels` | number | ○ | 比較したピクセル総数。 |
+| `diff_pixels` | number | ○ | 色差が `threshold` を超えた差分ピクセル数（アンチエイリアス除外後）。 |
+| `min_match` | number | 指定時のみ | 指定したときだけ判定に使い、応答へ echo する。 |
+| `diff_image` | string | ○ | pixelmatch 差分画像の base64 data URI。生成しない場合は空文字列。 |
+| `image_size` | string | ○ | 両画像共通のピクセル寸法。 |
+| `effective_threshold` | number | ○ | 判定に使った色差許容（未指定時は既定 0.1）。 |
+| `ignored_regions` | number | ○ | パースできた `ignore_region` の件数。 |
+| `warnings` | string[] | 条件付き | `min_match` のみ指定し `max_diff_pixels` を省略したとき（既定 0 が判定を支配する旨）。 |
+| `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |
+| `diff_regions` | object[] | 非空時のみ | 赤い差分ピクセルの bounding box（`generate_diff` が true のとき）。 |
+
+### `layout_integrity`
+
+§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`unmatched_ignores` / `unmatched_ignore_regions` は該当時のみ。
+
+---
+
+## 4. 開発とビルド方法
 
 ### 前提条件
 - Go 1.26 以上
@@ -181,7 +258,7 @@ go test -v ./...
 
 ---
 
-## 4. 各種ツール（Codex / Claude）へのセットアップ手順
+## 5. 各種ツール（Codex / Claude）へのセットアップ手順
 
 本サーバーは、Codexのローカルプラグインとして動作するほか、Claude DesktopやClaude Codeなどの一般的なMCPクライアントにインポートして使用することができます。
 
@@ -219,7 +296,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 5. 全自動でのデザイン検証ワークフロー
+## 6. 全自動でのデザイン検証ワークフロー
 
 有効化されると、AIエージェントは自動的に他のツール（Figma MCPやChrome-DevTools MCP）と連携して、ログイン状態などを維持したまま全自動でVRT/構造検証を実行します。
 
@@ -240,7 +317,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 6. 注意・制限事項 (環境による表示の揺らぎ)
+## 7. 注意・制限事項 (環境による表示の揺らぎ)
 
 比較アルゴリズム（ハッシュ計算や幾何判定）自体はプログラムとして決定論的ですが、以下の**プラットフォーム固有のレンダリング差（非決定的な要素）**により、同じWebコードであっても実行マシンによって比較結果に微細なブレが生じる場合があります。
 
@@ -253,7 +330,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 7. セキュリティ上の注意（信頼モデル）
+## 8. セキュリティ上の注意（信頼モデル）
 
 本サーバーはローカル実行のMCPサーバーとして設計されています。以下のパラメータで指定された
 ファイルパスはそのまま解決され、**サーバープロセスの権限で**ローカルファイルシステムから
@@ -278,7 +355,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 
 ---
 
-## 8. 破壊的変更 (Breaking Changes)
+## 9. 破壊的変更 (Breaking Changes)
 
 ### `diff_image_path` → `diff_image` （フィールド名変更）
 
