@@ -16,7 +16,7 @@ This skill enforces verification of visual and structural fidelity by comparing 
 Ensure the following MCP servers are configured:
 1. **Figma Dev Mode MCP Server**: To download figma frames/nodes and retrieve layout metadata.
 2. **chrome-devtools-mcp** (or **playwright-cli**): To capture web screenshots and extract DOM element geometry (Bounding Boxes).
-3. **design-compare**: To perform layout-tree, perceptual, or strict comparisons.
+3. **design-compare**: To perform layout-tree, perceptual, strict, or layout-integrity comparisons.
 
 ## Core Verification Workflow
 
@@ -58,8 +58,17 @@ For each meaningful interactive state, re-run the capture → compare cycle:
 
 If any interaction state fails the threshold, fix the CSS/HTML (e.g. overflow handling, z-index, sticky/fixed positioning, responsive breakpoints) and re-run this step until every state passes.
 
-### Step 5: Analyze Results and Fix Code
-- Check the output `status` and `match_rate`.
+### Step 5: Verify iPad / Tablet Layout Integrity (Web DOM only — no Figma)
+
+A pixel-perfect match against Figma desktop/mobile frames does **NOT** prove that the layout survives tablet widths. You **MUST** additionally verify layout integrity at **both** iPad orientations:
+
+1. **Portrait (default):** resize the browser to **768×1024 CSS px**, recapture **DOM bounding boxes only** (not Figma), then call `compare_design` with `mode: "layout_integrity"` and `web_layout` (or `web_layout_path`) from that capture.
+2. **Landscape:** resize to **1024×768 CSS px**, recapture DOM boxes at that size, then call again with `viewport_preset: "ipad_landscape"` (or `viewport_width: 1024` and `viewport_height: 768`). Do **not** reuse portrait coordinates for the landscape check.
+3. Treat `viewport_overflow_x` and `parent_overflow` as failures. Vertical overflow of the viewport is expected page scroll and is not a failure.
+4. Fix overflow / parent overflow, then re-run **both** orientations until each returns `status: success`. `mismatch` or `skipped` leaves verification incomplete.
+
+### Step 6: Analyze Results and Fix Code
+- Check the output `status` and, for Figma-compare modes, `match_rate`.
 - In `layout_tree` mode, if `zero_geometry_warning` is present, the layout JSON likely used wrong keys (`width`/`height` instead of `w`/`h`). Do not treat a 100% match as valid until the geometry keys are corrected.
 - If discrepancies exist, inspect the output details and the `diff_image` field (a base64 PNG data URI returned in the response; no temporary file is written). For how the visualization is colored, see README §1. Then correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
 
@@ -69,6 +78,8 @@ If any interaction state fails the threshold, fix the CSS/HTML (e.g. overflow ha
 2. **Match Threshold & Exclusions**: The passing criteria depend on the mode:
     *   `layout_tree` (judged by `pass_rate`) and `perceptual` (judged by `min_match`): the default passing threshold is **98.0%**. If the match rate is below 98.0%, you must analyze the diff details, fix the implementation, and run the comparison again until it passes.
     *   `strict` is **not** judged by match rate by default. Its default criterion is `max_diff_pixels` = **0** (zero differing pixels is required, so even a 99.9% match rate results in `mismatch` with a single differing pixel). To judge strict results by match rate, explicitly specify `min_match`; to tolerate a small number of differing pixels, explicitly specify `max_diff_pixels`.
-    *   Exclusions: the `ignore_nodes` parameter is effective **only in `layout_tree` mode** (e.g. dynamic placeholders or elements requested by the user). For `perceptual` / `strict` comparisons, use `ignore_region` instead.
-3. **Viewport Matching**: Always ensure your browser viewport width/height configuration matches the Figma mockup frame size when gathering layout or screenshot data.
+    *   `layout_integrity` has no `match_rate`. It passes only when `issue_count` is 0 (`status: success`).
+    *   Exclusions: the `ignore_nodes` parameter is effective in `layout_tree` and `layout_integrity` (e.g. dynamic placeholders or elements requested by the user). For `perceptual` / `strict` comparisons, use `ignore_region` instead.
+3. **Viewport Matching**: For Figma compare (`layout_tree` / `perceptual` / `strict`), the browser viewport must match the Figma mockup frame size. Additionally you **MUST** run `layout_integrity` at iPad portrait **and** landscape unless the user specifies other tablet sizes.
 4. **Interaction Integrity**: Verification is not complete until you confirm the UI/UX stays intact **after** interactions. You **MUST** exercise scrolling (top/middle/bottom) and press interactive controls (buttons, tabs, modals, dropdowns, accordions, drawers), then re-run `compare_design` on the resulting states to prove nothing overlaps, clips, overflows, or collapses.
+5. **Tablet Layout Integrity**: Verification is not complete until `layout_integrity` succeeds at both iPad portrait (768×1024) and landscape (1024×768), each with DOM captured at that viewport.
