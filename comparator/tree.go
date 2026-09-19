@@ -92,6 +92,20 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		wNodes[i] = *p
 	}
 
+	// BoundingBox の幅・高さは負になり得ない。負値は座標とサイズの取り違え等の
+	// 入力ミスであり、相対比率が負のままマッチングに混ぜると偽不一致・偽一致になる。
+	// w/h=0 は collapsed ノードとして許容し、負値のみ拒否する。
+	for _, fn := range fNodes {
+		if fn.W < 0 || fn.H < 0 {
+			return nil, fmt.Errorf("Figma node %q has negative width/height (w=%g, h=%g)", fn.Name, fn.W, fn.H)
+		}
+	}
+	for _, wn := range wNodes {
+		if wn.W < 0 || wn.H < 0 {
+			return nil, fmt.Errorf("Web node %q has negative width/height (w=%g, h=%g)", wn.Selector, wn.W, wn.H)
+		}
+	}
+
 	// width/height などキー名が異なる JSON は Unmarshal が成功したまま
 	// w/h が 0 のノードになる。両側が全零だと差分 0・一致率 100% になるため、
 	// 過半数が零幾何なら非破壊の警告を応答へ載せる（status は変えない）。
