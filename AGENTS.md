@@ -23,6 +23,8 @@ frontend — the "application" is a stdio JSON-RPC MCP server.
 - To exercise the MCP server manually, pipe an `initialize` request, an
   `notifications/initialized` message, then `tools/list` / `tools/call` into the
   binary's stdin (see the handshake used during setup). The only tool is
-  `compare_design` with modes `layout_tree`, `perceptual`, and `strict`.
+  `compare_design` with modes `layout_tree`, `perceptual`, `strict`, and
+  `layout_integrity` (Figma-free Web DOM check at a CSS viewport: default iPad
+  portrait 768x1024; landscape 1024x768 via `viewport_preset=ipad_landscape`).
 - Logs (e.g. "VRT Unified Compare MCP Server starting...") are written to
   **stderr**, so they do not corrupt the stdout JSON-RPC stream.

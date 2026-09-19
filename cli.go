@@ -58,12 +58,12 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	fs := flag.NewFlagSet("design-compare", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: design-compare --mode <layout_tree|perceptual|strict> [options]\n")
+		fmt.Fprintf(stderr, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
 		fmt.Fprintf(stderr, "       design-compare          (no args: start stdio MCP server)\n\n")
 		fs.PrintDefaults()
 	}
 
-	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, or strict")
+	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")
 	imageA := fs.String("image-a", "", "Path to reference image A (maps to image_path_a)")
 	imageB := fs.String("image-b", "", "Path to target image B (maps to image_path_b)")
 	figmaFile := fs.String("figma-layout-file", "", "Path to Figma layout JSON (maps to figma_layout_path)")

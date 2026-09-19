@@ -28,17 +28,17 @@ func main() {
 
 	s := server.NewMCPServer("design-compare", "1.0.0")
 
-	// compare_design ツール定義 (3つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
+	// compare_design ツール定義 (4つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
 	compareDesignTool := mcp.NewTool("compare_design",
-		mcp.WithDescription("Compare designs against implementations using three deterministic modes: 'layout_tree' (structural data), 'perceptual' (macro-layout image match), or 'strict' (exact pixel match)."),
+		mcp.WithDescription("Compare designs against implementations using four deterministic modes: 'layout_tree' (structural data), 'perceptual' (macro-layout image match), 'strict' (exact pixel match), or 'layout_integrity' (web layout breakage at a CSS viewport without Figma; default iPad portrait 768x1024, landscape via viewport_preset=ipad_landscape)."),
 		mcp.WithTitleAnnotation("Compare Designs"),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("mode",
 			mcp.Required(),
-			mcp.Enum("layout_tree", "perceptual", "strict"),
-			mcp.Description("Comparison mode: 'layout_tree' (DOM/Figma hierarchy comparison), 'perceptual' (aHash image template check), or 'strict' (pixelmatch VRT). 'strict' requires both images to have identical pixel dimensions"),
+			mcp.Enum("layout_tree", "perceptual", "strict", "layout_integrity"),
+			mcp.Description("Comparison mode: 'layout_tree' (DOM/Figma hierarchy comparison), 'perceptual' (aHash image template check), 'strict' (pixelmatch VRT; both images must have identical pixel dimensions), or 'layout_integrity' (detect horizontal viewport overflow and parent overflow from Web bounding boxes only; default iPad portrait 768x1024 CSS px)"),
 		),
 		mcp.WithString("image_path_a",
 			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes unless image_a_base64 is given; mutually exclusive with image_a_base64). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
@@ -56,19 +56,29 @@ func main() {
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
 		),
 		mcp.WithString("web_layout",
-			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' mode unless web_layout_path is given; mutually exclusive with web_layout_path). e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
+			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
 		),
 		mcp.WithString("figma_layout_path",
 			mcp.Description("Path to a JSON file containing the Figma node list metadata (alternative to figma_layout for 'layout_tree' mode; mutually exclusive with figma_layout). The file content is a JSON array like [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("web_layout_path",
-			mcp.Description("Path to a JSON file containing the Web DOM node list layout (alternative to web_layout for 'layout_tree' mode; mutually exclusive with web_layout). The file content is a JSON array like [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
+			mcp.Description("Path to a JSON file containing the Web DOM node list layout (alternative to web_layout for 'layout_tree' and 'layout_integrity' modes; mutually exclusive with web_layout). The file content is a JSON array like [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
+		),
+		mcp.WithString("viewport_preset",
+			mcp.Description("Named CSS viewport for 'layout_integrity' only: 'ipad_portrait' (768x1024, default) or 'ipad_landscape' (1024x768); passing it in another mode is rejected as an unsupported parameter. Optional viewport_width / viewport_height override the preset size (must be greater than 0)"),
+			mcp.Enum("ipad_portrait", "ipad_landscape"),
+		),
+		mcp.WithNumber("viewport_width",
+			mcp.Description("CSS pixel viewport width for 'layout_integrity' only (default 768, iPad portrait); passing it in another mode is rejected as an unsupported parameter. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset width"),
+		),
+		mcp.WithNumber("viewport_height",
+			mcp.Description("CSS pixel viewport height for 'layout_integrity' only (default 1024, iPad portrait); passing it in another mode is rejected as an unsupported parameter. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset height"),
 		),
 		mcp.WithString("ignore_nodes",
-			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore during comparison (for 'layout_tree' mode). An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
+			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' mode, nodes whose bounding-box center lies inside a region are excluded from both sides and counted in 'ignored_count'; regions that contain no node center on either side exclude nothing and are reported in 'unmatched_ignore_regions'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
@@ -211,22 +221,25 @@ var modeParamSupport = map[string]map[string]bool{
 	"image_path_b":   {"perceptual": true, "strict": true},
 	"image_a_base64": {"perceptual": true, "strict": true},
 	"image_b_base64": {"perceptual": true, "strict": true},
-	// レイアウト入力 (layout_tree)
+	// レイアウト入力 (layout_tree / layout_integrity)。figma_* は layout_tree 専用
 	"figma_layout":      {"layout_tree": true},
 	"figma_layout_path": {"layout_tree": true},
-	"web_layout":        {"layout_tree": true},
-	"web_layout_path":   {"layout_tree": true},
+	"web_layout":        {"layout_tree": true, "layout_integrity": true},
+	"web_layout_path":   {"layout_tree": true, "layout_integrity": true},
 	// 比較条件 (モード固有)
-	// threshold は全モードで有効 (perceptual では min_match の後方互換エイリアス)
+	// threshold は Figma 比較モード向け (layout_integrity は崩れ有無の検査で閾値なし)
 	"threshold":        {"layout_tree": true, "perceptual": true, "strict": true},
 	"min_match":        {"perceptual": true, "strict": true},
 	"pass_rate":        {"layout_tree": true},
 	"max_diff_pixels":  {"strict": true},
-	"ignore_nodes":     {"layout_tree": true},
-	"ignore_region":    {"layout_tree": true, "perceptual": true, "strict": true},
+	"ignore_nodes":     {"layout_tree": true, "layout_integrity": true},
+	"ignore_region":    {"layout_tree": true, "perceptual": true, "strict": true, "layout_integrity": true},
 	"count_extra_web":  {"layout_tree": true},
 	"generate_diff":    {"perceptual": true, "strict": true},
 	"diff_on_mismatch": {"perceptual": true, "strict": true},
+	"viewport_preset":  {"layout_integrity": true},
+	"viewport_width":   {"layout_integrity": true},
+	"viewport_height":  {"layout_integrity": true},
 }
 
 // modeParamAlternatives は、モード非対応パラメータのうち最頻出の混同ペアだけを
@@ -249,7 +262,7 @@ var modeParamAlternatives = map[string]string{
 // handler の switch で "Unknown comparison mode" としてエラーになる)。
 func validateModeParams(args map[string]any, mode string) error {
 	switch mode {
-	case "layout_tree", "perceptual", "strict":
+	case "layout_tree", "perceptual", "strict", "layout_integrity":
 		// 既知のモードのみ検証する
 	default:
 		return nil
@@ -266,7 +279,7 @@ func validateModeParams(args map[string]any, mode string) error {
 			continue
 		}
 		var validModes []string
-		for _, m := range []string{"layout_tree", "perceptual", "strict"} {
+		for _, m := range []string{"layout_tree", "perceptual", "strict", "layout_integrity"} {
 			if supported[m] {
 				validModes = append(validModes, m)
 			}
@@ -356,7 +369,7 @@ const perceptualTotalBlocks = 256
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
 	if err != nil {
-		return mcp.NewToolResultError("mode parameter is required (valid modes: layout_tree, perceptual, strict)"), nil
+		return mcp.NewToolResultError("mode parameter is required (valid modes: layout_tree, perceptual, strict, layout_integrity)"), nil
 	}
 
 	// モード非対応パラメータの検証: 当該モードで効果を持たないパラメータ
@@ -741,9 +754,96 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			responseMap["diff_regions"] = diffRegions
 		}
 
+	case "layout_integrity":
+		// =================================================================
+		// 4. Webレイアウト崩れ検証（Figma不要のビューポート整合性チェック）
+		// =================================================================
+		// Web 側レイアウト JSON のノード座標だけで、指定 CSS ビューポートでの
+		// 横はみ出し (viewport_overflow_x) と親要素からの逸脱 (parent_overflow) を
+		// 検出する。縦向き 768x1024 と横向き 1024x768 は幅が違うため、viewport_preset
+		// で切り替えて両方検査する。figma_layout / figma_layout_path は受け付けない
+		// (modeParamSupport で layout_tree 専用のまま)。
+		webLayout, err := resolveLayoutInput(
+			request.GetString("web_layout", ""), request.GetString("web_layout_path", ""),
+			"web_layout", "web_layout_path")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
+		}
+
+		args := request.GetArguments()
+		preset := request.GetString("viewport_preset", "")
+		viewportW, viewportH, err := comparator.ViewportSizeForPreset(preset)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if _, ok := args["viewport_width"]; ok {
+			// 変換不能な値はサイレントに 0 へ落とさずエラーにする (floatArg, Issue #188)
+			viewportW, err = floatArg(request, "viewport_width", viewportW)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if viewportW <= 0 {
+				return mcp.NewToolResultError("viewport_width must be greater than 0"), nil
+			}
+		}
+		if _, ok := args["viewport_height"]; ok {
+			viewportH, err = floatArg(request, "viewport_height", viewportH)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if viewportH <= 0 {
+				return mcp.NewToolResultError("viewport_height must be greater than 0"), nil
+			}
+		}
+
+		ignoreNodesStr := request.GetString("ignore_nodes", "")
+		var ignoreList []string
+		if ignoreNodesStr != "" {
+			for _, part := range strings.Split(ignoreNodesStr, ",") {
+				trimmed := strings.TrimSpace(part)
+				if trimmed != "" {
+					ignoreList = append(ignoreList, trimmed)
+				}
+			}
+		}
+		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
+		}
+
+		integrityResult, err := comparator.CheckLayoutIntegrity(webLayout, viewportW, viewportH, ignoreList, ignoreRegions)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity check failed: %v", err)), nil
+		}
+
+		responseMap = map[string]interface{}{
+			"status":          integrityResult.Status,
+			"mode":            "layout_integrity",
+			"viewport_width":  integrityResult.ViewportWidth,
+			"viewport_height": integrityResult.ViewportHeight,
+			"checked_nodes":   integrityResult.CheckedNodes,
+			"issue_count":     integrityResult.IssueCount,
+			"details":         integrityResult.Details,
+			"ignored_count":   integrityResult.IgnoredCount,
+		}
+		if preset != "" {
+			responseMap["viewport_preset"] = preset
+		}
+		if integrityResult.IssueCount > 0 {
+			responseMap["issues"] = integrityResult.Issues
+		}
+		if len(integrityResult.UnmatchedIgnores) > 0 {
+			responseMap["unmatched_ignores"] = integrityResult.UnmatchedIgnores
+		}
+		// ignore_region のうちどのノード中心とも重ならない領域（座標ミス等）。
+		// layout_tree と同様、非空時のみ返す (Issue #208)。
+		if len(integrityResult.UnmatchedIgnoreRegions) > 0 {
+			responseMap["unmatched_ignore_regions"] = integrityResult.UnmatchedIgnoreRegions
+		}
+
 	default:
 		// 有効モードを列挙し、タイポ時にREADME等を見ずに1回のリトライで自己修復できるようにする
-		return mcp.NewToolResultError(fmt.Sprintf("Unknown comparison mode: %s (valid modes: layout_tree, perceptual, strict)", mode)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Unknown comparison mode: %s (valid modes: layout_tree, perceptual, strict, layout_integrity)", mode)), nil
 	}
 
 	// 成功時は差分画像が不要な呼び出し向け: 合否確定後に diff_image だけ空にする。
