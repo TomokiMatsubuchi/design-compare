@@ -1273,6 +1273,56 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.12c. layout_tree モード: 配列内の JSON null は入力エラー
+	// =================================================================
+	t.Run("LayoutTree_NullArrayElement", func(t *testing.T) {
+		validFigma := `[{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100}]`
+		validWeb := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100}]`
+
+		reqFigma := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": `[{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},null]`,
+					"web_layout":   validWeb,
+				},
+			},
+		}
+		resFigma, err := compareDesignHandler(context.Background(), reqFigma)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resFigma.IsError {
+			t.Fatal("expected IsError for null element in figma_layout")
+		}
+		gotFigma := resFigma.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotFigma, "failed to parse Figma layout JSON: element at index 1 is null") {
+			t.Errorf("got %q", gotFigma)
+		}
+
+		reqWeb := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": validFigma,
+					"web_layout":   `[null]`,
+				},
+			},
+		}
+		resWeb, err := compareDesignHandler(context.Background(), reqWeb)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resWeb.IsError {
+			t.Fatal("expected IsError for null element in web_layout")
+		}
+		gotWeb := resWeb.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotWeb, "failed to parse Web layout JSON: element at index 0 is null") {
+			t.Errorf("got %q", gotWeb)
+		}
+	})
+
+	// =================================================================
 	// 2.13. layout_tree モード: ignore_region による領域除外
 	// =================================================================
 	// 画像モードと同じ ignore_region を layout_tree でも受け付ける。

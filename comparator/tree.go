@@ -65,14 +65,31 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	figmaJSON = strings.TrimPrefix(figmaJSON, "\uFEFF")
 	webJSON = strings.TrimPrefix(webJSON, "\uFEFF")
 
-	var fNodes []FigmaNode
-	if err := json.Unmarshal([]byte(figmaJSON), &fNodes); err != nil {
+	// []*T へ Unmarshal することで配列内の JSON null をゼロ値ノードと区別する。
+	// 値スライスだと null が id/selector 空・w/h=0 のノードになり、Figma 側は
+	// total_nodes に加算され、Web 側は extra 扱いで分母に乗らず誤った 100% になる。
+	var fPtrs []*FigmaNode
+	if err := json.Unmarshal([]byte(figmaJSON), &fPtrs); err != nil {
 		return nil, fmt.Errorf("failed to parse Figma layout JSON: %w", err)
 	}
+	fNodes := make([]FigmaNode, len(fPtrs))
+	for i, p := range fPtrs {
+		if p == nil {
+			return nil, fmt.Errorf("failed to parse Figma layout JSON: element at index %d is null", i)
+		}
+		fNodes[i] = *p
+	}
 
-	var wNodes []WebNode
-	if err := json.Unmarshal([]byte(webJSON), &wNodes); err != nil {
+	var wPtrs []*WebNode
+	if err := json.Unmarshal([]byte(webJSON), &wPtrs); err != nil {
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
+	}
+	wNodes := make([]WebNode, len(wPtrs))
+	for i, p := range wPtrs {
+		if p == nil {
+			return nil, fmt.Errorf("failed to parse Web layout JSON: element at index %d is null", i)
+		}
+		wNodes[i] = *p
 	}
 
 	// width/height などキー名が異なる JSON は Unmarshal が成功したまま
