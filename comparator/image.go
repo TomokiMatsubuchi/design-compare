@@ -140,7 +140,6 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 	}
 	var diffImg image.Image
 	if generateDiff {
-		diffImg = image.NewRGBA(bounds)
 		opts = append(opts, pixelmatch.WriteTo(&diffImg))
 	}
 
@@ -152,6 +151,13 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
 	if !generateDiff {
 		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, nil, nil
+	}
+
+	// pixelmatch は差分描画用に内部で NewRGBA し WriteTo へ差し替えるが、同一画像の
+	// fast path では差し替えずに return する。事前確保をやめたためその場合は nil。
+	// 旧実装は空の RGBA をエンコードしていたので同等にする。
+	if diffImg == nil {
+		diffImg = image.NewRGBA(bounds)
 	}
 
 	var buf bytes.Buffer
