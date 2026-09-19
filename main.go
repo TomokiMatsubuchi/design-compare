@@ -249,19 +249,19 @@ var modeParamSupport = map[string]map[string]bool{
 	"web_layout_path":   {"layout_tree": true, "layout_integrity": true},
 	// 比較条件 (モード固有)
 	// threshold は Figma 比較モード向け (layout_integrity は崩れ有無の検査で閾値なし)
-	"threshold":        {"layout_tree": true, "perceptual": true, "strict": true},
-	"min_match":        {"perceptual": true, "strict": true},
-	"pass_rate":        {"layout_tree": true},
-	"max_diff_pixels":  {"strict": true},
-	"ignore_nodes":     {"layout_tree": true, "layout_integrity": true},
-	"ignore_region":    {"layout_tree": true, "perceptual": true, "strict": true, "layout_integrity": true},
-	"count_extra_web":  {"layout_tree": true},
+	"threshold":          {"layout_tree": true, "perceptual": true, "strict": true},
+	"min_match":          {"perceptual": true, "strict": true},
+	"pass_rate":          {"layout_tree": true},
+	"max_diff_pixels":    {"strict": true},
+	"ignore_nodes":       {"layout_tree": true, "layout_integrity": true},
+	"ignore_region":      {"layout_tree": true, "perceptual": true, "strict": true, "layout_integrity": true},
+	"count_extra_web":    {"layout_tree": true},
 	"generate_diff":      {"perceptual": true, "strict": true},
 	"diff_on_mismatch":   {"perceptual": true, "strict": true},
 	"diff_image_content": {"perceptual": true, "strict": true},
-	"viewport_preset":  {"layout_integrity": true},
-	"viewport_width":   {"layout_integrity": true},
-	"viewport_height":  {"layout_integrity": true},
+	"viewport_preset":    {"layout_integrity": true},
+	"viewport_width":     {"layout_integrity": true},
+	"viewport_height":    {"layout_integrity": true},
 }
 
 // modeParamAlternatives は、モード非対応パラメータのうち最頻出の混同ペアだけを
