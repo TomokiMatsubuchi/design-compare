@@ -3554,7 +3554,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 
 	// 不正な ignore_region 指定はエラーになる
 	t.Run("IgnoreRegion_InvalidFormat", func(t *testing.T) {
-		for _, region := range []string{"10,20,100", "a,b,c,d", "-1,0,10,10", "0,0,0,10", "10,20,100,50;bad"} {
+		for _, region := range []string{
+			"10,20,100",
+			"a,b,c,d",
+			"-1,0,10,10",
+			"0,0,0,10",
+			"10,20,100,50;bad",
+			// x+w が int64 を超えると全面マスクの誤 pass になるため拒否する (Issue #203)
+			"4611686018427387904,0,4611686018427387904,10",
+			"2147483648,0,1,1",
+		} {
 			for _, mode := range []string{"perceptual", "strict"} {
 				req := mcp.CallToolRequest{
 					Params: mcp.CallToolParams{
@@ -4002,6 +4011,22 @@ func TestVRTUnifiedCompare(t *testing.T) {
 // resolveImageInput が data URI 形式 ("data:<mime>;base64,<payload>") の
 // base64 入力を受け付けること、および従来のプレーン base64 が引き続き
 // 動作することを検証する (Issue #127)。
+func TestParseIgnoreRegions_OverflowRejected(t *testing.T) {
+	const overflow = "4611686018427387904,0,4611686018427387904,10"
+	_, err := parseIgnoreRegions(overflow)
+	if err == nil {
+		t.Fatalf("expected error for overflowing ignore_region %q", overflow)
+	}
+	if !strings.Contains(err.Error(), "must be <=") {
+		t.Errorf("expected max-value error, got %v", err)
+	}
+
+	_, err = parseIgnoreRegions("2147483647,0,1,1")
+	if err != nil {
+		t.Errorf("MaxInt32 should be accepted, got %v", err)
+	}
+}
+
 func TestResolveImageInputBase64DataURI(t *testing.T) {
 	payload := []byte("PNGDATA")
 	plain := base64.StdEncoding.EncodeToString(payload)
