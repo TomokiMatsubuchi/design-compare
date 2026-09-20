@@ -4602,3 +4602,42 @@ func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 		t.Errorf("expected no unsupported-format hint for a corrupted image, got %q", got)
 	}
 }
+
+// TestCompareDesignStructuredContent は成功時の CallToolResult に
+// structuredContent が載り、フォールバックテキストの JSON と同値であることを検証する (Issue #228)。
+func TestCompareDesignStructuredContent(t *testing.T) {
+	figmaLayout := `[{"id":"1","name":"box","x":0,"y":0,"w":10,"h":10}]`
+	webLayout := `[{"selector":"#box","x":0,"y":0,"w":10,"h":10}]`
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Arguments: map[string]any{
+				"mode":         "layout_tree",
+				"figma_layout": figmaLayout,
+				"web_layout":   webLayout,
+			},
+		},
+	}
+	res, err := compareDesignHandler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler failed: %v", err)
+	}
+	if res.StructuredContent == nil {
+		t.Fatal("expected StructuredContent on success result")
+	}
+	structured, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("failed to marshal StructuredContent: %v", err)
+	}
+	text := res.Content[0].(mcp.TextContent).Text
+	var fromText, fromStructured map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &fromText); err != nil {
+		t.Fatalf("failed to unmarshal text content: %v", err)
+	}
+	if err := json.Unmarshal(structured, &fromStructured); err != nil {
+		t.Fatalf("failed to unmarshal StructuredContent: %v", err)
+	}
+	if fromStructured["status"] != fromText["status"] || fromStructured["mode"] != fromText["mode"] {
+		t.Errorf("StructuredContent status/mode=%v/%v, text=%v/%v",
+			fromStructured["status"], fromStructured["mode"], fromText["status"], fromText["mode"])
+	}
+}

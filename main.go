@@ -968,11 +968,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 						mcp.NewTextContent(jsonText),
 						mcp.NewImageContent(payload, "image/png"),
 					},
+					StructuredContent: responseMap,
 				}, nil
 			}
 		}
 	}
-	return mcp.NewToolResultText(jsonText), nil
+	return mcp.NewToolResultStructured(responseMap, string(responseJSON)), nil
 }
 
 // pngPayloadFromDiffImage は JSON の diff_image (PNG data URI) から
