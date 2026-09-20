@@ -377,10 +377,12 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 構造化ディテール作成
 	summaryDetail := fmt.Sprintf("Matched %d out of %d layout nodes.", matchedCount, totalCompared)
 
+	// 不一致と余分なWebノードを一致ペアより先に置く。ノード数が多いページで
+	// "Matched: …" の羅列の後ろに失敗行が埋もれないようにする。
 	details := []string{summaryDetail}
-	details = append(details, matchedPairDetails...)
 	details = append(details, mismatchDetails...)
 	details = append(details, extraWebDetails...)
+	details = append(details, matchedPairDetails...)
 
 	return &LayoutTreeResult{
 		MatchRate:              matchRate,

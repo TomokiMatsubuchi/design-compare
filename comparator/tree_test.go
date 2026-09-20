@@ -202,6 +202,72 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_DetailsOrderPutsFailuresFirst verifies that after the
+// summary line, mismatch and extra-Web rows come before matched pairs so
+// failures are not buried behind hundreds of "Matched: …" lines.
+func TestLayoutTree_DetailsOrderPutsFailuresFirst(t *testing.T) {
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"},
+		{"id":"3","name":"nav","x":600,"y":10,"w":380,"h":80,"parent":"1"},
+		{"id":"4","name":"hero","x":0,"y":200,"w":100,"h":100}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"},
+		{"selector":".nav","x":600,"y":10,"w":380,"h":80,"parent":"#header"},
+		{"selector":".hero","x":50,"y":200,"w":100,"h":100},
+		{"selector":".banner","x":0,"y":400,"w":200,"h":50}
+	]`
+
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if len(result.Details) < 2 {
+		t.Fatalf("Expected summary plus detail rows, got %v", result.Details)
+	}
+	if !strings.Contains(result.Details[0], "Matched 3 out of 4") {
+		t.Errorf("Expected summary first, got %q", result.Details[0])
+	}
+
+	firstMatchIdx := -1
+	var sawMismatch, sawExtra bool
+	for i, d := range result.Details {
+		if i == 0 {
+			continue
+		}
+		if strings.HasPrefix(d, "Matched:") {
+			firstMatchIdx = i
+			break
+		}
+		if strings.Contains(d, "did not match") && strings.Contains(d, "hero") {
+			sawMismatch = true
+		}
+		if strings.Contains(d, "extra element") {
+			sawExtra = true
+		}
+	}
+	if firstMatchIdx < 0 {
+		t.Fatalf("Expected matched-pair rows after failures, got %v", result.Details)
+	}
+	if !sawMismatch {
+		t.Errorf("Expected a hero mismatch row before matched pairs, got %v", result.Details)
+	}
+	if !sawExtra {
+		t.Errorf("Expected extra Web rows before matched pairs, got %v", result.Details)
+	}
+	if firstMatchIdx < 2 {
+		t.Errorf("Expected at least one failure row immediately after summary, first Matched at %d: %v", firstMatchIdx, result.Details)
+	}
+	for i := firstMatchIdx; i < len(result.Details); i++ {
+		d := result.Details[i]
+		if !strings.HasPrefix(d, "Matched:") {
+			t.Errorf("Expected only matched pairs after first Matched row, details[%d]=%q", i, d)
+		}
+	}
+}
+
 // TestLayoutTree_IgnoreRegion verifies that nodes whose bounding-box center
 // lies inside an ignore_region are excluded from both sides (counted in
 // IgnoredCount), that a region overlapping a node but not containing its
