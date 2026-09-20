@@ -434,6 +434,69 @@ func TestLayoutTree_IgnoreNodesWildcard(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_IgnoredParentKeepsRelativeCoords verifies that excluding a
+// parent via ignore_nodes still lets children use that parent's geometry for
+// relative comparison. Absolute px would mismatch because the Web tree is
+// scaled 2x; relative ratios stay (0.25, 0.25, 0.25, 0.25) on both sides.
+//
+//  1. one_side_parent_ignored  – only the Figma parent id is ignored. The
+//     Web parent remains in the match set as an extra node, but the child
+//     pair must still match relatively (not fall into mixed absolute mode).
+//  2. both_sides_parent_ignored – both parents are ignored; only children
+//     remain and must match relatively. Ignored parents must not appear in
+//     UnresolvedParentRefs.
+func TestLayoutTree_IgnoredParentKeepsRelativeCoords(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"P","name":"dyn-container","x":0,"y":0,"w":400,"h":400},
+		{"id":"1","name":"card","x":100,"y":100,"w":100,"h":100,"parent":"P"}
+	]`
+	webJSON := `[
+		{"selector":".dyn-container","x":0,"y":0,"w":800,"h":800},
+		{"selector":".card","x":200,"y":200,"w":200,"h":200,"parent":".dyn-container"}
+	]`
+
+	t.Run("one_side_parent_ignored", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"P"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 1 {
+			t.Errorf("Expected IgnoredCount=1 (Figma parent only), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 {
+			t.Errorf("Expected child pair to match relatively, got MatchedNodes=%d (rate=%.1f%% details=%v)", result.MatchedNodes, result.MatchRate, result.Details)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success', got '%s' (rate=%.1f%% details=%v)", result.Status, result.MatchRate, result.Details)
+		}
+		if len(result.UnresolvedParentRefs) != 0 {
+			t.Errorf("Expected ignored parent not to be reported as unresolved, got %v", result.UnresolvedParentRefs)
+		}
+	})
+
+	t.Run("both_sides_parent_ignored", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"dyn-container"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 2 {
+			t.Errorf("Expected IgnoredCount=2 (both parents), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 || result.TotalNodes != 1 {
+			t.Errorf("Expected only the child pair (matched=1, total=1), got matched=%d, total=%d (details=%v)", result.MatchedNodes, result.TotalNodes, result.Details)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success', got '%s' (rate=%.1f%% details=%v)", result.Status, result.MatchRate, result.Details)
+		}
+		if len(result.UnresolvedParentRefs) != 0 {
+			t.Errorf("Expected ignored parents not to be reported as unresolved, got %v", result.UnresolvedParentRefs)
+		}
+	})
+}
+
 // TestLayoutTree_ZeroGeometryWarning verifies that when layout JSON uses
 // width/height (or other names that do not unmarshal into w/h), most nodes
 // become 0×0. CompareLayoutTrees still returns the same status as before
