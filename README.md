@@ -64,6 +64,8 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 両画像のアスペクト比（幅/高さ）の大きい方と小さい方の比が 2.0 を超える場合も、16x16 への引き伸ばしで幾何が歪むため同じ `warnings` に `aspect ratio mismatch: ...` を追加します。status / match_rate は変えません。
 
+`strict` モードでも、差分ピクセル数が 0 かつマスク後の両画像が単色ベタ塗りのとき（真っ白スクショ同士、`ignore_region` による全面マスクなど）、status / match_rate は変えず `warnings` に `degenerate comparison: both images are uniform; strict match may be vacuous (blank capture failure or over-broad ignore_region)` を付けます。透過は perceptual と同じ白背景合成で判定します。通常の明暗パターンを持つ同一ペアではこの警告は付きません。
+
 ---
 
 ## 2. パラメータリファレンス (`compare_design`)
@@ -219,7 +221,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `image_size` | string | ○ | 両画像共通のピクセル寸法。 |
 | `effective_threshold` | number | ○ | 判定に使った色差許容（未指定時は既定 0.1）。 |
 | `ignored_regions` | number | ○ | パースできた `ignore_region` の件数。 |
-| `warnings` | string[] | 条件付き | `min_match` のみ指定し `max_diff_pixels` を省略したとき（既定 0 が判定を支配する旨）。 |
+| `warnings` | string[] | 条件付き | 両画像が単色ベタ塗りで差分 0 のとき（空洞比較）、および `min_match` のみ指定し `max_diff_pixels` を省略したとき（既定 0 が判定を支配する旨）。 |
 | `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |
 | `diff_regions` | object[] | 非空時のみ | 赤い差分ピクセルの bounding box（`generate_diff` が true のとき）。 |
 

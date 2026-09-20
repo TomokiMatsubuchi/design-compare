@@ -2409,6 +2409,57 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// strict の差分 0 合格は両画像が単色ベタ塗りでも success・100% になる。
+	// status / match_rate は変えず warnings で空洞比較を通知する (Issue #227)
+	t.Run("Strict_UniformImage_Warnings", func(t *testing.T) {
+		const wantWarning = "degenerate comparison: both images are uniform; strict match may be vacuous (blank capture failure or over-broad ignore_region)"
+
+		reqUniform := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathF,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resUniform, err := compareDesignHandler(context.Background(), reqUniform)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultUniform map[string]interface{}
+		json.Unmarshal([]byte(resUniform.Content[0].(mcp.TextContent).Text), &resultUniform)
+		if resultUniform["status"] != "success" || resultUniform["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match for all-white pair (behavior unchanged), got status=%v, rate=%v", resultUniform["status"], resultUniform["match_rate"])
+		}
+		gotWarnings, ok := resultUniform["warnings"].([]interface{})
+		if !ok || len(gotWarnings) != 1 || gotWarnings[0] != wantWarning {
+			t.Errorf("Expected warnings=[%q], got %v", wantWarning, resultUniform["warnings"])
+		}
+
+		reqNormal := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathA,
+					"image_path_b": pathA,
+				},
+			},
+		}
+		resNormal, err := compareDesignHandler(context.Background(), reqNormal)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNormal map[string]interface{}
+		json.Unmarshal([]byte(resNormal.Content[0].(mcp.TextContent).Text), &resultNormal)
+		if resultNormal["status"] != "success" {
+			t.Errorf("Expected success for identical non-uniform pair, got status=%v", resultNormal["status"])
+		}
+		if _, ok := resultNormal["warnings"]; ok {
+			t.Errorf("Expected no warnings for non-uniform pair, got %v", resultNormal["warnings"])
+		}
+	})
+
 	// 背景透過PNG (Figma のフレーム書き出し等) の透過ピクセルを白背景に合成して
 	// から輝度化することを検証する (Issue #134)。アルファを無視して透過部分を
 	// 「黒」として扱うと、strict (pixelmatch は白背景に合成して比較) だけが通り、
