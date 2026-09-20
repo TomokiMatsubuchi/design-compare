@@ -241,14 +241,18 @@ func parseIgnoreRegions(s string) ([]comparator.Region, error) {
 		}
 		vals := make([]int, 4)
 		for i, f := range fields {
-			v, err := strconv.Atoi(strings.TrimSpace(f))
-			if err != nil {
-				return nil, fmt.Errorf("ignore_region values must be integers (got %q in %q)", strings.TrimSpace(f), trimmed)
+			fv, err := strconv.ParseFloat(strings.TrimSpace(f), 64)
+			if err != nil || math.IsNaN(fv) || math.IsInf(fv, 0) {
+				return nil, fmt.Errorf("ignore_region values must be numbers (got %q in %q)", strings.TrimSpace(f), trimmed)
 			}
-			if v > math.MaxInt32 {
+			rounded := math.Round(fv)
+			if rounded > math.MaxInt32 {
 				return nil, fmt.Errorf("ignore_region values must be <= %d (got %q)", int32(math.MaxInt32), trimmed)
 			}
-			vals[i] = v
+			if rounded < math.MinInt32 {
+				return nil, fmt.Errorf("ignore_region requires x,y >= 0 and w,h > 0 (got %q)", trimmed)
+			}
+			vals[i] = int(rounded)
 		}
 		x, y, w, h := vals[0], vals[1], vals[2], vals[3]
 		if x < 0 || y < 0 || w <= 0 || h <= 0 {
