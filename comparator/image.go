@@ -25,9 +25,17 @@ type Region struct {
 	H int
 }
 
-// DiffCell は aHash 16x16 グリッド上の不一致セル（0–15、行優先）。
+// AHashGridSize は perceptual (aHash) 比較のグリッド一辺のセル数。
+// AHashBlocks はセル総数。比較ループ・平均輝度・一致率と、main.go の
+// total_blocks / details 応答はここを単一の情報源とする。
+const (
+	AHashGridSize = 16
+	AHashBlocks   = AHashGridSize * AHashGridSize
+)
+
+// DiffCell は aHash グリッド上の不一致セル（0–AHashGridSize-1、行優先）。
 // perceptual 応答の diff_cells として機械可読な位置を返す。セル (grid_x, grid_y)
-// は差分画像の [grid_x/16,(grid_x+1)/16)×[grid_y/16,(grid_y+1)/16) に対応する。
+// は差分画像の対応するセル矩形にマップされる。
 type DiffCell struct {
 	GridX int `json:"grid_x"`
 	GridY int `json:"grid_y"`
@@ -319,12 +327,12 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	grayB := resizeTo16x16Gray(imgB)
 
 	var sumA, sumB uint32
-	for i := 0; i < 256; i++ {
+	for i := 0; i < AHashBlocks; i++ {
 		sumA += uint32(grayA[i])
 		sumB += uint32(grayB[i])
 	}
-	avgA := byte(sumA / 256)
-	avgB := byte(sumB / 256)
+	avgA := byte(sumA / AHashBlocks)
+	avgB := byte(sumB / AHashBlocks)
 
 	// aHash は各画像自身の平均輝度で2値化するため、一様 (ベタ塗り) な画像では
 	// 全セルが同一ビットになる (255>=255 も 0>=0 も true)。全面白 vs 全面黒の
@@ -345,14 +353,14 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	const cellScale = 16 // each aHash cell rendered as 16x16 px → 256x256 image
 	var diffImg *image.RGBA
 	if generateDiff {
-		diffImg = image.NewRGBA(image.Rect(0, 0, 16*cellScale, 16*cellScale))
+		diffImg = image.NewRGBA(image.Rect(0, 0, AHashGridSize*cellScale, AHashGridSize*cellScale))
 	}
 
 	diffBits := 0
 	var diffCells []DiffCell
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
-			i := y*16 + x
+	for y := 0; y < AHashGridSize; y++ {
+		for x := 0; x < AHashGridSize; x++ {
+			i := y*AHashGridSize + x
 			bitA := grayA[i] >= avgA
 			bitB := grayB[i] >= avgB
 			diff := bitA != bitB
@@ -384,7 +392,7 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 		diffDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
-	similarity := float64(256-diffBits) / 256.0 * 100.0
+	similarity := float64(AHashBlocks-diffBits) / float64(AHashBlocks) * 100.0
 	return similarity, diffBits, diffDataURI, outOfBounds, warnings, diffCells, nil
 }
 
@@ -469,7 +477,7 @@ func aspectRatioMismatchWarning(imgA, imgB image.Image) string {
 	if minAspect == 0 || maxAspect/minAspect <= aspectRatioMismatchThreshold {
 		return ""
 	}
-	return fmt.Sprintf("aspect ratio mismatch: image A is %dx%d (aspect %.2f), image B is %dx%d (aspect %.2f); perceptual comparison stretches both to 16x16", wA, hA, aspectA, wB, hB, aspectB)
+	return fmt.Sprintf("aspect ratio mismatch: image A is %dx%d (aspect %.2f), image B is %dx%d (aspect %.2f); perceptual comparison stretches both to %dx%d", wA, hA, aspectA, wB, hB, aspectB, AHashGridSize, AHashGridSize)
 }
 
 func isUniformGray(gray []byte) bool {
@@ -488,14 +496,14 @@ func isUniformGray(gray []byte) bool {
 func resizeTo16x16Gray(img image.Image) []byte {
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
-	gray := make([]byte, 256)
+	gray := make([]byte, AHashBlocks)
 
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
-			startX := bounds.Min.X + (x*w)/16
-			endX := bounds.Min.X + ((x+1)*w)/16
-			startY := bounds.Min.Y + (y*h)/16
-			endY := bounds.Min.Y + ((y+1)*h)/16
+	for y := 0; y < AHashGridSize; y++ {
+		for x := 0; x < AHashGridSize; x++ {
+			startX := bounds.Min.X + (x*w)/AHashGridSize
+			endX := bounds.Min.X + ((x+1)*w)/AHashGridSize
+			startY := bounds.Min.Y + (y*h)/AHashGridSize
+			endY := bounds.Min.Y + ((y+1)*h)/AHashGridSize
 
 			if endX <= startX {
 				endX = startX + 1
@@ -534,7 +542,7 @@ func resizeTo16x16Gray(img image.Image) []byte {
 			avgB := sumB / count
 
 			yVal := uint32(0.299*float64(avgR) + 0.587*float64(avgG) + 0.114*float64(avgB))
-			gray[y*16+x] = byte(yVal)
+			gray[y*AHashGridSize+x] = byte(yVal)
 		}
 	}
 	return gray
@@ -555,7 +563,7 @@ func EnsureSameSize(imgA, imgB image.Image) (image.Image, image.Image, error) {
 	wB, hB := boundsB.Dx(), boundsB.Dy()
 
 	if wA != wB || hA != hB {
-		return nil, nil, fmt.Errorf("image size mismatch: image A is %dx%d, image B is %dx%d; strict comparison requires identical sizes; capture both screenshots at the same viewport size and device pixel ratio, or if the images intentionally differ in size (e.g. device pixel ratio) use the perceptual mode, which compares macro layout after downscaling both to 16x16", wA, hA, wB, hB)
+		return nil, nil, fmt.Errorf("image size mismatch: image A is %dx%d, image B is %dx%d; strict comparison requires identical sizes; capture both screenshots at the same viewport size and device pixel ratio, or if the images intentionally differ in size (e.g. device pixel ratio) use the perceptual mode, which compares macro layout after downscaling both to %dx%d", wA, hA, wB, hB, AHashGridSize, AHashGridSize)
 	}
 	return imgA, imgB, nil
 }
