@@ -55,10 +55,10 @@ func main() {
 			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF. Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
 		),
 		mcp.WithString("figma_layout",
-			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
+			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
 		),
 		mcp.WithString("web_layout",
-			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
+			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). In layout_tree, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
 		),
 		mcp.WithString("figma_layout_path",
 			mcp.Description("Path to a JSON file containing the Figma node list metadata (alternative to figma_layout for 'layout_tree' mode; mutually exclusive with figma_layout). The file content is a JSON array like [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
@@ -175,6 +175,32 @@ func decodeImageErrorMessage(what string, err error) string {
 		return fmt.Sprintf("Failed to decode %s: %v %s", what, err, comparator.UnsupportedImageFormatHint)
 	}
 	return fmt.Sprintf("Failed to decode %s: %v", what, err)
+}
+
+// inlineLayoutJSON は layout_tree のインライン layout 引数を文字列にする。
+// MCP クライアントが JSON 配列・オブジェクトを文字列化せず渡した場合は
+// Marshal して従来の文字列入力と同じ経路へ載せる。未指定は空文字。
+// 文字列・配列・オブジェクト以外（数値・真偽・null 等）は明示エラー。
+func inlineLayoutJSON(args map[string]any, key string) (string, error) {
+	if args == nil {
+		return "", nil
+	}
+	val, ok := args[key]
+	if !ok {
+		return "", nil
+	}
+	switch v := val.(type) {
+	case string:
+		return v, nil
+	case []any, map[string]any:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array", key)
+		}
+		return string(b), nil
+	default:
+		return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array", key)
+	}
 }
 
 // resolveLayoutInput returns the layout JSON from either an inline JSON string or
@@ -431,15 +457,25 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// =================================================================
 		// 1. 構造的VRT（Layout Tree 比較）
 		// =================================================================
-		// layout JSON はインライン文字列またはファイルパスのどちらか一方で指定できる
+		// layout JSON はインライン（文字列またはネイティブ配列/オブジェクト）
+		// またはファイルパスのどちらか一方で指定できる
+		args := request.GetArguments()
+		figmaInline, err := inlineLayoutJSON(args, "figma_layout")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
+		}
 		figmaLayout, err := resolveLayoutInput(
-			request.GetString("figma_layout", ""), request.GetString("figma_layout_path", ""),
+			figmaInline, request.GetString("figma_layout_path", ""),
 			"figma_layout", "figma_layout_path")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
 		}
+		webInline, err := inlineLayoutJSON(args, "web_layout")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
+		}
 		webLayout, err := resolveLayoutInput(
-			request.GetString("web_layout", ""), request.GetString("web_layout_path", ""),
+			webInline, request.GetString("web_layout_path", ""),
 			"web_layout", "web_layout_path")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
