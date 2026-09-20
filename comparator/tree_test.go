@@ -798,3 +798,13 @@ func TestLimitLayoutTreeDetails(t *testing.T) {
 		}
 	})
 }
+
+func TestRoundMatchRateDisplay(t *testing.T) {
+	// Issue #233 の例: 97.999846% は表示 98.00 と同じ桁に丸まる
+	if got := RoundMatchRateDisplay(97.999846); got != 98.0 {
+		t.Errorf("RoundMatchRateDisplay(97.999846)=%v, want 98", got)
+	}
+	if got := RoundMatchRateDisplay(98.046875); got != 98.05 {
+		t.Errorf("RoundMatchRateDisplay(98.046875)=%v, want 98.05", got)
+	}
+}

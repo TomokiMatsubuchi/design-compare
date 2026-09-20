@@ -500,6 +500,34 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultFail["status"] != "mismatch" {
 			t.Errorf("Expected mismatch with pass_rate=70, got status=%v, rate=%v", resultFail["status"], resultFail["match_rate"])
 		}
+
+		// 生値は 66.666...% で 66.67 未満だが、表示は 66.67%。判定も表示桁に合わせる (Issue #233)
+		reqRounded := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"pass_rate":    66.67,
+				},
+			},
+		}
+		resRounded, err := compareDesignHandler(context.Background(), reqRounded)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultRounded map[string]interface{}
+		json.Unmarshal([]byte(resRounded.Content[0].(mcp.TextContent).Text), &resultRounded)
+		if resultRounded["match_rate"] != "66.67%" {
+			t.Errorf("Expected displayed match_rate=66.67%%, got %v", resultRounded["match_rate"])
+		}
+		if resultRounded["status"] != "success" {
+			t.Errorf("Expected success when displayed match_rate equals pass_rate=66.67, got status=%v value=%v", resultRounded["status"], resultRounded["match_rate_value"])
+		}
+		if got, want := resultRounded["match_rate_value"], float64(2)/3*100; got != want {
+			t.Errorf("Expected raw match_rate_value=%v, got %v", want, got)
+		}
 	})
 
 	// =================================================================
@@ -2566,6 +2594,51 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	t.Run("Perceptual_MinMatch_DisplayRounding", func(t *testing.T) {
+		// 16x16 の左右分割で 5 セルだけ反転すると一致率は 98.046875% → 表示 98.05%
+		imgBase := generateSplitImage(16, 16, color.White, color.Black)
+		imgFlip := generateSplitImage(16, 16, color.White, color.Black)
+		rgba, ok := imgFlip.(*image.RGBA)
+		if !ok {
+			t.Fatalf("expected *image.RGBA from generateSplitImage")
+		}
+		for i := 0; i < 5; i++ {
+			rgba.Set(i, 0, color.Black)
+		}
+		pathBase := saveTempImage(t, tmpDir, "perceptual-round-base.png", imgBase)
+		pathFlip := saveTempImage(t, tmpDir, "perceptual-round-flip.png", imgFlip)
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathBase,
+					"image_path_b": pathFlip,
+					"min_match":    98.05,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["diff_blocks"] != float64(5) {
+			t.Fatalf("Expected diff_blocks=5, got %v", result["diff_blocks"])
+		}
+		wantRaw := float64(256-5) / 256 * 100
+		if got := result["match_rate_value"]; got != wantRaw {
+			t.Errorf("Expected raw match_rate_value=%v, got %v", wantRaw, got)
+		}
+		if result["match_rate"] != "98.05%" {
+			t.Errorf("Expected displayed match_rate=98.05%%, got %v", result["match_rate"])
+		}
+		if result["status"] != "success" {
+			t.Errorf("Expected success when displayed match_rate equals min_match=98.05, got status=%v", result["status"])
+		}
+	})
+
 	t.Run("Perceptual_MinMatch_AcceptsLowValue", func(t *testing.T) {
 		// min_match は 0.0-100.0 を許容する (threshold と異なり 1.0 未満でもエラーにしない)
 		req := mcp.CallToolRequest{
@@ -3399,6 +3472,52 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(resOnly.Content[0].(mcp.TextContent).Text), &resultOnly)
 		if resultOnly["status"] != "mismatch" {
 			t.Errorf("Expected mismatch when max_diff_pixels is exceeded even if min_match is met, got status=%v", resultOnly["status"])
+		}
+	})
+
+	t.Run("StrictMode_MinMatch_DisplayRounding", func(t *testing.T) {
+		// 200x100=20,000px・差分 401px → 一致率 97.995% → 表示 98.00%、生値は 98 未満
+		imgWhite := generateSolidImage(200, 100, color.White)
+		imgDiff := generateSolidImage(200, 100, color.White)
+		rgba, ok := imgDiff.(*image.RGBA)
+		if !ok {
+			t.Fatalf("expected *image.RGBA from generateSolidImage")
+		}
+		for i := 0; i < 401; i++ {
+			rgba.Set(i%200, i/200, color.Black)
+		}
+		pathWhite := saveTempImage(t, tmpDir, "strict-round-white.png", imgWhite)
+		pathDiff := saveTempImage(t, tmpDir, "strict-round-diff.png", imgDiff)
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "strict",
+					"image_path_a":    pathWhite,
+					"image_path_b":    pathDiff,
+					"min_match":       98.0,
+					"max_diff_pixels": 401.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["diff_pixels"] != float64(401) || result["total_pixels"] != float64(20000) {
+			t.Fatalf("Expected 401/20000 diff pixels, got diff=%v total=%v", result["diff_pixels"], result["total_pixels"])
+		}
+		wantRaw := (20000.0 - 401.0) / 20000.0 * 100.0
+		if got := result["match_rate_value"]; got != wantRaw {
+			t.Errorf("Expected raw match_rate_value=%v, got %v", wantRaw, got)
+		}
+		if result["match_rate"] != "98.00%" {
+			t.Errorf("Expected displayed match_rate=98.00%%, got %v", result["match_rate"])
+		}
+		if result["status"] != "success" {
+			t.Errorf("Expected success when displayed match_rate equals min_match=98, got status=%v value=%v", result["status"], result["match_rate_value"])
 		}
 	})
 
