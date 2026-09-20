@@ -887,6 +887,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := result1["matched_nodes"]; got != float64(1) {
 			t.Errorf("Expected matched_nodes=1, got %v", got)
 		}
+		if got := result1["absolute_mode_pairs"]; got != float64(1) {
+			t.Errorf("Expected absolute_mode_pairs=1, got %v", got)
+		}
 
 		// ケース2: 同じ構成だが絶対座標が実際に異なる場合は不一致のまま
 		// （対称化によって誤一致が生まれないことの保証）
@@ -1130,8 +1133,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !ok {
 			t.Fatalf("Expected details array, got %v", resultAll["details"])
 		}
-		if len(detailsAll) != 4 {
-			t.Fatalf("Expected 4 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
+		if len(detailsAll) != 5 {
+			t.Fatalf("Expected 5 details when max_details is omitted (summary + abs-mode note + 3 pairs), got %d: %v", len(detailsAll), detailsAll)
 		}
 
 		reqCap := mcp.CallToolRequest{
@@ -1163,7 +1166,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Errorf("Expected summary line first, got %v", detailsCap[0])
 		}
 		omit, _ := detailsCap[len(detailsCap)-1].(string)
-		if omit != "... and 2 more details omitted (max_details=2)" {
+		if omit != "... and 3 more details omitted (max_details=2)" {
 			t.Errorf("Expected omit line, got %q", omit)
 		}
 	})

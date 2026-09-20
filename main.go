@@ -547,7 +547,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"effective_threshold": tolerance,
 			"pass_rate":           passRate,
 			"ignored_count":       treeResult.IgnoredCount,
-			"extra_web_count":     treeResult.ExtraWebCount,
+			"extra_web_count":      treeResult.ExtraWebCount,
+			"absolute_mode_pairs":  treeResult.AbsoluteModePairs,
 		}
 		// ignore_nodes 指定時に一致しなかったエントリ（スペルミス等）のフィードバックを返す
 		if len(treeResult.UnmatchedIgnores) > 0 {
