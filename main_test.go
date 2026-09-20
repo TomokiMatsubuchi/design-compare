@@ -1423,6 +1423,87 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.12d. layout_tree モード: ネイティブ JSON 配列のインライン入力
+	// =================================================================
+	t.Run("LayoutTree_NativeJSONArray", func(t *testing.T) {
+		figmaNative := []any{
+			map[string]any{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			map[string]any{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"},
+		}
+		webNative := []any{
+			map[string]any{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			map[string]any{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+		}
+		webString := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100},{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"}]`
+
+		reqNative := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaNative,
+					"web_layout":   webNative,
+				},
+			},
+		}
+		resNative, err := compareDesignHandler(context.Background(), reqNative)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resNative.IsError {
+			t.Fatalf("Expected native JSON arrays to compare, got error: %v", resNative.Content[0].(mcp.TextContent).Text)
+		}
+		var resultNative map[string]interface{}
+		json.Unmarshal([]byte(resNative.Content[0].(mcp.TextContent).Text), &resultNative)
+		if resultNative["status"] != "success" || resultNative["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match with native arrays, got status=%v, rate=%v", resultNative["status"], resultNative["match_rate"])
+		}
+
+		// 片側だけネイティブ配列、片側は従来の文字列でも成功する
+		reqMixed := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaNative,
+					"web_layout":   webString,
+				},
+			},
+		}
+		resMixed, err := compareDesignHandler(context.Background(), reqMixed)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resMixed.IsError {
+			t.Fatalf("Expected mixed string/array layout input to compare, got error: %v", resMixed.Content[0].(mcp.TextContent).Text)
+		}
+		var resultMixed map[string]interface{}
+		json.Unmarshal([]byte(resMixed.Content[0].(mcp.TextContent).Text), &resultMixed)
+		if resultMixed["status"] != "success" || resultMixed["match_rate"] != "100.00%" {
+			t.Errorf("Expected success with mixed string/array input, got status=%v, rate=%v", resultMixed["status"], resultMixed["match_rate"])
+		}
+
+		reqBadType := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": 123,
+					"web_layout":   webString,
+				},
+			},
+		}
+		resBadType, err := compareDesignHandler(context.Background(), reqBadType)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resBadType.IsError {
+			t.Fatal("expected IsError when figma_layout is a number")
+		}
+		gotBad := resBadType.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array") {
+			t.Errorf("got %q", gotBad)
+		}
+	})
+
+	// =================================================================
 	// 2.13. layout_tree モード: ignore_region による領域除外
 	// =================================================================
 	// 画像モードと同じ ignore_region を layout_tree でも受け付ける。
