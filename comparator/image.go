@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"github.com/orisano/pixelmatch"
+	_ "golang.org/x/image/webp"
 )
 
 // Region は画像比較時に除外（マスク）する矩形領域を表す（ピクセル座標）。
@@ -64,13 +65,13 @@ const maxImageDimension = 8192
 // ヒント (Issue #122 の指定文面)。strict (RunPixelMatch) と perceptual (main.go)
 // の両モードで同じ文面を使うため exported の共有定数とし、文面修正はこの
 // 1 箇所で済むようにする。
-const UnsupportedImageFormatHint = "(supported: PNG, JPEG, GIF; WebP/SVG are not supported)"
+const UnsupportedImageFormatHint = "(supported: PNG, JPEG, GIF, WebP; SVG and animated WebP are not supported)"
 
 // decodeImageError は image.Decode の失敗エラーに "failed to decode <画像>" の
 // コンテキストを付けて返す。対応外の画像形式 (image.ErrFormat) のときだけ
-// UnsupportedImageFormatHint を付ける。PNG/JPEG/GIF だが破損・途中切れの
-// ファイル (例: unexpected EOF) では「WebP/SVG は非対応」と読める文面が
-// 原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
+// UnsupportedImageFormatHint を付ける。PNG/JPEG/GIF/WebP だが破損・途中切れの
+// ファイル (例: unexpected EOF) では「SVG and animated WebP are not supported」
+// と読める文面が原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
 func decodeImageError(what string, err error) error {
 	if errors.Is(err, image.ErrFormat) {
 		return fmt.Errorf("failed to decode %s: %w %s", what, err, UnsupportedImageFormatHint)
