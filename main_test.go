@@ -252,6 +252,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := resultMatch["unresolved_parent_refs"]; ok {
 			t.Errorf("Expected no unresolved_parent_refs for valid parent ids, got %v", resultMatch["unresolved_parent_refs"])
 		}
+		if _, ok := resultMatch["mismatched_nodes"]; ok {
+			t.Errorf("Expected no mismatched_nodes when all pairs match, got %v", resultMatch["mismatched_nodes"])
+		}
 		// 一致ペアが details に出力されることの検証
 		detailsMatch, ok := resultMatch["details"].([]interface{})
 		if !ok {
@@ -294,6 +297,35 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := resultMismatch["total_nodes"]; got != float64(3) {
 			t.Errorf("Expected total_nodes=3, got %v", got)
+		}
+		mismatched, ok := resultMismatch["mismatched_nodes"].([]interface{})
+		if !ok || len(mismatched) != 1 {
+			t.Fatalf("Expected 1 mismatched_nodes entry, got %v", resultMismatch["mismatched_nodes"])
+		}
+		mn, ok := mismatched[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected mismatched_nodes[0] object, got %v", mismatched[0])
+		}
+		if mn["figma_name"] != "nav" || mn["web_selector"] != ".nav" {
+			t.Errorf("Expected figma_name=nav web_selector=.nav, got %v", mn)
+		}
+		dx, _ := mn["dx"].(float64)
+		dy, _ := mn["dy"].(float64)
+		dw, _ := mn["dw"].(float64)
+		dh, _ := mn["dh"].(float64)
+		diff, _ := mn["diff"].(float64)
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+			diff, 0.15, dx, dy, dw, dh)
+		detailsMismatch, _ := resultMismatch["details"].([]interface{})
+		foundGeom := false
+		for _, d := range detailsMismatch {
+			if s, ok := d.(string); ok && strings.Contains(s, detailLine) {
+				foundGeom = true
+				break
+			}
+		}
+		if !foundGeom {
+			t.Errorf("Expected details to contain %q (same numbers as mismatched_nodes), got %v", detailLine, detailsMismatch)
 		}
 
 		// C: 除外項目を指定して一致させるケース (Figma node名 "nav" または Web selector ".nav" を除外)

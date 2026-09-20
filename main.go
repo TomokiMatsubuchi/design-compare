@@ -563,6 +563,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(treeResult.ExtraWebNodes) > 0 {
 			responseMap["extra_web_nodes"] = treeResult.ExtraWebNodes
 		}
+		// tolerance 超過の不一致ペアを、details と同じ数値で構造化して返す（0件時は省略）。
+		if len(treeResult.MismatchedNodes) > 0 {
+			responseMap["mismatched_nodes"] = treeResult.MismatchedNodes
+		}
 		// width/height などキー名の揺れで幾何が全て 0 になると一致率 100% になるため、
 		// unmatched_ignores と同様に誤用検出のフィードバックを載せる（status は非破壊）。
 		if treeResult.ZeroGeometryWarning != "" {

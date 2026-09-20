@@ -1,6 +1,7 @@
 package comparator
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -171,6 +172,10 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if !found {
 			t.Errorf("Expected a detail stating no unused Web element is left for 'childB', got details: %v", result.Details)
 		}
+		// 候補枯渇は幾何差分ではないので mismatched_nodes には載せない。
+		if len(result.MismatchedNodes) != 0 {
+			t.Errorf("Expected no mismatched_nodes when no unused Web element is left, got %#v", result.MismatchedNodes)
+		}
 	})
 
 	t.Run("tolerance_exceeded", func(t *testing.T) {
@@ -198,6 +203,31 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("Expected a detail stating the geometric diff exceeds tolerance, got details: %v", result.Details)
+		}
+		if len(result.MismatchedNodes) != 1 {
+			t.Fatalf("Expected 1 mismatched_nodes entry, got %#v", result.MismatchedNodes)
+		}
+		mn := result.MismatchedNodes[0]
+		if mn.FigmaName != "hero" || mn.WebSelector != ".hero" {
+			t.Errorf("Expected figma_name=hero web_selector=.hero, got figma_name=%q web_selector=%q", mn.FigmaName, mn.WebSelector)
+		}
+		// details は %.2f で同じ値を出す。Figma(0,0,100,100) vs Web(50,0,100,100) → dx=-50。
+		wantDX, wantDY, wantDW, wantDH, wantDiff := -50.0, 0.0, 0.0, 0.0, 50.0
+		if mn.DX != wantDX || mn.DY != wantDY || mn.DW != wantDW || mn.DH != wantDH || mn.Diff != wantDiff {
+			t.Errorf("Expected dx=%g dy=%g dw=%g dh=%g diff=%g, got dx=%g dy=%g dw=%g dh=%g diff=%g",
+				wantDX, wantDY, wantDW, wantDH, wantDiff, mn.DX, mn.DY, mn.DW, mn.DH, mn.Diff)
+		}
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+			mn.Diff, 0.15, mn.DX, mn.DY, mn.DW, mn.DH)
+		var detailsMatch bool
+		for _, d := range result.Details {
+			if strings.Contains(d, detailLine) {
+				detailsMatch = true
+				break
+			}
+		}
+		if !detailsMatch {
+			t.Errorf("Expected details to contain %q (same numbers as mismatched_nodes), got %v", detailLine, result.Details)
 		}
 	})
 }
