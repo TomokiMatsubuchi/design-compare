@@ -1055,6 +1055,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultOn["extra_web_count"]; got != float64(1) {
 			t.Errorf("Expected extra_web_count=1, got %v", got)
 		}
+		if got := resultOn["count_extra_web"]; got != true {
+			t.Errorf("Expected count_extra_web=true in response, got %v", got)
+		}
 		extraOn, hasExtraOn := resultOn["extra_web_nodes"].([]interface{})
 		if !hasExtraOn || len(extraOn) != 1 || extraOn[0] != ".banner" {
 			t.Errorf("Expected extra_web_nodes=[\".banner\"], got %v", resultOn["extra_web_nodes"])
@@ -1088,6 +1091,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		// （分母への加算のみが本フラグで制御される）
 		if got := resultOff["extra_web_count"]; got != float64(1) {
 			t.Errorf("Expected extra_web_count=1 even when count_extra_web is off, got %v", got)
+		}
+		if got := resultOff["count_extra_web"]; got != false {
+			t.Errorf("Expected count_extra_web=false in response when unset, got %v", got)
 		}
 		extraOff, hasExtraOff := resultOff["extra_web_nodes"].([]interface{})
 		if !hasExtraOff || len(extraOff) != 1 || extraOff[0] != ".banner" {

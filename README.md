@@ -187,6 +187,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `ignored_count` | number | ○ | `ignore_nodes` / `ignore_region` で除外したノード数。 |
 | `effective_threshold` | number | ○ | 判定に使った BoundingBox 許容差（未指定時は既定 0.15）。 |
 | `pass_rate` | number | ○ | 合格に使った最低一致率 %（未指定時は既定 98.0）。 |
+| `count_extra_web` | boolean | ○ | 余分な Web ノードを一致率の分母に加算したか（未指定時は既定 `false`）。 |
 | `extra_web_count` | number | ○ | どの Figma ノードにもマッチしなかった Web ノード数。 |
 | `unmatched_ignores` | string[] | 非空時のみ | `ignore_nodes` のうちどのノードにも一致しなかったエントリ。 |
 | `unmatched_ignore_regions` | string[] | 非空時のみ | どのノード中心とも重ならない `ignore_region`。 |
