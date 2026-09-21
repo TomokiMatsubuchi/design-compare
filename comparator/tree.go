@@ -27,20 +27,34 @@ type WebNode struct {
 	Parent   string  `json:"parent,omitempty"`
 }
 
+// MismatchedNode は tolerance 超過で不一致になった Figma/Web ペアの
+// 機械可読な幾何差分。details の "geometric diff … (dx: …)" と同じ数値を
+// 文字列パースなしで扱うためのフィールド。
+type MismatchedNode struct {
+	FigmaName   string  `json:"figma_name"`
+	WebSelector string  `json:"web_selector"`
+	Diff        float64 `json:"diff"`
+	DX          float64 `json:"dx"`
+	DY          float64 `json:"dy"`
+	DW          float64 `json:"dw"`
+	DH          float64 `json:"dh"`
+}
+
 type LayoutTreeResult struct {
-	MatchRate              float64  `json:"match_rate"`
-	Status                 string   `json:"status"`
-	Details                []string `json:"details"`
-	MatchedNodes           int      `json:"matched_nodes"`
-	TotalNodes             int      `json:"total_nodes"`
-	IgnoredCount           int      `json:"ignored_count"`
-	UnmatchedIgnores       []string `json:"unmatched_ignores,omitempty"`
-	UnmatchedIgnoreRegions []string `json:"unmatched_ignore_regions,omitempty"`
-	ExtraWebCount          int      `json:"extra_web_count"`
-	ExtraWebNodes          []string `json:"extra_web_nodes,omitempty"`
-	ZeroGeometryWarning    string   `json:"zero_geometry_warning,omitempty"`
-	UnresolvedParentRefs   []string `json:"unresolved_parent_refs,omitempty"`
-	AbsoluteModePairs      int      `json:"absolute_mode_pairs"`
+	MatchRate              float64          `json:"match_rate"`
+	Status                 string           `json:"status"`
+	Details                []string         `json:"details"`
+	MatchedNodes           int              `json:"matched_nodes"`
+	TotalNodes             int              `json:"total_nodes"`
+	IgnoredCount           int              `json:"ignored_count"`
+	UnmatchedIgnores       []string         `json:"unmatched_ignores,omitempty"`
+	UnmatchedIgnoreRegions []string         `json:"unmatched_ignore_regions,omitempty"`
+	ExtraWebCount          int              `json:"extra_web_count"`
+	ExtraWebNodes          []string         `json:"extra_web_nodes,omitempty"`
+	MismatchedNodes        []MismatchedNode `json:"mismatched_nodes,omitempty"`
+	ZeroGeometryWarning    string           `json:"zero_geometry_warning,omitempty"`
+	UnresolvedParentRefs   []string         `json:"unresolved_parent_refs,omitempty"`
+	AbsoluteModePairs      int              `json:"absolute_mode_pairs"`
 }
 
 const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
@@ -58,6 +72,12 @@ const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the lay
 // どのノード中心とも重ならない領域は UnmatchedIgnoreRegions に "x,y,w,h" で入る
 // （ignore_nodes の unmatched_ignores / 画像モードの out_of_bounds_regions と同種）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
+// RoundMatchRateDisplay は表示 match_rate (%.2f) と同じ小数第2位に丸める。
+// 合否判定を表示桁と一致させるために使う。match_rate_value には適用しない。
+func RoundMatchRateDisplay(rate float64) float64 {
+	return math.Round(rate*100) / 100
+}
+
 func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool, ignoreRegions []Region) (*LayoutTreeResult, error) {
 	// tolerance / passRate の範囲検証は呼び出し元 (main.go) で行われるため、
 	// ここでは負値のデフォルト補完は不要。
@@ -99,6 +119,15 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// w/h が 0 のノードになる。両側が全零だと差分 0・一致率 100% になるため、
 	// 過半数が零幾何なら非破壊の警告を応答へ載せる（status は変えない）。
 	zeroGeometryWarning := zeroGeometryWarningIfMajority(fNodes, wNodes)
+
+	// 親参照用インデックスは ignore フィルタ前の元リストから一度だけ構築する。
+	// 除外はマッチング対象から外すだけにし、親の座標解決は元ジオメトリを使う。
+	// フィルタ後リストから作ると、除外された親を持つ子が親解決に失敗し
+	// 絶対座標モードへ静かに落ちる（片側だけ除外すると非対称になる）。
+	// 同一キー（Figma ID / Web セレクタ）が重複する場合は先勝ちとし、線形走査で
+	// 「最初に見つかったノード」を返していた従来挙動を維持する。
+	figmaByID := indexFigmaNodesByID(fNodes)
+	webBySelector := indexWebNodesBySelector(wNodes)
 
 	// ignoreList に基づいてノードを除外し、適用結果（除外数・無効なエントリ）を集計する。
 	// 末尾が '*' のエントリはプレフィックス一致（例: '.ad-*' は '.ad-banner' に一致）として
@@ -206,22 +235,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 	}
 
-	// 親ノード検索をループ内の線形走査で行うと全体で O(n_f × n_w²) になるため、
-	// フィルタリング後のリストから親参照用インデックスを一度だけ構築して O(1) 参照にする。
-	// 同一キー（Figma ID / Web セレクタ）が重複する場合は先勝ちとし、線形走査で
-	// 「最初に見つかったノード」を返していた従来挙動を維持する。
-	figmaByID := make(map[string]*FigmaNode, len(fNodes))
-	for i := range fNodes {
-		if _, ok := figmaByID[fNodes[i].ID]; !ok {
-			figmaByID[fNodes[i].ID] = &fNodes[i]
-		}
-	}
-	webBySelector := make(map[string]*WebNode, len(wNodes))
-	for i := range wNodes {
-		if _, ok := webBySelector[wNodes[i].Selector]; !ok {
-			webBySelector[wNodes[i].Selector] = &wNodes[i]
-		}
-	}
 	unresolvedParentRefs := collectUnresolvedParentRefs(fNodes, wNodes, figmaByID, webBySelector)
 
 	if len(fNodes) == 0 || len(wNodes) == 0 {
@@ -275,6 +288,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var matchedPairDetails []string
 	var mismatchDetails []string
 	var extraWebDetails []string
+	var mismatchedNodes []MismatchedNode
 
 	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
 	usedWeb := make(map[int]bool)
@@ -353,6 +367,15 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
 			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			mismatchedNodes = append(mismatchedNodes, MismatchedNode{
+				FigmaName:   fn.Name,
+				WebSelector: bestMatchSelector,
+				Diff:        minDiff,
+				DX:          bestDiffX,
+				DY:          bestDiffY,
+				DW:          bestDiffW,
+				DH:          bestDiffH,
+			})
 		}
 	}
 
@@ -379,7 +402,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 	matchRate := (float64(matchedCount) / float64(totalCompared)) * 100.0
 	status := "success"
-	if matchRate < passRate { // 合格ライン（パラメータ化）
+	// 合否は表示 match_rate (%.2f) と同じ桁に丸めた値で判定する (Issue #233)
+	if RoundMatchRateDisplay(matchRate) < passRate { // 合格ライン（パラメータ化）
 		status = "mismatch"
 	}
 
@@ -390,9 +414,11 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	if absoluteModePairs > 0 {
 		details = append(details, fmt.Sprintf("%d pairs were compared in absolute pixel space (no usable parent); tolerance applies to pixel units there", absoluteModePairs))
 	}
-	details = append(details, matchedPairDetails...)
+	// 不一致と余分なWebノードを一致ペアより先に置く。ノード数が多いページで
+	// "Matched: …" の羅列の後ろに失敗行が埋もれないようにする。
 	details = append(details, mismatchDetails...)
 	details = append(details, extraWebDetails...)
+	details = append(details, matchedPairDetails...)
 
 	return &LayoutTreeResult{
 		MatchRate:              matchRate,
@@ -405,6 +431,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 		ExtraWebCount:          len(extraWebSelectors),
 		ExtraWebNodes:          extraWebSelectors,
+		MismatchedNodes:        mismatchedNodes,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
 		AbsoluteModePairs:      absoluteModePairs,
@@ -515,6 +542,28 @@ func boundingBoxCenterInRegions(x, y, w, h float64, regions []Region, hits []int
 		}
 	}
 	return matched
+}
+
+// indexFigmaNodesByID は親参照用インデックス（ID → ノード）を先勝ちで構築する。
+func indexFigmaNodesByID(nodes []FigmaNode) map[string]*FigmaNode {
+	byID := make(map[string]*FigmaNode, len(nodes))
+	for i := range nodes {
+		if _, ok := byID[nodes[i].ID]; !ok {
+			byID[nodes[i].ID] = &nodes[i]
+		}
+	}
+	return byID
+}
+
+// indexWebNodesBySelector は親参照用インデックス（セレクタ → ノード）を先勝ちで構築する。
+func indexWebNodesBySelector(nodes []WebNode) map[string]*WebNode {
+	bySelector := make(map[string]*WebNode, len(nodes))
+	for i := range nodes {
+		if _, ok := bySelector[nodes[i].Selector]; !ok {
+			bySelector[nodes[i].Selector] = &nodes[i]
+		}
+	}
+	return bySelector
 }
 
 // getFigmaParent は親参照用インデックス（ID → ノード）から親ノードを O(1) で引く。

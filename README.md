@@ -64,6 +64,8 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 両画像のアスペクト比（幅/高さ）の大きい方と小さい方の比が 2.0 を超える場合も、16x16 への引き伸ばしで幾何が歪むため同じ `warnings` に `aspect ratio mismatch: ...` を追加します。status / match_rate は変えません。
 
+`strict` モードでも、差分ピクセル数が 0 かつマスク後の両画像が単色ベタ塗りのとき（真っ白スクショ同士、`ignore_region` による全面マスクなど）、status / match_rate は変えず `warnings` に `degenerate comparison: both images are uniform; strict match may be vacuous (blank capture failure or over-broad ignore_region)` を付けます。透過は perceptual と同じ白背景合成で判定します。通常の明暗パターンを持つ同一ペアではこの警告は付きません。
+
 ---
 
 ## 2. パラメータリファレンス (`compare_design`)
@@ -76,10 +78,10 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 | パラメータ | 型 | 対象モード | 説明 |
 | :--- | :--- | :--- | :--- |
-| `image_path_a` | string | `perceptual` / `strict` | 参照画像 A（Figma 側）のローカルファイルパス。`image_a_base64` と排他で、どちらか一方が必須。対応フォーマット: PNG / JPEG / GIF。 |
-| `image_path_b` | string | `perceptual` / `strict` | 比較対象画像 B（Web 側）のローカルファイルパス。`image_b_base64` と排他で、どちらか一方が必須。対応フォーマット: PNG / JPEG / GIF。 |
-| `image_a_base64` | string | `perceptual` / `strict` | 参照画像 A の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。改行・スペース等の ASCII 空白はデコード前に除去する（MIME 76 文字折り返しなど）。`image_path_a` と排他。対応フォーマット: PNG / JPEG / GIF。 |
-| `image_b_base64` | string | `perceptual` / `strict` | 比較対象画像 B の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。改行・スペース等の ASCII 空白はデコード前に除去する（MIME 76 文字折り返しなど）。`image_path_b` と排他。対応フォーマット: PNG / JPEG / GIF。 |
+| `image_path_a` | string | `perceptual` / `strict` | 参照画像 A（Figma 側）のローカルファイルパス。`image_a_base64` と排他で、どちらか一方が必須。対応フォーマット: PNG / JPEG / GIF / WebP（静止画。アニメーション WebP は非対応）。 |
+| `image_path_b` | string | `perceptual` / `strict` | 比較対象画像 B（Web 側）のローカルファイルパス。`image_b_base64` と排他で、どちらか一方が必須。対応フォーマット: PNG / JPEG / GIF / WebP（静止画。アニメーション WebP は非対応）。 |
+| `image_a_base64` | string | `perceptual` / `strict` | 参照画像 A の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。改行・スペース等の ASCII 空白はデコード前に除去する（MIME 76 文字折り返しなど）。`image_path_a` と排他。対応フォーマット: PNG / JPEG / GIF / WebP（静止画。アニメーション WebP は非対応）。 |
+| `image_b_base64` | string | `perceptual` / `strict` | 比較対象画像 B の base64 エンコード文字列。`data:image/png;base64,...` 形式の data URI も受け付け（`;base64,` までのプレフィックスは自動で除去）。改行・スペース等の ASCII 空白はデコード前に除去する（MIME 76 文字折り返しなど）。`image_path_b` と排他。対応フォーマット: PNG / JPEG / GIF / WebP（静止画。アニメーション WebP は非対応）。 |
 | `figma_layout` | string | `layout_tree` | Figma ノードリストの JSON 文字列（インライン指定）。`figma_layout_path` と排他で、どちらか一方が必須。 |
 | `figma_layout_path` | string | `layout_tree` | Figma ノードリスト JSON ファイルのローカルパス。`figma_layout` と排他。 |
 | `web_layout` | string | `layout_tree` / `layout_integrity` | Web DOM ノードリストの JSON 文字列（インライン指定）。`web_layout_path` と排他で、どちらか一方が必須。 |
@@ -92,13 +94,13 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `threshold` | number | `layout_tree` | 0.0–1.0 | 0.15 | BoundingBox の幾何差分（相対座標・相対サイズの L2 距離）に対する許容差。 |
 | `threshold` | number | `perceptual` | 1.0–100.0 | 98.0 | 後方互換のため `min_match`（一致率%）のエイリアスとして受け付ける。1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐためエラーになる。`min_match` との同時指定もエラー。**`min_match` の使用を推奨。** |
 | `threshold` | number | `strict` | 0.0–1.0 | 0.1 | 色差の許容度（pixelmatch の color diff tolerance）。 |
-| `min_match` | number | `perceptual` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。実効値（`threshold` エイリアス解決後を含む）は応答の `min_match` として常に返される。 |
-| `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。`max_diff_pixels` を省略したまま指定すると既定 0 が判定を支配するため、status / match_rate は変えず応答へ `warnings` を付ける。 |
-| `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。 |
+| `min_match` | number | `perceptual` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。実効値（`threshold` エイリアス解決後を含む）は応答の `min_match` として常に返される。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
+| `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。`max_diff_pixels` を省略したまま指定すると既定 0 が判定を支配するため、status / match_rate は変えず応答へ `warnings` を付ける。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
+| `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
 | `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
 | `include_aa` | boolean | `strict` | true / false | false | `true` の場合、アンチエイリアス境界ピクセルも差分として数える（pixelmatch の IncludeAntiAlias）。既定 `false` は現行どおり AA 境界を差分カウントから除外する。 |
 | `ignore_nodes` | string | `layout_tree` / `layout_integrity` | — | 空 | 比較から除外する識別子のカンマ区切りリスト。`layout_tree` では Figma Node ID / Node Name / Web Selector、`layout_integrity` では Web Selector。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。全ノードが除外されて比較ペアがなくなった場合は比較を実施せず、status は `skipped`（比較未実施）になる。 |
-| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、パースできた領域数は応答の `ignored_regions` に常に含まれる。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`perceptual` で両画像のサイズが異なる場合、同じ座標は各画像の絶対ピクセルとして適用され、`details` に注記が入る。`layout_tree` / `layout_integrity` では BoundingBox の中心点が領域内にあるノードを除外し（`layout_tree` では両側から、`layout_integrity` では Web ノードを）、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。どのノード中心とも重ならない領域は `unmatched_ignore_regions` として応答される。 |
+| `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。各値は小数可で、格納時に整数へ丸められる。`perceptual` / `strict` では比較前に両画像を白でマスクし、パースできた領域数は応答の `ignored_regions` に常に含まれる。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`perceptual` で両画像のサイズが異なる場合、同じ座標は各画像の絶対ピクセルとして適用され、`details` に注記が入る。`layout_tree` / `layout_integrity` では BoundingBox の中心点が領域内にあるノードを除外し（`layout_tree` では両側から、`layout_integrity` では Web ノードを）、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。どのノード中心とも重ならない領域は `unmatched_ignore_regions` として応答される。 |
 | `viewport_preset` | string | `layout_integrity` | `ipad_portrait` / `ipad_landscape` | 未指定時は縦向き相当 | iPad 既定サイズ。`ipad_portrait` = 768×1024、`ipad_landscape` = 1024×768。 |
 | `viewport_width` | number | `layout_integrity` | 0 より大 | 768 | CSS ピクセルのビューポート幅。指定時は `viewport_preset` の幅を上書きする。 |
 | `viewport_height` | number | `layout_integrity` | 0 より大 | 1024 | CSS ピクセルのビューポート高さ。指定時は `viewport_preset` の高さを上書きする。 |
@@ -188,11 +190,13 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `ignored_count` | number | ○ | `ignore_nodes` / `ignore_region` で除外したノード数。 |
 | `effective_threshold` | number | ○ | 判定に使った BoundingBox 許容差（未指定時は既定 0.15）。 |
 | `pass_rate` | number | ○ | 合格に使った最低一致率 %（未指定時は既定 98.0）。 |
+| `count_extra_web` | boolean | ○ | 余分な Web ノードを一致率の分母に加算したか（未指定時は既定 `false`）。 |
 | `extra_web_count` | number | ○ | どの Figma ノードにもマッチしなかった Web ノード数。 |
 | `absolute_mode_pairs` | number | ○ | 実比較ペアのうち絶対座標（生 px）空間で比較された件数。この件数では `threshold` は比率ではなく px に対して適用される。 |
 | `unmatched_ignores` | string[] | 非空時のみ | `ignore_nodes` のうちどのノードにも一致しなかったエントリ。 |
 | `unmatched_ignore_regions` | string[] | 非空時のみ | どのノード中心とも重ならない `ignore_region`。 |
 | `extra_web_nodes` | string[] | 非空時のみ | 余分な Web ノードのセレクタ。 |
+| `mismatched_nodes` | object[] | 非空時のみ | tolerance 超過の不一致ペア。`figma_name` / `web_selector` / `diff` / `dx` / `dy` / `dw` / `dh`（`details` の幾何差分と同じ数値）。 |
 | `zero_geometry_warning` | string | 非空時のみ | 過半数ノードの `w`/`h` が 0 のときの誤用検出。 |
 | `unresolved_parent_refs` | string[] | 非空時のみ | 解決できない `parent` 参照。 |
 
@@ -221,7 +225,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `image_size` | string | ○ | 両画像共通のピクセル寸法。 |
 | `effective_threshold` | number | ○ | 判定に使った色差許容（未指定時は既定 0.1）。 |
 | `ignored_regions` | number | ○ | パースできた `ignore_region` の件数。 |
-| `warnings` | string[] | 条件付き | `min_match` のみ指定し `max_diff_pixels` を省略したとき（既定 0 が判定を支配する旨）。 |
+| `warnings` | string[] | 条件付き | 両画像が単色ベタ塗りで差分 0 のとき（空洞比較）、および `min_match` のみ指定し `max_diff_pixels` を省略したとき（既定 0 が判定を支配する旨）。 |
 | `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |
 | `diff_regions` | object[] | 非空時のみ | 赤い差分ピクセルの bounding box（`generate_diff` が true のとき）。 |
 

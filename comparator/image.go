@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"github.com/orisano/pixelmatch"
+	_ "golang.org/x/image/webp"
 )
 
 // Region は画像比較時に除外（マスク）する矩形領域を表す（ピクセル座標）。
@@ -25,9 +26,17 @@ type Region struct {
 	H int
 }
 
-// DiffCell は aHash 16x16 グリッド上の不一致セル（0–15、行優先）。
+// AHashGridSize は perceptual (aHash) 比較のグリッド一辺のセル数。
+// AHashBlocks はセル総数。比較ループ・平均輝度・一致率と、main.go の
+// total_blocks / details 応答はここを単一の情報源とする。
+const (
+	AHashGridSize = 16
+	AHashBlocks   = AHashGridSize * AHashGridSize
+)
+
+// DiffCell は aHash グリッド上の不一致セル（0–AHashGridSize-1、行優先）。
 // perceptual 応答の diff_cells として機械可読な位置を返す。セル (grid_x, grid_y)
-// は差分画像の [grid_x/16,(grid_x+1)/16)×[grid_y/16,(grid_y+1)/16) に対応する。
+// は差分画像の対応するセル矩形にマップされる。
 type DiffCell struct {
 	GridX int `json:"grid_x"`
 	GridY int `json:"grid_y"`
@@ -89,13 +98,13 @@ func ValidateImageSizeLimit(data []byte, label string) error {
 // ヒント (Issue #122 の指定文面)。strict (RunPixelMatch) と perceptual (main.go)
 // の両モードで同じ文面を使うため exported の共有定数とし、文面修正はこの
 // 1 箇所で済むようにする。
-const UnsupportedImageFormatHint = "(supported: PNG, JPEG, GIF; WebP/SVG are not supported)"
+const UnsupportedImageFormatHint = "(supported: PNG, JPEG, GIF, WebP; SVG and animated WebP are not supported)"
 
 // decodeImageError は image.Decode の失敗エラーに "failed to decode <画像>" の
 // コンテキストを付けて返す。対応外の画像形式 (image.ErrFormat) のときだけ
-// UnsupportedImageFormatHint を付ける。PNG/JPEG/GIF だが破損・途中切れの
-// ファイル (例: unexpected EOF) では「WebP/SVG は非対応」と読める文面が
-// 原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
+// UnsupportedImageFormatHint を付ける。PNG/JPEG/GIF/WebP だが破損・途中切れの
+// ファイル (例: unexpected EOF) では「SVG and animated WebP are not supported」
+// と読める文面が原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
 func decodeImageError(what string, err error) error {
 	if errors.Is(err, image.ErrFormat) {
 		return fmt.Errorf("failed to decode %s: %w %s", what, err, UnsupportedImageFormatHint)
@@ -117,26 +126,28 @@ func decodeImageError(what string, err error) error {
 // 同一サイズなので A/B を分けず image_size として応答へ echo できる。
 // generateDiff が true かつ diffCount>0 のとき、7 番目に赤ピクセルの連結成分
 // bounding box (最大 10 件) を返す。generateDiff が false なら nil。
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, error) {
+// 8 番目は warnings。diffCount==0 かつマスク後の両画像が単色ベタ塗りのとき、
+// 空洞比較の可能性を status / match_rate は変えずに通知する (Issue #227)。
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, []string, error) {
 	if err := ValidateImageSizeLimit(imgABytes, "design image"); err != nil {
-		return 0, 0, 0, "", nil, "", nil, err
+		return 0, 0, 0, "", nil, "", nil, nil, err
 	}
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, decodeImageError("design image", err)
+		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("design image", err)
 	}
 
 	if err := ValidateImageSizeLimit(imgBBytes, "web screenshot"); err != nil {
-		return 0, 0, 0, "", nil, "", nil, err
+		return 0, 0, 0, "", nil, "", nil, nil, err
 	}
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, decodeImageError("web screenshot", err)
+		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("web screenshot", err)
 	}
 
 	normA, normB, err := EnsureSameSize(imgA, imgB)
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, err
+		return 0, 0, 0, "", nil, "", nil, nil, err
 	}
 
 	bounds := normA.Bounds()
@@ -145,13 +156,13 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 	// 0次元画像は totalPixels=0 となり一致率計算が0除算 (NaN) になるため、
 	// 明示的なエラーとして報告する。
 	if w == 0 || h == 0 {
-		return 0, 0, 0, "", nil, imageSize, nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
+		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
 	}
 	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーや
 	// pixelmatch の差分画像による追加確保の前に修復可能なエラーとして弾く
 	// (EnsureSameSize 済みのため両画像の寸法は同一)。
 	if w > maxImageDimension || h > maxImageDimension {
-		return 0, 0, 0, "", nil, imageSize, nil, fmt.Errorf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", w, h, maxImageDimension)
+		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", w, h, maxImageDimension)
 	}
 	totalPixels := w * h
 
@@ -182,12 +193,18 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 
 	diffCount, err := pixelmatch.MatchPixel(normA, normB, opts...)
 	if err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, fmt.Errorf("pixelmatch error: %w", err)
+		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("pixelmatch error: %w", err)
 	}
 
 	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
+	// 差分 0 の合格は「中身が同じ」と「両方ベタ塗りで比較が空洞」を区別できない。
+	// 全面走査は diffCount==0 のときだけ行い、status / match_rate は変えない。
+	var warnings []string
+	if diffCount == 0 && isUniformImage(normA) && isUniformImage(normB) {
+		warnings = append(warnings, degenerateStrictUniformWarning)
+	}
 	if !generateDiff {
-		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, nil, nil
+		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, nil, warnings, nil
 	}
 
 	// pixelmatch は差分描画用に内部で NewRGBA し WriteTo へ差し替えるが、同一画像の
@@ -199,7 +216,7 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, diffImg); err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
+		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
@@ -210,7 +227,7 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 		regions = collectDiffRegions(diffImg)
 	}
 
-	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, nil
+	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, warnings, nil
 }
 
 // collectDiffRegions は差分画像の赤ピクセルを 4 近傍連結成分に分割し、
@@ -356,12 +373,12 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	grayB := resizeTo16x16Gray(imgB)
 
 	var sumA, sumB uint32
-	for i := 0; i < 256; i++ {
+	for i := 0; i < AHashBlocks; i++ {
 		sumA += uint32(grayA[i])
 		sumB += uint32(grayB[i])
 	}
-	avgA := byte(sumA / 256)
-	avgB := byte(sumB / 256)
+	avgA := byte(sumA / AHashBlocks)
+	avgB := byte(sumB / AHashBlocks)
 
 	// aHash は各画像自身の平均輝度で2値化するため、一様 (ベタ塗り) な画像では
 	// 全セルが同一ビットになる (255>=255 も 0>=0 も true)。全面白 vs 全面黒の
@@ -382,14 +399,14 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	const cellScale = 16 // each aHash cell rendered as 16x16 px → 256x256 image
 	var diffImg *image.RGBA
 	if generateDiff {
-		diffImg = image.NewRGBA(image.Rect(0, 0, 16*cellScale, 16*cellScale))
+		diffImg = image.NewRGBA(image.Rect(0, 0, AHashGridSize*cellScale, AHashGridSize*cellScale))
 	}
 
 	diffBits := 0
 	var diffCells []DiffCell
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
-			i := y*16 + x
+	for y := 0; y < AHashGridSize; y++ {
+		for x := 0; x < AHashGridSize; x++ {
+			i := y*AHashGridSize + x
 			bitA := grayA[i] >= avgA
 			bitB := grayB[i] >= avgB
 			diff := bitA != bitB
@@ -421,7 +438,7 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 		diffDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
-	similarity := float64(256-diffBits) / 256.0 * 100.0
+	similarity := float64(AHashBlocks-diffBits) / float64(AHashBlocks) * 100.0
 	return similarity, diffBits, diffDataURI, outOfBounds, warnings, diffCells, nil
 }
 
@@ -506,7 +523,7 @@ func aspectRatioMismatchWarning(imgA, imgB image.Image) string {
 	if minAspect == 0 || maxAspect/minAspect <= aspectRatioMismatchThreshold {
 		return ""
 	}
-	return fmt.Sprintf("aspect ratio mismatch: image A is %dx%d (aspect %.2f), image B is %dx%d (aspect %.2f); perceptual comparison stretches both to 16x16", wA, hA, aspectA, wB, hB, aspectB)
+	return fmt.Sprintf("aspect ratio mismatch: image A is %dx%d (aspect %.2f), image B is %dx%d (aspect %.2f); perceptual comparison stretches both to %dx%d", wA, hA, aspectA, wB, hB, aspectB, AHashGridSize, AHashGridSize)
 }
 
 func isUniformGray(gray []byte) bool {
@@ -522,17 +539,55 @@ func isUniformGray(gray []byte) bool {
 	return minVal == maxVal
 }
 
+// degenerateStrictUniformWarning は strict 比較が差分 0 かつ両画像が単色ベタ塗りの
+// ときの警告文。真っ白スクショの撮影失敗や ignore_region の全面マスクでも
+// diffPixels=0 → 一致率100% になるため、合否は変えず呼び出し側へ通知する。
+const degenerateStrictUniformWarning = "degenerate comparison: both images are uniform; strict match may be vacuous (blank capture failure or over-broad ignore_region)"
+
+// compositeOnWhite は premultiplied RGBA を白背景に合成した RGB を返す。
+// RGBA() は premultiplied 値を返すため透過部分は (0,0,0) になり、アルファを
+// 無視すると透過が「黒」として扱われる。pixelmatch と同じ白背景前提に揃え、
+// 背景透過 PNG と不透明スクショの組での誤判定を防ぐ (Issue #134)。
+// premultiplied 値は r,g,b ≤ a が保証されるため 0xffff-a を加えても桁あふれしない。
+func compositeOnWhite(c color.Color) (r, g, b uint32) {
+	r, g, b, a := c.RGBA()
+	if a != 0xffff {
+		r += 0xffff - a
+		g += 0xffff - a
+		b += 0xffff - a
+	}
+	return r, g, b
+}
+
+// isUniformImage は白合成後の RGB が全ピクセル同一（単色ベタ塗り）かを判定する。
+func isUniformImage(img image.Image) bool {
+	bounds := img.Bounds()
+	if bounds.Empty() {
+		return false
+	}
+	firstR, firstG, firstB := compositeOnWhite(img.At(bounds.Min.X, bounds.Min.Y))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b := compositeOnWhite(img.At(x, y))
+			if r != firstR || g != firstG || b != firstB {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func resizeTo16x16Gray(img image.Image) []byte {
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
-	gray := make([]byte, 256)
+	gray := make([]byte, AHashBlocks)
 
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
-			startX := bounds.Min.X + (x*w)/16
-			endX := bounds.Min.X + ((x+1)*w)/16
-			startY := bounds.Min.Y + (y*h)/16
-			endY := bounds.Min.Y + ((y+1)*h)/16
+	for y := 0; y < AHashGridSize; y++ {
+		for x := 0; x < AHashGridSize; x++ {
+			startX := bounds.Min.X + (x*w)/AHashGridSize
+			endX := bounds.Min.X + ((x+1)*w)/AHashGridSize
+			startY := bounds.Min.Y + (y*h)/AHashGridSize
+			endY := bounds.Min.Y + ((y+1)*h)/AHashGridSize
 
 			if endX <= startX {
 				endX = startX + 1
@@ -546,19 +601,7 @@ func resizeTo16x16Gray(img image.Image) []byte {
 
 			for py := startY; py < endY; py++ {
 				for px := startX; px < endX; px++ {
-					// 透過ピクセルは白背景に合成してから輝度化する。RGBA() は
-					// premultiplied 値を返すため透過部分は (0,0,0) になり、アルファを
-					// 無視すると透過が「黒」として扱われてしまう。strict モード
-					// (pixelmatch は白背景に合成して比較する) と同じ「白背景」前提に
-					// 揃え、背景透過PNGと不透明スクショの組での誤不一致を防ぐ
-					// (Issue #134)。premultiplied 値は r,g,b ≤ a が保証されるため
-					// 0xffff-a を加えても桁あふれしない。
-					r, g, b, a := img.At(px, py).RGBA()
-					if a != 0xffff {
-						r += 0xffff - a
-						g += 0xffff - a
-						b += 0xffff - a
-					}
+					r, g, b := compositeOnWhite(img.At(px, py))
 					sumR += r >> 8
 					sumG += g >> 8
 					sumB += b >> 8
@@ -571,7 +614,7 @@ func resizeTo16x16Gray(img image.Image) []byte {
 			avgB := sumB / count
 
 			yVal := uint32(0.299*float64(avgR) + 0.587*float64(avgG) + 0.114*float64(avgB))
-			gray[y*16+x] = byte(yVal)
+			gray[y*AHashGridSize+x] = byte(yVal)
 		}
 	}
 	return gray
@@ -592,7 +635,7 @@ func EnsureSameSize(imgA, imgB image.Image) (image.Image, image.Image, error) {
 	wB, hB := boundsB.Dx(), boundsB.Dy()
 
 	if wA != wB || hA != hB {
-		return nil, nil, fmt.Errorf("image size mismatch: image A is %dx%d, image B is %dx%d; strict comparison requires identical sizes; capture both screenshots at the same viewport size and device pixel ratio, or if the images intentionally differ in size (e.g. device pixel ratio) use the perceptual mode, which compares macro layout after downscaling both to 16x16", wA, hA, wB, hB)
+		return nil, nil, fmt.Errorf("image size mismatch: image A is %dx%d, image B is %dx%d; strict comparison requires identical sizes; capture both screenshots at the same viewport size and device pixel ratio, or if the images intentionally differ in size (e.g. device pixel ratio) use the perceptual mode, which compares macro layout after downscaling both to %dx%d", wA, hA, wB, hB, AHashGridSize, AHashGridSize)
 	}
 	return imgA, imgB, nil
 }

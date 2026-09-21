@@ -255,6 +255,10 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if !found {
 			t.Errorf("Expected a detail stating no unused Web element is left for 'childB', got details: %v", result.Details)
 		}
+		// 候補枯渇は幾何差分ではないので mismatched_nodes には載せない。
+		if len(result.MismatchedNodes) != 0 {
+			t.Errorf("Expected no mismatched_nodes when no unused Web element is left, got %#v", result.MismatchedNodes)
+		}
 	})
 
 	t.Run("tolerance_exceeded", func(t *testing.T) {
@@ -283,7 +287,98 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if !found {
 			t.Errorf("Expected a detail stating the geometric diff exceeds tolerance, got details: %v", result.Details)
 		}
+		if len(result.MismatchedNodes) != 1 {
+			t.Fatalf("Expected 1 mismatched_nodes entry, got %#v", result.MismatchedNodes)
+		}
+		mn := result.MismatchedNodes[0]
+		if mn.FigmaName != "hero" || mn.WebSelector != ".hero" {
+			t.Errorf("Expected figma_name=hero web_selector=.hero, got figma_name=%q web_selector=%q", mn.FigmaName, mn.WebSelector)
+		}
+		// details は %.2f で同じ値を出す。Figma(0,0,100,100) vs Web(50,0,100,100) → dx=-50。
+		wantDX, wantDY, wantDW, wantDH, wantDiff := -50.0, 0.0, 0.0, 0.0, 50.0
+		if mn.DX != wantDX || mn.DY != wantDY || mn.DW != wantDW || mn.DH != wantDH || mn.Diff != wantDiff {
+			t.Errorf("Expected dx=%g dy=%g dw=%g dh=%g diff=%g, got dx=%g dy=%g dw=%g dh=%g diff=%g",
+				wantDX, wantDY, wantDW, wantDH, wantDiff, mn.DX, mn.DY, mn.DW, mn.DH, mn.Diff)
+		}
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+			mn.Diff, 0.15, mn.DX, mn.DY, mn.DW, mn.DH)
+		var detailsMatch bool
+		for _, d := range result.Details {
+			if strings.Contains(d, detailLine) {
+				detailsMatch = true
+				break
+			}
+		}
+		if !detailsMatch {
+			t.Errorf("Expected details to contain %q (same numbers as mismatched_nodes), got %v", detailLine, result.Details)
+		}
 	})
+}
+
+// TestLayoutTree_DetailsOrderPutsFailuresFirst verifies that after the
+// summary line, mismatch and extra-Web rows come before matched pairs so
+// failures are not buried behind hundreds of "Matched: …" lines.
+func TestLayoutTree_DetailsOrderPutsFailuresFirst(t *testing.T) {
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"},
+		{"id":"3","name":"nav","x":600,"y":10,"w":380,"h":80,"parent":"1"},
+		{"id":"4","name":"hero","x":0,"y":200,"w":100,"h":100}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"},
+		{"selector":".nav","x":600,"y":10,"w":380,"h":80,"parent":"#header"},
+		{"selector":".hero","x":50,"y":200,"w":100,"h":100},
+		{"selector":".banner","x":0,"y":400,"w":200,"h":50}
+	]`
+
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if len(result.Details) < 2 {
+		t.Fatalf("Expected summary plus detail rows, got %v", result.Details)
+	}
+	if !strings.Contains(result.Details[0], "Matched 3 out of 4") {
+		t.Errorf("Expected summary first, got %q", result.Details[0])
+	}
+
+	firstMatchIdx := -1
+	var sawMismatch, sawExtra bool
+	for i, d := range result.Details {
+		if i == 0 {
+			continue
+		}
+		if strings.HasPrefix(d, "Matched:") {
+			firstMatchIdx = i
+			break
+		}
+		if strings.Contains(d, "did not match") && strings.Contains(d, "hero") {
+			sawMismatch = true
+		}
+		if strings.Contains(d, "extra element") {
+			sawExtra = true
+		}
+	}
+	if firstMatchIdx < 0 {
+		t.Fatalf("Expected matched-pair rows after failures, got %v", result.Details)
+	}
+	if !sawMismatch {
+		t.Errorf("Expected a hero mismatch row before matched pairs, got %v", result.Details)
+	}
+	if !sawExtra {
+		t.Errorf("Expected extra Web rows before matched pairs, got %v", result.Details)
+	}
+	if firstMatchIdx < 2 {
+		t.Errorf("Expected at least one failure row immediately after summary, first Matched at %d: %v", firstMatchIdx, result.Details)
+	}
+	for i := firstMatchIdx; i < len(result.Details); i++ {
+		d := result.Details[i]
+		if !strings.HasPrefix(d, "Matched:") {
+			t.Errorf("Expected only matched pairs after first Matched row, details[%d]=%q", i, d)
+		}
+	}
 }
 
 // TestLayoutTree_IgnoreRegion verifies that nodes whose bounding-box center
@@ -514,6 +609,69 @@ func TestLayoutTree_IgnoreNodesWildcard(t *testing.T) {
 		}
 		if len(result.UnmatchedIgnores) != 1 || result.UnmatchedIgnores[0] != "ad-*-1" {
 			t.Errorf("Expected unmatched_ignores=[ad-*-1], got %v", result.UnmatchedIgnores)
+		}
+	})
+}
+
+// TestLayoutTree_IgnoredParentKeepsRelativeCoords verifies that excluding a
+// parent via ignore_nodes still lets children use that parent's geometry for
+// relative comparison. Absolute px would mismatch because the Web tree is
+// scaled 2x; relative ratios stay (0.25, 0.25, 0.25, 0.25) on both sides.
+//
+//  1. one_side_parent_ignored  – only the Figma parent id is ignored. The
+//     Web parent remains in the match set as an extra node, but the child
+//     pair must still match relatively (not fall into mixed absolute mode).
+//  2. both_sides_parent_ignored – both parents are ignored; only children
+//     remain and must match relatively. Ignored parents must not appear in
+//     UnresolvedParentRefs.
+func TestLayoutTree_IgnoredParentKeepsRelativeCoords(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"P","name":"dyn-container","x":0,"y":0,"w":400,"h":400},
+		{"id":"1","name":"card","x":100,"y":100,"w":100,"h":100,"parent":"P"}
+	]`
+	webJSON := `[
+		{"selector":".dyn-container","x":0,"y":0,"w":800,"h":800},
+		{"selector":".card","x":200,"y":200,"w":200,"h":200,"parent":".dyn-container"}
+	]`
+
+	t.Run("one_side_parent_ignored", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"P"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 1 {
+			t.Errorf("Expected IgnoredCount=1 (Figma parent only), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 {
+			t.Errorf("Expected child pair to match relatively, got MatchedNodes=%d (rate=%.1f%% details=%v)", result.MatchedNodes, result.MatchRate, result.Details)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success', got '%s' (rate=%.1f%% details=%v)", result.Status, result.MatchRate, result.Details)
+		}
+		if len(result.UnresolvedParentRefs) != 0 {
+			t.Errorf("Expected ignored parent not to be reported as unresolved, got %v", result.UnresolvedParentRefs)
+		}
+	})
+
+	t.Run("both_sides_parent_ignored", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"dyn-container"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 2 {
+			t.Errorf("Expected IgnoredCount=2 (both parents), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 || result.TotalNodes != 1 {
+			t.Errorf("Expected only the child pair (matched=1, total=1), got matched=%d, total=%d (details=%v)", result.MatchedNodes, result.TotalNodes, result.Details)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success', got '%s' (rate=%.1f%% details=%v)", result.Status, result.MatchRate, result.Details)
+		}
+		if len(result.UnresolvedParentRefs) != 0 {
+			t.Errorf("Expected ignored parents not to be reported as unresolved, got %v", result.UnresolvedParentRefs)
 		}
 	})
 }
@@ -881,4 +1039,14 @@ func TestLimitLayoutTreeDetails(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestRoundMatchRateDisplay(t *testing.T) {
+	// Issue #233 の例: 97.999846% は表示 98.00 と同じ桁に丸まる
+	if got := RoundMatchRateDisplay(97.999846); got != 98.0 {
+		t.Errorf("RoundMatchRateDisplay(97.999846)=%v, want 98", got)
+	}
+	if got := RoundMatchRateDisplay(98.046875); got != 98.05 {
+		t.Errorf("RoundMatchRateDisplay(98.046875)=%v, want 98.05", got)
+	}
 }
