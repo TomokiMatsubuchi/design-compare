@@ -1788,6 +1788,59 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
+		// layout_tree と同じ経路で、web_layout はネイティブ JSON 配列でも指定できる。
+		// request.GetString だと非文字列は空文字に落ち、web_layout を指定済みなのに
+		// "either web_layout or web_layout_path is required" という誤解を招くエラーに
+		// なるため、inlineLayoutJSON 経由で受け付ける。
+		t.Run("LayoutIntegrity_NativeJSONArray", func(t *testing.T) {
+			webNative := []any{
+				map[string]any{"selector": "#page", "x": 0, "y": 0, "w": 768, "h": 200},
+			}
+
+			reqNative := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": webNative,
+					},
+				},
+			}
+			resNative, err := compareDesignHandler(context.Background(), reqNative)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if resNative.IsError {
+				t.Fatalf("Expected a native JSON array web_layout to be accepted, got error: %v", resNative.Content[0].(mcp.TextContent).Text)
+			}
+			var resultNative map[string]interface{}
+			json.Unmarshal([]byte(resNative.Content[0].(mcp.TextContent).Text), &resultNative)
+			if resultNative["status"] != "success" || resultNative["checked_nodes"] != float64(1) {
+				t.Fatalf("got status=%v checked_nodes=%v", resultNative["status"], resultNative["checked_nodes"])
+			}
+
+			// 文字列・配列・オブジェクト以外の型は専用のエラーメッセージになる
+			// (web_layout 指定済みなのに required と言われる誤解を招く文言にはならない)。
+			reqBadType := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": 123,
+					},
+				},
+			}
+			resBadType, err := compareDesignHandler(context.Background(), reqBadType)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !resBadType.IsError {
+				t.Fatal("expected IsError when web_layout is a number")
+			}
+			gotBad := resBadType.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array") {
+				t.Errorf("got %q", gotBad)
+			}
+		})
+
 		t.Run("FigmaLayoutUnsupported", func(t *testing.T) {
 			req := mcp.CallToolRequest{
 				Params: mcp.CallToolParams{

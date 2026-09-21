@@ -58,7 +58,7 @@ func main() {
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
 		),
 		mcp.WithString("web_layout",
-			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). In layout_tree, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
+			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). In layout_tree and layout_integrity, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
 		),
 		mcp.WithString("figma_layout_path",
 			mcp.Description("Path to a JSON file containing the Figma node list metadata (alternative to figma_layout for 'layout_tree' mode; mutually exclusive with figma_layout). The file content is a JSON array like [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
@@ -180,7 +180,7 @@ func decodeImageErrorMessage(what string, err error) string {
 	return fmt.Sprintf("Failed to decode %s: %v", what, err)
 }
 
-// inlineLayoutJSON は layout_tree のインライン layout 引数を文字列にする。
+// inlineLayoutJSON は layout_tree / layout_integrity のインライン layout 引数を文字列にする。
 // MCP クライアントが JSON 配列・オブジェクトを文字列化せず渡した場合は
 // Marshal して従来の文字列入力と同じ経路へ載せる。未指定は空文字。
 // 文字列・配列・オブジェクト以外（数値・真偽・null 等）は明示エラー。
@@ -870,14 +870,24 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 検出する。縦向き 768x1024 と横向き 1024x768 は幅が違うため、viewport_preset
 		// で切り替えて両方検査する。figma_layout / figma_layout_path は受け付けない
 		// (modeParamSupport で layout_tree 専用のまま)。
+
+		// layout_tree と同じ経路で、web_layout にネイティブ JSON 配列/オブジェクトが
+		// 渡されても Marshal して文字列入力と同じ扱いにする。request.GetString だと
+		// 非文字列は空文字に落ち、web_layout を指定済みなのに "either web_layout or
+		// web_layout_path is required" という誤解を招くエラーになるため
+		// (文字列・配列・オブジェクト以外の型は inlineLayoutJSON が専用エラーを返す)。
+		args := request.GetArguments()
+		webInline, err := inlineLayoutJSON(args, "web_layout")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
+		}
 		webLayout, err := resolveLayoutInput(
-			request.GetString("web_layout", ""), request.GetString("web_layout_path", ""),
+			webInline, request.GetString("web_layout_path", ""),
 			"web_layout", "web_layout_path")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
 		}
 
-		args := request.GetArguments()
 		preset := request.GetString("viewport_preset", "")
 		viewportW, viewportH, err := comparator.ViewportSizeForPreset(preset)
 		if err != nil {
