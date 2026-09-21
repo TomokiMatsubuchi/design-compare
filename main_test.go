@@ -19,6 +19,7 @@ import (
 
 	"design-compare/comparator"
 
+	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -5116,5 +5117,39 @@ func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
 				t.Errorf("error message: got %q want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestMCPInitializeIncludesModeInstructions は initialize 応答の instructions に
+// モード使い分け指針が含まれることを確認する (Issue #243)。
+func TestMCPInitializeIncludesModeInstructions(t *testing.T) {
+	c, err := client.NewInProcessClient(newDesignCompareMCPServer())
+	if err != nil {
+		t.Fatalf("NewInProcessClient: %v", err)
+	}
+	if err := c.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "1.0.0"}
+	result, err := c.Initialize(t.Context(), initRequest)
+	if err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	for _, want := range []string{
+		"layout_tree",
+		"perceptual",
+		"strict",
+		"identical pixel dimensions",
+		"98%",
+		"pass_rate",
+		"min_match",
+	} {
+		if !strings.Contains(result.Instructions, want) {
+			t.Errorf("initialize instructions missing %q; got %q", want, result.Instructions)
+		}
 	}
 }
