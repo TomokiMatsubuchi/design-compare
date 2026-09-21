@@ -300,6 +300,15 @@ go test -v ./...
 claude mcp add design-compare "/Users/username/workspace/design-compare/design-compare"
 ```
 
+### D. Pi に追加する場合
+npm からインストールすると、`compare_design` ツールと `design-compare` スキルが有効になります。初回ロード時に Go バイナリをビルドするため、利用マシンに **Go 1.26 以上** が必要です。
+
+```bash
+pi install npm:design-compare
+pi update npm:design-compare   # 更新
+pi remove npm:design-compare   # アンインストール
+```
+
 ---
 
 ## 6. 全自動でのデザイン検証ワークフロー
