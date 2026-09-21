@@ -663,14 +663,6 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		boundsA := imgA.Bounds()
 		boundsB := imgB.Bounds()
 
-		// 0次元画像は意味のある比較ができないため明示的にエラーにする
-		if boundsA.Dx() == 0 || boundsA.Dy() == 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("image A has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", boundsA.Dx(), boundsA.Dy())), nil
-		}
-		if boundsB.Dx() == 0 || boundsB.Dy() == 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("image B has zero dimensions (%dx%d); perceptual comparison requires non-zero image size", boundsB.Dx(), boundsB.Dy())), nil
-		}
-
 		generateDiff, err := boolArg(request, "generate_diff", true)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
