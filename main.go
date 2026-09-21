@@ -677,7 +677,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
 		status := "success"
-		if matchRate < minMatchRate {
+		if comparator.RoundMatchRateDisplay(matchRate) < minMatchRate {
 			status = "mismatch"
 		}
 
@@ -808,7 +808,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if diffPixels > maxDiffPixels {
 			status = "mismatch"
 		}
-		if hasMinMatch && matchRate < minMatchRate {
+		if hasMinMatch && comparator.RoundMatchRateDisplay(matchRate) < minMatchRate {
 			status = "mismatch"
 		}
 

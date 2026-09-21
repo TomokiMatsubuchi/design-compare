@@ -58,6 +58,12 @@ const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the lay
 // どのノード中心とも重ならない領域は UnmatchedIgnoreRegions に "x,y,w,h" で入る
 // （ignore_nodes の unmatched_ignores / 画像モードの out_of_bounds_regions と同種）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
+// RoundMatchRateDisplay は表示 match_rate (%.2f) と同じ小数第2位に丸める。
+// 合否判定を表示桁と一致させるために使う。match_rate_value には適用しない。
+func RoundMatchRateDisplay(rate float64) float64 {
+	return math.Round(rate*100) / 100
+}
+
 func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool, ignoreRegions []Region) (*LayoutTreeResult, error) {
 	// tolerance / passRate の範囲検証は呼び出し元 (main.go) で行われるため、
 	// ここでは負値のデフォルト補完は不要。
@@ -379,7 +385,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 	matchRate := (float64(matchedCount) / float64(totalCompared)) * 100.0
 	status := "success"
-	if matchRate < passRate { // 合格ライン（パラメータ化）
+	// 合否は表示 match_rate (%.2f) と同じ桁に丸めた値で判定する (Issue #233)
+	if RoundMatchRateDisplay(matchRate) < passRate { // 合格ライン（パラメータ化）
 		status = "mismatch"
 	}
 
