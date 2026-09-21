@@ -635,11 +635,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
 
+		if err := comparator.ValidateImageSizeLimit(imgABytes, "image A"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
 			return mcp.NewToolResultError(decodeImageErrorMessage("image A", err)), nil
 		}
 
+		if err := comparator.ValidateImageSizeLimit(imgBBytes, "image B"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
 			return mcp.NewToolResultError(decodeImageErrorMessage("image B", err)), nil

@@ -2,7 +2,9 @@ package comparator
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/draw"
@@ -19,6 +21,40 @@ func encodePNGBytes(t *testing.T, img image.Image) []byte {
 		t.Fatalf("failed to encode PNG: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// pngWithDeclaredSize は IHDR に width/height を宣言した最小 PNG（画素データなし）。
+// フルデコードせずヘッダ寸法だけ見る上限チェックのテスト用 (Issue #237)。
+func pngWithDeclaredSize(width, height uint32) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8] = 8 // bit depth
+	ihdr[9] = 2 // color type RGB
+	writePNGChunk(&buf, []byte("IHDR"), ihdr)
+	writePNGChunk(&buf, []byte("IEND"), nil)
+	return buf.Bytes()
+}
+
+func writePNGChunk(buf *bytes.Buffer, typ, data []byte) {
+	var lenbuf [4]byte
+	binary.BigEndian.PutUint32(lenbuf[:], uint32(len(data)))
+	buf.Write(lenbuf[:])
+	crc := crc32.NewIEEE()
+	crc.Write(typ)
+	crc.Write(data)
+	buf.Write(typ)
+	buf.Write(data)
+	var crcbuf [4]byte
+	binary.BigEndian.PutUint32(crcbuf[:], crc.Sum32())
+	buf.Write(crcbuf[:])
+}
+
+func wantSizeLimitError(label string, w, h int) string {
+	return fmt.Sprintf("%s is %dx%d (%d pixels); maximum is %dpx per side and %d total pixels, resize or crop the images before comparison",
+		label, w, h, int64(w)*int64(h), maxDecodeImageDimension, maxDecodeImagePixels)
 }
 
 // TestRunPixelMatch_AntiAliasExclusion verifies that with the default
@@ -744,6 +780,56 @@ func TestRunPixelMatch_DiffRegions(t *testing.T) {
 		}
 		if regions != nil {
 			t.Errorf("Expected no diff regions when generateDiff=false, got %v", regions)
+		}
+	})
+}
+
+// TestRunPixelMatch_PreDecodeSizeLimit verifies that IHDR-declared oversized
+// images are rejected before image.Decode (Issue #237). A header-only PNG would
+// OOM if fully expanded at 30000x30000.
+func TestRunPixelMatch_PreDecodeSizeLimit(t *testing.T) {
+	small := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+
+	t.Run("rejects_over_dimension", func(t *testing.T) {
+		huge := pngWithDeclaredSize(uint32(maxDecodeImageDimension)+1, 1)
+		if err := ValidateImageSizeLimit(huge, "design image"); err == nil {
+			t.Fatal("expected size-limit error from ValidateImageSizeLimit")
+		} else if got, want := err.Error(), wantSizeLimitError("design image", maxDecodeImageDimension+1, 1); got != want {
+			t.Errorf("ValidateImageSizeLimit error: got %q want %q", got, want)
+		}
+
+		_, _, _, _, _, _, _, err := RunPixelMatch(huge, small, 0.1, false, nil)
+		if err == nil {
+			t.Fatal("expected RunPixelMatch to reject oversized design image")
+		}
+		if got, want := err.Error(), wantSizeLimitError("design image", maxDecodeImageDimension+1, 1); got != want {
+			t.Errorf("RunPixelMatch A error: got %q want %q", got, want)
+		}
+
+		_, _, _, _, _, _, _, err = RunPixelMatch(small, huge, 0.1, false, nil)
+		if err == nil {
+			t.Fatal("expected RunPixelMatch to reject oversized web screenshot")
+		}
+		if got, want := err.Error(), wantSizeLimitError("web screenshot", maxDecodeImageDimension+1, 1); got != want {
+			t.Errorf("RunPixelMatch B error: got %q want %q", got, want)
+		}
+	})
+
+	t.Run("rejects_over_total_pixels", func(t *testing.T) {
+		// 10000x6000 = 60,000,000 > 50,000,000。各辺は 30000 未満。
+		huge := pngWithDeclaredSize(10000, 6000)
+		_, _, _, _, _, _, _, err := RunPixelMatch(huge, small, 0.1, false, nil)
+		if err == nil {
+			t.Fatal("expected RunPixelMatch to reject image over total pixel limit")
+		}
+		if got, want := err.Error(), wantSizeLimitError("design image", 10000, 6000); got != want {
+			t.Errorf("RunPixelMatch pixel-limit error: got %q want %q", got, want)
+		}
+	})
+
+	t.Run("undecodable_header_is_not_a_size_error", func(t *testing.T) {
+		if err := ValidateImageSizeLimit([]byte("not an image"), "design image"); err != nil {
+			t.Errorf("expected nil when DecodeConfig fails, got %v", err)
 		}
 	})
 }
