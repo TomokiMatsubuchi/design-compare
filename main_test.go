@@ -3497,6 +3497,70 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// include_aa: デフォルト/false は AA 境界を差分カウントから除外し、
+	// true のときだけ pixelmatch.IncludeAntiAlias で差分が増える (Issue #239)。
+	t.Run("StrictMode_IncludeAA", func(t *testing.T) {
+		const w, h = 12, 12
+		black := color.RGBA{0, 0, 0, 255}
+		white := color.RGBA{255, 255, 255, 255}
+		grayDark := color.RGBA{64, 64, 64, 255}
+		grayLight := color.RGBA{192, 192, 192, 255}
+
+		imgA := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.Draw(imgA, imgA.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+		draw.Draw(imgA, image.Rect(0, 0, 5, h), &image.Uniform{black}, image.Point{}, draw.Src)
+		draw.Draw(imgA, image.Rect(5, 0, 6, h), &image.Uniform{grayDark}, image.Point{}, draw.Src)
+
+		imgB := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+		draw.Draw(imgB, image.Rect(0, 0, 5, h), &image.Uniform{black}, image.Point{}, draw.Src)
+		draw.Draw(imgB, image.Rect(5, 0, 6, h), &image.Uniform{grayLight}, image.Point{}, draw.Src)
+
+		pathAA := saveTempImage(t, tmpDir, "imageAA_a.png", imgA)
+		pathAB := saveTempImage(t, tmpDir, "imageAA_b.png", imgB)
+
+		call := func(args map[string]any) map[string]interface{} {
+			t.Helper()
+			req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %v", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			return result
+		}
+
+		base := map[string]any{
+			"mode":          "strict",
+			"image_path_a":  pathAA,
+			"image_path_b":  pathAB,
+			"generate_diff": false,
+		}
+		omitted := call(base)
+		withFalse := call(map[string]any{
+			"mode": "strict", "image_path_a": pathAA, "image_path_b": pathAB,
+			"generate_diff": false, "include_aa": false,
+		})
+		withTrue := call(map[string]any{
+			"mode": "strict", "image_path_a": pathAA, "image_path_b": pathAB,
+			"generate_diff": false, "include_aa": true,
+		})
+
+		omittedDiff := omitted["diff_pixels"].(float64)
+		falseDiff := withFalse["diff_pixels"].(float64)
+		trueDiff := withTrue["diff_pixels"].(float64)
+		if omittedDiff != falseDiff {
+			t.Errorf("unspecified include_aa should match include_aa=false: omitted=%v false=%v", omittedDiff, falseDiff)
+		}
+		if trueDiff <= omittedDiff {
+			t.Errorf("include_aa=true should increase diff_pixels (omitted=%v, true=%v)", omittedDiff, trueDiff)
+		}
+	})
+
 	// サイズの異なる画像ペアは白埋めで吸収せず、エラーとして明示的に報告する
 	// (白埋め領域が一致として数えられ一致率が水増しされるのを防ぐ)。
 	// エラーメッセージには対処ヒント (同一ビューポート・DPR で撮り直す /
@@ -3933,6 +3997,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_tree", "image_a_base64", "not-base64", true, ""},
 			{"layout_tree", "image_b_base64", "not-base64", true, ""},
 			{"layout_tree", "max_diff_pixels", 10.0, true, ""},
+			{"layout_tree", "include_aa", true, true, ""},
 			{"layout_tree", "generate_diff", false, true, ""},
 			{"layout_tree", "diff_on_mismatch", true, true, ""},
 			{"layout_tree", "diff_image_content", true, true, ""},
@@ -3954,6 +4019,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"perceptual", "max_details", 2.0, true, ""},
 			{"perceptual", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			{"perceptual", "max_diff_pixels", 10.0, true, ""},
+			{"perceptual", "include_aa", true, true, ""},
 			// perceptual: 対応パラメータはエラーにならない
 			{"perceptual", "min_match", 98.0, false, ""},
 			{"perceptual", "threshold", 98.0, false, ""},
@@ -3972,6 +4038,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			// strict: 対応パラメータはエラーにならない
 			{"strict", "max_diff_pixels", 100000.0, false, ""},
+			{"strict", "include_aa", true, false, ""},
 			{"strict", "min_match", 10.0, false, ""},
 			{"strict", "threshold", 0.1, false, ""},
 			{"strict", "ignore_region", "0,0,10,10", false, ""},
@@ -3985,6 +4052,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_integrity", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			{"layout_integrity", "threshold", 0.15, true, ""},
 			{"layout_integrity", "max_diff_pixels", 10.0, true, ""},
+			{"layout_integrity", "include_aa", true, true, ""},
 			{"layout_integrity", "generate_diff", false, true, ""},
 			{"layout_integrity", "diff_image_content", true, true, ""},
 			{"layout_integrity", "count_extra_web", true, true, ""},
