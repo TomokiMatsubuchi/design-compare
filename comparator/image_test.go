@@ -713,7 +713,7 @@ func TestRunPixelMatch_DecodeErrorListsSupportedFormats(t *testing.T) {
 	valid := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
 
 	t.Run("empty_design_bytes", func(t *testing.T) {
-			_, _, _, _, _, _, _, _, err := RunPixelMatch(nil, valid, 0.1, false, nil)
+		_, _, _, _, _, _, _, _, err := RunPixelMatch(nil, valid, 0.1, false, nil)
 		if err == nil {
 			t.Fatal("Expected decode error for empty design image bytes, got nil")
 		}
