@@ -852,6 +852,49 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.8b. layout_tree: Web 空 + Figma 側だけ ignore しても空側を誤報しない
+	// =================================================================
+	t.Run("LayoutTree_EmptyWebWithIgnoredFigma", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   "[]",
+					"ignore_nodes": "logo",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Errorf("Expected mismatch when Web layout is empty, got status=%v", result["status"])
+		}
+		if got := result["ignored_count"]; got != float64(1) {
+			t.Errorf("Expected ignored_count=1, got %v", got)
+		}
+		details, ok := result["details"].([]interface{})
+		if !ok || len(details) == 0 {
+			t.Fatalf("Expected details array, got %v", result["details"])
+		}
+		s, _ := details[0].(string)
+		if !strings.Contains(s, "Web layout node data is empty") {
+			t.Errorf("Expected details to point at empty Web input, got %v", details)
+		}
+		if strings.Contains(s, "All Web nodes were excluded") {
+			t.Errorf("Did not expect all-excluded skipped message for originally empty Web, got %v", details)
+		}
+	})
+
+	// =================================================================
 	// 2.9. layout_tree モード: サイズ0の親を持つ子ノードの比較
 	// =================================================================
 	t.Run("LayoutTree_ZeroSizeParent", func(t *testing.T) {

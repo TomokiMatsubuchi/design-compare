@@ -129,6 +129,11 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	figmaByID := indexFigmaNodesByID(fNodes)
 	webBySelector := indexWebNodesBySelector(wNodes)
 
+	// フィルタ後に片側が空でも、元から空だった側と全件除外を取り違えないよう
+	// ignore_nodes / ignore_region 適用前の件数を残す。
+	origFigmaCount := len(fNodes)
+	origWebCount := len(wNodes)
+
 	// ignoreList に基づいてノードを除外し、適用結果（除外数・無効なエントリ）を集計する。
 	// 末尾が '*' のエントリはプレフィックス一致（例: '.ad-*' は '.ad-banner' に一致）として
 	// 扱い、命名規則に従うグループ（広告・計測タグ等）を列挙なしで除外できる。
@@ -238,8 +243,39 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	unresolvedParentRefs := collectUnresolvedParentRefs(fNodes, wNodes, figmaByID, webBySelector)
 
 	if len(fNodes) == 0 || len(wNodes) == 0 {
-		// ignore_nodes により比較対象が全件除外された場合は、実装不一致と区別して
-		// skipped ステータスで「比較できなかった」ことを明示する。
+		origEmptyFigma := origFigmaCount == 0
+		origEmptyWeb := origWebCount == 0
+		// 元から空の側がある場合は入力不足が主因。除外件数があっても
+		// 「全件除外」と誤報せず、空側を明示する mismatch にする。
+		if origEmptyFigma || origEmptyWeb {
+			var emptyDetail string
+			switch {
+			case origEmptyFigma && origEmptyWeb:
+				emptyDetail = "Both Figma and Web layout node data are empty"
+			case origEmptyFigma:
+				emptyDetail = "Figma layout node data is empty"
+				if ignoredCount > 0 {
+					emptyDetail += fmt.Sprintf(" (and %s by ignore_nodes / ignore_region on the Web side)", ignoredNodesWerePhrase(ignoredCount))
+				}
+			default:
+				emptyDetail = "Web layout node data is empty"
+				if ignoredCount > 0 {
+					emptyDetail += fmt.Sprintf(" (and %s by ignore_nodes / ignore_region on the Figma side)", ignoredNodesWerePhrase(ignoredCount))
+				}
+			}
+			return &LayoutTreeResult{
+				MatchRate:              0,
+				Status:                 "mismatch",
+				Details:                []string{emptyDetail},
+				IgnoredCount:           ignoredCount,
+				UnmatchedIgnores:       unmatchedIgnores,
+				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
+				ZeroGeometryWarning:    zeroGeometryWarning,
+				UnresolvedParentRefs:   unresolvedParentRefs,
+			}, nil
+		}
+		// 両側とも元から非空で、ignore により比較対象が無くなった場合のみ
+		// 実装不一致と区別して skipped にする。
 		if ignoredCount > 0 {
 			side := "Figma and Web"
 			switch {
@@ -251,7 +287,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			return &LayoutTreeResult{
 				MatchRate:              0,
 				Status:                 "skipped",
-				Details:                []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", side, ignoredCount)},
+				Details:                []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%s); no comparison pairs left", side, ignoredNodesInTotalPhrase(ignoredCount))},
 				IgnoredCount:           ignoredCount,
 				UnmatchedIgnores:       unmatchedIgnores,
 				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
@@ -649,6 +685,20 @@ func getWebRelativeCoords(n WebNode, parent *WebNode) (x, y, w, h float64, absol
 		return n.X, n.Y, n.W, n.H, true
 	}
 	return (n.X - parent.X) / parent.W, (n.Y - parent.Y) / parent.H, n.W / parent.W, n.H / parent.H, false
+}
+
+func ignoredNodesWerePhrase(n int) string {
+	if n == 1 {
+		return "1 node was ignored"
+	}
+	return fmt.Sprintf("%d nodes were ignored", n)
+}
+
+func ignoredNodesInTotalPhrase(n int) string {
+	if n == 1 {
+		return "1 node ignored in total"
+	}
+	return fmt.Sprintf("%d nodes ignored in total", n)
 }
 
 func cleanNodeName(s string) string {
