@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/draw"
@@ -4600,5 +4602,86 @@ func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 	}
 	if strings.Contains(got, "WebP/SVG are not supported") {
 		t.Errorf("expected no unsupported-format hint for a corrupted image, got %q", got)
+	}
+}
+
+// pngWithDeclaredSize は IHDR に width/height を宣言した最小 PNG（画素データなし）。
+func pngWithDeclaredSize(width, height uint32) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8] = 8
+	ihdr[9] = 2
+	writePNGChunk(&buf, []byte("IHDR"), ihdr)
+	writePNGChunk(&buf, []byte("IEND"), nil)
+	return buf.Bytes()
+}
+
+func writePNGChunk(buf *bytes.Buffer, typ, data []byte) {
+	var lenbuf [4]byte
+	binary.BigEndian.PutUint32(lenbuf[:], uint32(len(data)))
+	buf.Write(lenbuf[:])
+	crc := crc32.NewIEEE()
+	crc.Write(typ)
+	crc.Write(data)
+	buf.Write(typ)
+	buf.Write(data)
+	var crcbuf [4]byte
+	binary.BigEndian.PutUint32(crcbuf[:], crc.Sum32())
+	buf.Write(crcbuf[:])
+}
+
+// TestPerceptualPreDecodeSizeLimit verifies the perceptual handler rejects
+// header-only PNGs whose IHDR exceeds the pre-decode limits (Issue #237).
+func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vrt-ihdr-limit-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validPath := saveTempImage(t, tmpDir, "valid.png", generateSolidImage(10, 10, color.White))
+	hugePath := filepath.Join(tmpDir, "huge.png")
+	if err := os.WriteFile(hugePath, pngWithDeclaredSize(30001, 1), 0o644); err != nil {
+		t.Fatalf("failed to write IHDR-only PNG: %v", err)
+	}
+	pixelsPath := filepath.Join(tmpDir, "pixels.png")
+	if err := os.WriteFile(pixelsPath, pngWithDeclaredSize(10000, 6000), 0o644); err != nil {
+		t.Fatalf("failed to write pixel-limit PNG: %v", err)
+	}
+
+	for _, c := range []struct {
+		name         string
+		pathA, pathB string
+		want         string
+	}{
+		{"oversized_image_A", hugePath, validPath, "image A is 30001x1 (30001 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+		{"oversized_image_B", validPath, hugePath, "image B is 30001x1 (30001 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+		{"over_total_pixels_A", pixelsPath, validPath, "image A is 10000x6000 (60000000 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "perceptual",
+						"image_path_a": c.pathA,
+						"image_path_b": c.pathB,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("expected size-limit error, got content=%v", res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if got != c.want {
+				t.Errorf("error message: got %q want %q", got, c.want)
+			}
+		})
 	}
 }
