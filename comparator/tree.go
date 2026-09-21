@@ -397,9 +397,11 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	if absoluteModePairs > 0 {
 		details = append(details, fmt.Sprintf("%d pairs were compared in absolute pixel space (no usable parent); tolerance applies to pixel units there", absoluteModePairs))
 	}
-	details = append(details, matchedPairDetails...)
+	// 不一致と余分なWebノードを一致ペアより先に置く。ノード数が多いページで
+	// "Matched: …" の羅列の後ろに失敗行が埋もれないようにする。
 	details = append(details, mismatchDetails...)
 	details = append(details, extraWebDetails...)
+	details = append(details, matchedPairDetails...)
 
 	return &LayoutTreeResult{
 		MatchRate:              matchRate,
