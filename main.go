@@ -28,7 +28,28 @@ func main() {
 		os.Exit(runCLI(os.Args[1:]))
 	}
 
-	s := server.NewMCPServer("design-compare", "1.0.0")
+	s := newDesignCompareMCPServer()
+
+	// stdio経由でMCPサーバーを起動
+	log.Println("design-compare MCP server starting...")
+	if err := server.ServeStdio(s); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
+}
+
+// mcpInstructions は initialize 応答の instructions に載せ、ツール説明だけを
+// 読むクライアントが strict でサイズ不一致エラーを起こしにくいようにする。
+const mcpInstructions = `layout_tree compares DOM/coordinate structure (Figma vs Web).
+perceptual is a coarse layout image comparison that still works when image sizes differ.
+strict is a pixel comparison that requires identical pixel dimensions; do not use it when sizes differ (use perceptual).
+layout_integrity checks Web DOM overflow at a CSS viewport without Figma (default iPad portrait 768x1024).
+The default pass line is 98% (pass_rate for layout_tree, min_match for perceptual).`
+
+// newDesignCompareMCPServer は compare_design ツール付きの MCP サーバーを作る。
+func newDesignCompareMCPServer() *server.MCPServer {
+	s := server.NewMCPServer("design-compare", "1.0.0",
+		server.WithInstructions(mcpInstructions),
+	)
 
 	// compare_design ツール定義 (4つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
 	compareDesignTool := mcp.NewTool("compare_design",
@@ -120,12 +141,7 @@ func main() {
 		),
 	)
 	s.AddTool(compareDesignTool, compareDesignHandler)
-
-	// stdio経由でMCPサーバーを起動
-	log.Println("design-compare MCP server starting...")
-	if err := server.ServeStdio(s); err != nil {
-		log.Fatalf("Server error: %v", err)
-	}
+	return s
 }
 
 // resolveImageInput returns the raw bytes of a comparison image from either a
