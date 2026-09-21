@@ -40,6 +40,7 @@ type LayoutTreeResult struct {
 	ExtraWebNodes          []string `json:"extra_web_nodes,omitempty"`
 	ZeroGeometryWarning    string   `json:"zero_geometry_warning,omitempty"`
 	UnresolvedParentRefs   []string `json:"unresolved_parent_refs,omitempty"`
+	AbsoluteModePairs      int      `json:"absolute_mode_pairs"`
 }
 
 const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
@@ -276,6 +277,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 2. マッチング処理
 	var matchedCount int
 	var totalCompared int
+	var absoluteModePairs int
 	var matchedPairDetails []string
 	var mismatchDetails []string
 	var extraWebDetails []string
@@ -295,6 +297,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		var bestMatchIdx int = -1
 		var minDiff float64 = math.MaxFloat64
 		var bestDiffX, bestDiffY, bestDiffW, bestDiffH float64
+		var bestAbs bool
 
 		for wi, wn := range wNodes {
 			// 使用済みのWebノードは候補から除外（1対1対応の保証）
@@ -329,7 +332,13 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				bestDiffX, bestDiffY, bestDiffW, bestDiffH = diffX, diffY, diffW, diffH
 				bestMatchSelector = wn.Selector
 				bestMatchIdx = wi
+				// 片側でも絶対座標なら実効比較は生ピクセル空間（tolerance は px に対して適用）。
+				bestAbs = figmaAbs || webAbs
 			}
+		}
+
+		if bestMatchIdx >= 0 && bestAbs {
+			absoluteModePairs++
 		}
 
 		// 許容誤差（tolerance）以内なら「テンプレートとして同じ位置・サイズで配置されている」と判定
@@ -385,6 +394,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	summaryDetail := fmt.Sprintf("Matched %d out of %d layout nodes.", matchedCount, totalCompared)
 
 	details := []string{summaryDetail}
+	if absoluteModePairs > 0 {
+		details = append(details, fmt.Sprintf("%d pairs were compared in absolute pixel space (no usable parent); tolerance applies to pixel units there", absoluteModePairs))
+	}
 	details = append(details, matchedPairDetails...)
 	details = append(details, mismatchDetails...)
 	details = append(details, extraWebDetails...)
@@ -402,6 +414,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		ExtraWebNodes:          extraWebSelectors,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		AbsoluteModePairs:      absoluteModePairs,
 	}, nil
 }
 

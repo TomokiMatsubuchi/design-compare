@@ -29,6 +29,7 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		"--threshold", "0.2",
 		"--min-match", "99",
 		"--max-diff-pixels", "3",
+		"--include-aa",
 		"--ignore-region", "0,0,1,1",
 		"--generate-diff=false",
 	}, &stderr)
@@ -50,6 +51,9 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 	if got["max_diff_pixels"] != 3 {
 		t.Errorf("max_diff_pixels=%v", got["max_diff_pixels"])
 	}
+	if got["include_aa"] != true {
+		t.Errorf("include_aa=%v", got["include_aa"])
+	}
 	if got["ignore_region"] != "0,0,1,1" {
 		t.Errorf("ignore_region=%v", got["ignore_region"])
 	}
@@ -64,7 +68,7 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
 	}
-	for _, key := range []string{"threshold", "min_match", "pass_rate", "max_diff_pixels", "ignore_region", "generate_diff", "figma_layout_path", "web_layout_path"} {
+	for _, key := range []string{"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa", "ignore_region", "generate_diff", "figma_layout_path", "web_layout_path"} {
 		if _, ok := got[key]; ok {
 			t.Errorf("unset flag %s should not be in args: %v", key, got)
 		}

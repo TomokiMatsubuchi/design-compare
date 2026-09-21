@@ -1,6 +1,7 @@
 package comparator
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,9 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		if result.Status != "success" {
 			t.Errorf("Expected status 'success', got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
 		}
+		if result.AbsoluteModePairs != 1 {
+			t.Errorf("Expected absolute_mode_pairs=1 (Figma side has no parent), got %d", result.AbsoluteModePairs)
+		}
 	})
 
 	// Sub-test 2: Figma absolute (no parent), Web relative (has parent),
@@ -69,6 +73,9 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		}
 		if result.MatchedNodes != 0 {
 			t.Errorf("Expected 0 matched nodes (different absolute positions should not match), got %d", result.MatchedNodes)
+		}
+		if result.AbsoluteModePairs != 1 {
+			t.Errorf("Expected absolute_mode_pairs=1 even when the abs pair mismatches, got %d", result.AbsoluteModePairs)
 		}
 	})
 
@@ -95,6 +102,9 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		}
 		if result.Status != "success" {
 			t.Errorf("Expected status 'success', got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
+		}
+		if result.AbsoluteModePairs != 2 {
+			t.Errorf("Expected absolute_mode_pairs=2 (root parents + Web child without parent), got %d", result.AbsoluteModePairs)
 		}
 	})
 
@@ -124,6 +134,80 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		// child mismatch by checking that the match rate is below 100%.
 		if result.MatchRate >= 100.0 {
 			t.Errorf("Expected match rate < 100%% (child nodes at different positions should not be inflated to match), got %.1f%% (matched=%d/%d)", result.MatchRate, result.MatchedNodes, result.TotalNodes)
+		}
+		if result.AbsoluteModePairs != 2 {
+			t.Errorf("Expected absolute_mode_pairs=2 (0-size parent + child fallback), got %d", result.AbsoluteModePairs)
+		}
+	})
+}
+
+// TestLayoutTree_AbsoluteModePairs verifies that pairs compared in absolute
+// pixel space (no usable parent, unresolved parent, or zero-size parent) are
+// counted in AbsoluteModePairs and noted in details. Relative-ratio pairs
+// (usable parent on both sides) are not counted.
+func TestLayoutTree_AbsoluteModePairs(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+	wantNote := func(n int) string {
+		return fmt.Sprintf("%d pairs were compared in absolute pixel space (no usable parent); tolerance applies to pixel units there", n)
+	}
+
+	t.Run("parentless_roots", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"root","x":0,"y":0,"w":1000,"h":1000},
+			{"id":"2","name":"hero","x":10,"y":10,"w":100,"h":100}
+		]`
+		webJSON := `[
+			{"selector":"#root","x":0,"y":0,"w":1010,"h":1000},
+			{"selector":".hero","x":10,"y":10,"w":100,"h":100}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.AbsoluteModePairs != 2 {
+			t.Errorf("Expected absolute_mode_pairs=2 for parentless nodes, got %d", result.AbsoluteModePairs)
+		}
+		if result.TotalNodes != 2 {
+			t.Errorf("Expected 2 compared pairs, got total=%d", result.TotalNodes)
+		}
+		var found bool
+		for _, d := range result.Details {
+			if d == wantNote(2) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Expected absolute-mode detail line, got details: %v", result.Details)
+		}
+	})
+
+	t.Run("relative_children_not_counted", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"root","x":0,"y":0,"w":1000,"h":1000},
+			{"id":"2","name":"hero","x":10,"y":10,"w":100,"h":100,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#root","x":0,"y":0,"w":1000,"h":1000},
+			{"selector":".hero","x":10,"y":10,"w":100,"h":100,"parent":"#root"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.AbsoluteModePairs != 1 {
+			t.Errorf("Expected absolute_mode_pairs=1 (root only), got %d", result.AbsoluteModePairs)
+		}
+		var found bool
+		for _, d := range result.Details {
+			if d == wantNote(1) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Expected absolute-mode detail for the root pair, got details: %v", result.Details)
 		}
 	})
 }

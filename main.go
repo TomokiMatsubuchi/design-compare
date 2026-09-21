@@ -43,16 +43,16 @@ func main() {
 			mcp.Description("Comparison mode: 'layout_tree' (DOM/Figma hierarchy comparison), 'perceptual' (aHash image template check), 'strict' (pixelmatch VRT; both images must have identical pixel dimensions), or 'layout_integrity' (detect horizontal viewport overflow and parent overflow from Web bounding boxes only; default iPad portrait 768x1024 CSS px)"),
 		),
 		mcp.WithString("image_path_a",
-			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes unless image_a_base64 is given; mutually exclusive with image_a_base64). Supported formats: PNG / JPEG / GIF. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
+			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes unless image_a_base64 is given; mutually exclusive with image_a_base64). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_path_b",
-			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Supported formats: PNG / JPEG / GIF. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
+			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_a_base64",
-			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Supported formats: PNG / JPEG / GIF. Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
 		),
 		mcp.WithString("image_b_base64",
-			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF. Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
@@ -105,6 +105,9 @@ func main() {
 		mcp.WithNumber("max_diff_pixels",
 			mcp.Min(0),
 			mcp.Description("Maximum number of differing pixels allowed to still report success in 'strict' mode. Default 0 (any pixel difference causes mismatch). Useful to tolerate a few pixels of anti-aliasing or environment differences."),
+		),
+		mcp.WithBoolean("include_aa",
+			mcp.Description("For 'strict' mode: when true, count anti-aliased boundary pixels as diffs (pixelmatch IncludeAntiAlias). Default false keeps the current behavior of excluding AA edge pixels from the diff count. Use true to detect text-rendering and other AA-boundary differences that the default would hide."),
 		),
 		mcp.WithBoolean("generate_diff",
 			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image' is empty for 'perceptual' and 'strict' modes. In 'strict' mode, 'diff_regions' is also omitted because it is derived from the diff image. Useful to avoid large base64 payloads in responses."),
@@ -167,9 +170,10 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 // decodeImageErrorMessage は perceptual モードの image.Decode 失敗メッセージを
 // 組み立てる。対応外の画像形式 (image.ErrFormat) のときだけ、strict モード
 // (comparator.RunPixelMatch) と共通の対応フォーマットヒント
-// (comparator.UnsupportedImageFormatHint) を付ける。PNG/JPEG/GIF だが破損・
-// 途中切れのファイル (例: unexpected EOF) では「WebP/SVG は非対応」と読める
-// 文面が原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
+// (comparator.UnsupportedImageFormatHint) を付ける。PNG/JPEG/GIF/WebP だが破損・
+// 途中切れのファイル (例: unexpected EOF) では「SVG and animated WebP are not
+// supported」と読める文面が原因を形式違いだと誤認させるため、ヒントは付けない
+// (Issue #122)。
 func decodeImageErrorMessage(what string, err error) string {
 	if errors.Is(err, image.ErrFormat) {
 		return fmt.Sprintf("Failed to decode %s: %v %s", what, err, comparator.UnsupportedImageFormatHint)
@@ -241,14 +245,18 @@ func parseIgnoreRegions(s string) ([]comparator.Region, error) {
 		}
 		vals := make([]int, 4)
 		for i, f := range fields {
-			v, err := strconv.Atoi(strings.TrimSpace(f))
-			if err != nil {
-				return nil, fmt.Errorf("ignore_region values must be integers (got %q in %q)", strings.TrimSpace(f), trimmed)
+			fv, err := strconv.ParseFloat(strings.TrimSpace(f), 64)
+			if err != nil || math.IsNaN(fv) || math.IsInf(fv, 0) {
+				return nil, fmt.Errorf("ignore_region values must be numbers (got %q in %q)", strings.TrimSpace(f), trimmed)
 			}
-			if v > math.MaxInt32 {
+			rounded := math.Round(fv)
+			if rounded > math.MaxInt32 {
 				return nil, fmt.Errorf("ignore_region values must be <= %d (got %q)", int32(math.MaxInt32), trimmed)
 			}
-			vals[i] = v
+			if rounded < math.MinInt32 {
+				return nil, fmt.Errorf("ignore_region requires x,y >= 0 and w,h > 0 (got %q)", trimmed)
+			}
+			vals[i] = int(rounded)
 		}
 		x, y, w, h := vals[0], vals[1], vals[2], vals[3]
 		if x < 0 || y < 0 || w <= 0 || h <= 0 {
@@ -283,6 +291,7 @@ var modeParamSupport = map[string]map[string]bool{
 	"min_match":          {"perceptual": true, "strict": true},
 	"pass_rate":          {"layout_tree": true},
 	"max_diff_pixels":    {"strict": true},
+	"include_aa":         {"strict": true},
 	"ignore_nodes":       {"layout_tree": true, "layout_integrity": true},
 	"ignore_region":      {"layout_tree": true, "perceptual": true, "strict": true, "layout_integrity": true},
 	"count_extra_web":    {"layout_tree": true},
@@ -430,12 +439,6 @@ func boolArg(request mcp.CallToolRequest, key string, def bool) (bool, error) {
 	return false, fmt.Errorf("argument '%s' must be a boolean", key)
 }
 
-// perceptualTotalBlocks は perceptual (aHash) 比較のブロック (セル) 総数。
-// aHash は画像を 16x16 = 256 セルに分割して比較するため画像サイズに依存せず
-// 固定。strict モードの total_pixels に対応する数量情報として、応答の
-// total_blocks と details の "N of M blocks differ" 表記に使う (Issue #141)。
-const perceptualTotalBlocks = 256
-
 // Handler: compare_design
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
@@ -546,8 +549,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"details":             treeResult.Details,
 			"effective_threshold": tolerance,
 			"pass_rate":           passRate,
+			"count_extra_web":     countExtraWeb,
 			"ignored_count":       treeResult.IgnoredCount,
-			"extra_web_count":     treeResult.ExtraWebCount,
+			"extra_web_count":      treeResult.ExtraWebCount,
+			"absolute_mode_pairs":  treeResult.AbsoluteModePairs,
 		}
 		// ignore_nodes 指定時に一致しなかったエントリ（スペルミス等）のフィードバックを返す
 		if len(treeResult.UnmatchedIgnores) > 0 {
@@ -635,11 +640,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
 
+		if err := comparator.ValidateImageSizeLimit(imgABytes, "image A"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
 			return mcp.NewToolResultError(decodeImageErrorMessage("image A", err)), nil
 		}
 
+		if err := comparator.ValidateImageSizeLimit(imgBBytes, "image B"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
 			return mcp.NewToolResultError(decodeImageErrorMessage("image B", err)), nil
@@ -679,7 +690,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// diff_pixels / total_pixels と同様に数量として応答へ含める。aHash は
 		// 256 段階の離散値のため、一致率だけよりも差分セル数の方が min_match の
 		// 調整や差分の解釈が容易になる (Issue #141)。
-		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, perceptualTotalBlocks)}
+		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
 		// サイズが異なる画像では同じ x,y,w,h が各画像の絶対ピクセルとして
 		// マスクされるため、割合的に別領域になることを呼び出し側へ伝える。
 		if boundsA.Dx() != boundsB.Dx() || boundsA.Dy() != boundsB.Dy() {
@@ -691,7 +702,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
 			"match_rate_value": matchRate,
 			"min_match":        minMatchRate,
-			"total_blocks":     perceptualTotalBlocks,
+			"total_blocks":     comparator.AHashBlocks,
 			"diff_blocks":      diffBlocks,
 			"image_size_a":     fmt.Sprintf("%dx%d", boundsA.Dx(), boundsA.Dy()),
 			"image_size_b":     fmt.Sprintf("%dx%d", boundsB.Dx(), boundsB.Dy()),
@@ -781,8 +792,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		includeAA, err := boolArg(request, "include_aa", false)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, warnings, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -827,12 +842,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// min_match だけ指定して max_diff_pixels を省略すると既定 0 が判定を支配し、
 		// 差分が 1px でも mismatch になる。status / match_rate は変えず、
 		// perceptual の一様画像 warnings と同様に応答へ通知する (Issue #206)。
+		// 両画像が単色ベタ塗りで diff_pixels=0 の空洞比較も同じフィールドへ載せる
+		// (Issue #227)。非空時のみ含めるのは perceptual と同じ。
+		var respWarnings []string
 		if hasMinMatch {
 			if _, hasMaxDiffPixels := args["max_diff_pixels"]; !hasMaxDiffPixels {
-				responseMap["warnings"] = []string{
-					"max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)",
-				}
+				respWarnings = append(respWarnings, "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)")
 			}
+		}
+		respWarnings = append(respWarnings, warnings...)
+		if len(respWarnings) > 0 {
+			responseMap["warnings"] = respWarnings
 		}
 		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず
 		// 座標ミスの可能性が高いため、非空時のみ応答へ含めて通知する
