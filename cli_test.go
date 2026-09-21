@@ -164,10 +164,15 @@ func TestRunCLIErrorExit(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{"--mode", "strict"}, &stdout, &stderr)
 	if code != exitError {
-		t.Fatalf("expected exit 1, got %d stdout=%s", code, stdout.String())
+		t.Fatalf("expected exit 1, got %d stderr=%s", code, stderr.String())
 	}
-	if stdout.Len() == 0 {
-		t.Fatal("expected error text on stdout")
+	// stdout を JSON としてパースする呼び出し側を壊さないよう、エラー時は
+	// stdout を空のままエラー本文を stderr へ出す。
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Strict mode input error: either image_path_a or image_a_base64 is required") {
+		t.Errorf("expected error text on stderr, got %q", stderr.String())
 	}
 }
 

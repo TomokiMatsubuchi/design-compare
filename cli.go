@@ -23,6 +23,7 @@ func useCLI(osArgs []string) bool {
 }
 
 // runCLI は compare_design を1回実行し、MCP ツールと同じ応答本文を stdout へ出す。
+// エラー時の本文は stdout の JSON ストリームを汚染しないよう stderr へ出す。
 // 終了コード: success=0 / mismatch（および success 以外の比較結果）=2 / エラー=1。
 func runCLI(args []string) int {
 	return runCLIWithIO(args, os.Stdout, os.Stderr)
@@ -47,10 +48,13 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 	}
 
 	text := toolResultText(res)
-	fmt.Fprintln(stdout, text)
 	if res.IsError {
+		// stdout を JSON としてパースする呼び出し側に非 JSON テキストが混入するのを
+		// 防ぐため、エラー本文は stderr へ出す (終了コード 1 で検知できる)。
+		fmt.Fprintln(stderr, text)
 		return exitError
 	}
+	fmt.Fprintln(stdout, text)
 	return exitCodeFromResultJSON(text)
 }
 
