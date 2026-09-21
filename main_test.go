@@ -4433,6 +4433,95 @@ func TestParseIgnoreRegions_OverflowRejected(t *testing.T) {
 	}
 }
 
+func TestParseIgnoreRegions_FractionalValues(t *testing.T) {
+	got, err := parseIgnoreRegions("327.5,30,100.5,40")
+	if err != nil {
+		t.Fatalf("expected fractional ignore_region to parse, got %v", err)
+	}
+	if len(got) != 1 || got[0].X != 328 || got[0].Y != 30 || got[0].W != 101 || got[0].H != 40 {
+		t.Errorf("expected rounded region {328,30,101,40}, got %+v", got)
+	}
+
+	_, err = parseIgnoreRegions("a,b,c,d")
+	if err == nil {
+		t.Fatal("expected invalid ignore_region string to fail")
+	}
+	if !strings.Contains(err.Error(), "must be numbers") {
+		t.Errorf("expected numbers error, got %v", err)
+	}
+}
+
+func TestIgnoreRegion_FractionalValuesInModes(t *testing.T) {
+	tmpDir := t.TempDir()
+	imgE := image.NewRGBA(image.Rect(0, 0, 200, 200))
+	draw.Draw(imgE, imgE.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+	draw.Draw(imgE, image.Rect(0, 0, 100, 100), &image.Uniform{color.Black}, image.Point{}, draw.Src)
+	pathE := saveTempImage(t, tmpDir, "imageE.png", imgE)
+	pathF := saveTempImage(t, tmpDir, "imageF.png", generateSolidImage(200, 200, color.White))
+
+	figmaLayout := `[{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},{"id":"2","name":"banner","x":400,"y":400,"w":200,"h":80}]`
+	webLayout := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100},{"selector":".banner","x":650,"y":420,"w":200,"h":80}]`
+
+	successCases := []struct {
+		mode string
+		args map[string]any
+	}{
+		{
+			mode: "layout_tree",
+			args: map[string]any{
+				"mode": "layout_tree", "figma_layout": figmaLayout, "web_layout": webLayout,
+				"threshold": 0.15, "ignore_region": "399.6,399.6,500.4,100.4",
+			},
+		},
+		{
+			mode: "perceptual",
+			args: map[string]any{
+				"mode": "perceptual", "image_path_a": pathE, "image_path_b": pathF,
+				"ignore_region": "0.4,0.4,99.6,99.6",
+			},
+		},
+		{
+			mode: "strict",
+			args: map[string]any{
+				"mode": "strict", "image_path_a": pathE, "image_path_b": pathF,
+				"ignore_region": "0.4,0.4,99.6,99.6",
+			},
+		},
+	}
+	for _, c := range successCases {
+		req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: c.args}}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: handler failed: %v", c.mode, err)
+		}
+		if res.IsError {
+			t.Fatalf("%s: expected success with fractional ignore_region, got %v", c.mode, res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("%s: expected status=success, got %v", c.mode, result["status"])
+		}
+	}
+
+	invalidArgs := []map[string]any{
+		{"mode": "layout_tree", "figma_layout": figmaLayout, "web_layout": webLayout, "ignore_region": "a,b,c,d"},
+		{"mode": "perceptual", "image_path_a": pathE, "image_path_b": pathF, "ignore_region": "a,b,c,d"},
+		{"mode": "strict", "image_path_a": pathE, "image_path_b": pathF, "ignore_region": "a,b,c,d"},
+	}
+	for _, args := range invalidArgs {
+		mode := args["mode"].(string)
+		req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s invalid: handler failed: %v", mode, err)
+		}
+		if !res.IsError {
+			t.Errorf("%s: expected error for invalid ignore_region, got %v", mode, res.Content[0].(mcp.TextContent).Text)
+		}
+	}
+}
+
 func TestResolveImageInputBase64DataURI(t *testing.T) {
 	payload := []byte("PNGDATA")
 	plain := base64.StdEncoding.EncodeToString(payload)
