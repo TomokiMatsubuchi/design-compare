@@ -106,6 +106,15 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 過半数が零幾何なら非破壊の警告を応答へ載せる（status は変えない）。
 	zeroGeometryWarning := zeroGeometryWarningIfMajority(fNodes, wNodes)
 
+	// 親参照用インデックスは ignore フィルタ前の元リストから一度だけ構築する。
+	// 除外はマッチング対象から外すだけにし、親の座標解決は元ジオメトリを使う。
+	// フィルタ後リストから作ると、除外された親を持つ子が親解決に失敗し
+	// 絶対座標モードへ静かに落ちる（片側だけ除外すると非対称になる）。
+	// 同一キー（Figma ID / Web セレクタ）が重複する場合は先勝ちとし、線形走査で
+	// 「最初に見つかったノード」を返していた従来挙動を維持する。
+	figmaByID := indexFigmaNodesByID(fNodes)
+	webBySelector := indexWebNodesBySelector(wNodes)
+
 	// ignoreList に基づいてノードを除外し、適用結果（除外数・無効なエントリ）を集計する。
 	// 末尾が '*' のエントリはプレフィックス一致（例: '.ad-*' は '.ad-banner' に一致）として
 	// 扱い、命名規則に従うグループ（広告・計測タグ等）を列挙なしで除外できる。
@@ -212,22 +221,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 	}
 
-	// 親ノード検索をループ内の線形走査で行うと全体で O(n_f × n_w²) になるため、
-	// フィルタリング後のリストから親参照用インデックスを一度だけ構築して O(1) 参照にする。
-	// 同一キー（Figma ID / Web セレクタ）が重複する場合は先勝ちとし、線形走査で
-	// 「最初に見つかったノード」を返していた従来挙動を維持する。
-	figmaByID := make(map[string]*FigmaNode, len(fNodes))
-	for i := range fNodes {
-		if _, ok := figmaByID[fNodes[i].ID]; !ok {
-			figmaByID[fNodes[i].ID] = &fNodes[i]
-		}
-	}
-	webBySelector := make(map[string]*WebNode, len(wNodes))
-	for i := range wNodes {
-		if _, ok := webBySelector[wNodes[i].Selector]; !ok {
-			webBySelector[wNodes[i].Selector] = &wNodes[i]
-		}
-	}
 	unresolvedParentRefs := collectUnresolvedParentRefs(fNodes, wNodes, figmaByID, webBySelector)
 
 	if len(fNodes) == 0 || len(wNodes) == 0 {
@@ -524,6 +517,28 @@ func boundingBoxCenterInRegions(x, y, w, h float64, regions []Region, hits []int
 		}
 	}
 	return matched
+}
+
+// indexFigmaNodesByID は親参照用インデックス（ID → ノード）を先勝ちで構築する。
+func indexFigmaNodesByID(nodes []FigmaNode) map[string]*FigmaNode {
+	byID := make(map[string]*FigmaNode, len(nodes))
+	for i := range nodes {
+		if _, ok := byID[nodes[i].ID]; !ok {
+			byID[nodes[i].ID] = &nodes[i]
+		}
+	}
+	return byID
+}
+
+// indexWebNodesBySelector は親参照用インデックス（セレクタ → ノード）を先勝ちで構築する。
+func indexWebNodesBySelector(nodes []WebNode) map[string]*WebNode {
+	bySelector := make(map[string]*WebNode, len(nodes))
+	for i := range nodes {
+		if _, ok := bySelector[nodes[i].Selector]; !ok {
+			bySelector[nodes[i].Selector] = &nodes[i]
+		}
+	}
+	return bySelector
 }
 
 // getFigmaParent は親参照用インデックス（ID → ノード）から親ノードを O(1) で引く。
