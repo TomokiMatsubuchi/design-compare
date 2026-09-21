@@ -438,12 +438,6 @@ func boolArg(request mcp.CallToolRequest, key string, def bool) (bool, error) {
 	return false, fmt.Errorf("argument '%s' must be a boolean", key)
 }
 
-// perceptualTotalBlocks は perceptual (aHash) 比較のブロック (セル) 総数。
-// aHash は画像を 16x16 = 256 セルに分割して比較するため画像サイズに依存せず
-// 固定。strict モードの total_pixels に対応する数量情報として、応答の
-// total_blocks と details の "N of M blocks differ" 表記に使う (Issue #141)。
-const perceptualTotalBlocks = 256
-
 // Handler: compare_design
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
@@ -694,7 +688,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// diff_pixels / total_pixels と同様に数量として応答へ含める。aHash は
 		// 256 段階の離散値のため、一致率だけよりも差分セル数の方が min_match の
 		// 調整や差分の解釈が容易になる (Issue #141)。
-		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, perceptualTotalBlocks)}
+		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
 		// サイズが異なる画像では同じ x,y,w,h が各画像の絶対ピクセルとして
 		// マスクされるため、割合的に別領域になることを呼び出し側へ伝える。
 		if boundsA.Dx() != boundsB.Dx() || boundsA.Dy() != boundsB.Dy() {
@@ -706,7 +700,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"match_rate":       fmt.Sprintf("%.2f%%", matchRate),
 			"match_rate_value": matchRate,
 			"min_match":        minMatchRate,
-			"total_blocks":     perceptualTotalBlocks,
+			"total_blocks":     comparator.AHashBlocks,
 			"diff_blocks":      diffBlocks,
 			"image_size_a":     fmt.Sprintf("%dx%d", boundsA.Dx(), boundsA.Dy()),
 			"image_size_b":     fmt.Sprintf("%dx%d", boundsB.Dx(), boundsB.Dy()),
