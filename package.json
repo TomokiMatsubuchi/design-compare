@@ -1,10 +1,30 @@
 {
   "name": "design-compare",
   "version": "1.0.0",
-  "description": "Design comparison MCP plugin for Codex",
-  "keywords": ["opencode-plugin", "skills"],
+  "description": "Design comparison MCP server and Pi extension with structural, perceptual, strict, and iPad layout-integrity modes",
+  "type": "module",
+  "keywords": ["pi-package", "opencode-plugin", "skills"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TomokiMatsubuchi/design-compare.git"
+  },
+  "files": [
+    "*.go",
+    "go.mod",
+    "go.sum",
+    "comparator",
+    "extensions",
+    "skills",
+    "plugin.yaml",
+    "README.md"
+  ],
   "pi": {
+    "extensions": ["./extensions/design-compare/index.ts"],
     "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   }
 }
