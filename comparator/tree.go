@@ -27,20 +27,34 @@ type WebNode struct {
 	Parent   string  `json:"parent,omitempty"`
 }
 
+// MismatchedNode は tolerance 超過で不一致になった Figma/Web ペアの
+// 機械可読な幾何差分。details の "geometric diff … (dx: …)" と同じ数値を
+// 文字列パースなしで扱うためのフィールド。
+type MismatchedNode struct {
+	FigmaName   string  `json:"figma_name"`
+	WebSelector string  `json:"web_selector"`
+	Diff        float64 `json:"diff"`
+	DX          float64 `json:"dx"`
+	DY          float64 `json:"dy"`
+	DW          float64 `json:"dw"`
+	DH          float64 `json:"dh"`
+}
+
 type LayoutTreeResult struct {
-	MatchRate              float64  `json:"match_rate"`
-	Status                 string   `json:"status"`
-	Details                []string `json:"details"`
-	MatchedNodes           int      `json:"matched_nodes"`
-	TotalNodes             int      `json:"total_nodes"`
-	IgnoredCount           int      `json:"ignored_count"`
-	UnmatchedIgnores       []string `json:"unmatched_ignores,omitempty"`
-	UnmatchedIgnoreRegions []string `json:"unmatched_ignore_regions,omitempty"`
-	ExtraWebCount          int      `json:"extra_web_count"`
-	ExtraWebNodes          []string `json:"extra_web_nodes,omitempty"`
-	ZeroGeometryWarning    string   `json:"zero_geometry_warning,omitempty"`
-	UnresolvedParentRefs   []string `json:"unresolved_parent_refs,omitempty"`
-	AbsoluteModePairs      int      `json:"absolute_mode_pairs"`
+	MatchRate              float64          `json:"match_rate"`
+	Status                 string           `json:"status"`
+	Details                []string         `json:"details"`
+	MatchedNodes           int              `json:"matched_nodes"`
+	TotalNodes             int              `json:"total_nodes"`
+	IgnoredCount           int              `json:"ignored_count"`
+	UnmatchedIgnores       []string         `json:"unmatched_ignores,omitempty"`
+	UnmatchedIgnoreRegions []string         `json:"unmatched_ignore_regions,omitempty"`
+	ExtraWebCount          int              `json:"extra_web_count"`
+	ExtraWebNodes          []string         `json:"extra_web_nodes,omitempty"`
+	MismatchedNodes        []MismatchedNode `json:"mismatched_nodes,omitempty"`
+	ZeroGeometryWarning    string           `json:"zero_geometry_warning,omitempty"`
+	UnresolvedParentRefs   []string         `json:"unresolved_parent_refs,omitempty"`
+	AbsoluteModePairs      int              `json:"absolute_mode_pairs"`
 }
 
 const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
@@ -274,6 +288,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var matchedPairDetails []string
 	var mismatchDetails []string
 	var extraWebDetails []string
+	var mismatchedNodes []MismatchedNode
 
 	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
 	usedWeb := make(map[int]bool)
@@ -352,6 +367,15 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
 			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			mismatchedNodes = append(mismatchedNodes, MismatchedNode{
+				FigmaName:   fn.Name,
+				WebSelector: bestMatchSelector,
+				Diff:        minDiff,
+				DX:          bestDiffX,
+				DY:          bestDiffY,
+				DW:          bestDiffW,
+				DH:          bestDiffH,
+			})
 		}
 	}
 
@@ -407,6 +431,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 		ExtraWebCount:          len(extraWebSelectors),
 		ExtraWebNodes:          extraWebSelectors,
+		MismatchedNodes:        mismatchedNodes,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
 		AbsoluteModePairs:      absoluteModePairs,
