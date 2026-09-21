@@ -106,6 +106,9 @@ func main() {
 			mcp.Min(0),
 			mcp.Description("Maximum number of differing pixels allowed to still report success in 'strict' mode. Default 0 (any pixel difference causes mismatch). Useful to tolerate a few pixels of anti-aliasing or environment differences."),
 		),
+		mcp.WithBoolean("include_aa",
+			mcp.Description("For 'strict' mode: when true, count anti-aliased boundary pixels as diffs (pixelmatch IncludeAntiAlias). Default false keeps the current behavior of excluding AA edge pixels from the diff count. Use true to detect text-rendering and other AA-boundary differences that the default would hide."),
+		),
 		mcp.WithBoolean("generate_diff",
 			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image' is empty for 'perceptual' and 'strict' modes. In 'strict' mode, 'diff_regions' is also omitted because it is derived from the diff image. Useful to avoid large base64 payloads in responses."),
 		),
@@ -283,6 +286,7 @@ var modeParamSupport = map[string]map[string]bool{
 	"min_match":          {"perceptual": true, "strict": true},
 	"pass_rate":          {"layout_tree": true},
 	"max_diff_pixels":    {"strict": true},
+	"include_aa":         {"strict": true},
 	"ignore_nodes":       {"layout_tree": true, "layout_integrity": true},
 	"ignore_region":      {"layout_tree": true, "perceptual": true, "strict": true, "layout_integrity": true},
 	"count_extra_web":    {"layout_tree": true},
@@ -548,6 +552,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"pass_rate":           passRate,
 			"ignored_count":       treeResult.IgnoredCount,
 			"extra_web_count":     treeResult.ExtraWebCount,
+			"absolute_mode_pairs": treeResult.AbsoluteModePairs,
 		}
 		// ignore_nodes 指定時に一致しなかったエントリ（スペルミス等）のフィードバックを返す
 		if len(treeResult.UnmatchedIgnores) > 0 {
@@ -635,11 +640,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
 
+		if err := comparator.ValidateImageSizeLimit(imgABytes, "image A"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
 			return mcp.NewToolResultError(decodeImageErrorMessage("image A", err)), nil
 		}
 
+		if err := comparator.ValidateImageSizeLimit(imgBBytes, "image B"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
 			return mcp.NewToolResultError(decodeImageErrorMessage("image B", err)), nil
@@ -781,8 +792,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		includeAA, err := boolArg(request, "include_aa", false)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
