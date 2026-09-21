@@ -72,6 +72,7 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	minMatch := fs.Float64("min-match", 0, "Minimum match percentage for perceptual/strict (maps to min_match)")
 	passRate := fs.Float64("pass-rate", 0, "Minimum match percentage for layout_tree (maps to pass_rate)")
 	maxDiff := fs.Int("max-diff-pixels", 0, "Maximum differing pixels for strict (maps to max_diff_pixels)")
+	includeAA := fs.Bool("include-aa", false, "Count anti-aliased pixels as diffs in strict mode (maps to include_aa)")
 	ignoreRegion := fs.String("ignore-region", "", "Semicolon-separated x,y,w,h regions to ignore")
 	generateDiff := fs.Bool("generate-diff", true, "Whether to generate a diff image (default true)")
 
@@ -100,6 +101,8 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 			toolArgs["pass_rate"] = *passRate
 		case "max-diff-pixels":
 			toolArgs["max_diff_pixels"] = *maxDiff
+		case "include-aa":
+			toolArgs["include_aa"] = *includeAA
 		case "ignore-region":
 			toolArgs["ignore_region"] = *ignoreRegion
 		case "generate-diff":
