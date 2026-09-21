@@ -40,6 +40,7 @@ type LayoutTreeResult struct {
 	ExtraWebNodes          []string `json:"extra_web_nodes,omitempty"`
 	ZeroGeometryWarning    string   `json:"zero_geometry_warning,omitempty"`
 	UnresolvedParentRefs   []string `json:"unresolved_parent_refs,omitempty"`
+	AbsoluteModePairs      int      `json:"absolute_mode_pairs"`
 }
 
 const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
@@ -57,6 +58,12 @@ const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the lay
 // どのノード中心とも重ならない領域は UnmatchedIgnoreRegions に "x,y,w,h" で入る
 // （ignore_nodes の unmatched_ignores / 画像モードの out_of_bounds_regions と同種）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
+// RoundMatchRateDisplay は表示 match_rate (%.2f) と同じ小数第2位に丸める。
+// 合否判定を表示桁と一致させるために使う。match_rate_value には適用しない。
+func RoundMatchRateDisplay(rate float64) float64 {
+	return math.Round(rate*100) / 100
+}
+
 func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate float64, ignoreList []string, countExtraWeb bool, ignoreRegions []Region) (*LayoutTreeResult, error) {
 	// tolerance / passRate の範囲検証は呼び出し元 (main.go) で行われるため、
 	// ここでは負値のデフォルト補完は不要。
@@ -263,6 +270,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 2. マッチング処理
 	var matchedCount int
 	var totalCompared int
+	var absoluteModePairs int
 	var matchedPairDetails []string
 	var mismatchDetails []string
 	var extraWebDetails []string
@@ -282,6 +290,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		var bestMatchIdx int = -1
 		var minDiff float64 = math.MaxFloat64
 		var bestDiffX, bestDiffY, bestDiffW, bestDiffH float64
+		var bestAbs bool
 
 		for wi, wn := range wNodes {
 			// 使用済みのWebノードは候補から除外（1対1対応の保証）
@@ -316,7 +325,13 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				bestDiffX, bestDiffY, bestDiffW, bestDiffH = diffX, diffY, diffW, diffH
 				bestMatchSelector = wn.Selector
 				bestMatchIdx = wi
+				// 片側でも絶対座標なら実効比較は生ピクセル空間（tolerance は px に対して適用）。
+				bestAbs = figmaAbs || webAbs
 			}
+		}
+
+		if bestMatchIdx >= 0 && bestAbs {
+			absoluteModePairs++
 		}
 
 		// 許容誤差（tolerance）以内なら「テンプレートとして同じ位置・サイズで配置されている」と判定
@@ -363,7 +378,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 	matchRate := (float64(matchedCount) / float64(totalCompared)) * 100.0
 	status := "success"
-	if matchRate < passRate { // 合格ライン（パラメータ化）
+	// 合否は表示 match_rate (%.2f) と同じ桁に丸めた値で判定する (Issue #233)
+	if RoundMatchRateDisplay(matchRate) < passRate { // 合格ライン（パラメータ化）
 		status = "mismatch"
 	}
 
@@ -371,9 +387,14 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	summaryDetail := fmt.Sprintf("Matched %d out of %d layout nodes.", matchedCount, totalCompared)
 
 	details := []string{summaryDetail}
-	details = append(details, matchedPairDetails...)
+	if absoluteModePairs > 0 {
+		details = append(details, fmt.Sprintf("%d pairs were compared in absolute pixel space (no usable parent); tolerance applies to pixel units there", absoluteModePairs))
+	}
+	// 不一致と余分なWebノードを一致ペアより先に置く。ノード数が多いページで
+	// "Matched: …" の羅列の後ろに失敗行が埋もれないようにする。
 	details = append(details, mismatchDetails...)
 	details = append(details, extraWebDetails...)
+	details = append(details, matchedPairDetails...)
 
 	return &LayoutTreeResult{
 		MatchRate:              matchRate,
@@ -388,6 +409,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		ExtraWebNodes:          extraWebSelectors,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		AbsoluteModePairs:      absoluteModePairs,
 	}, nil
 }
 

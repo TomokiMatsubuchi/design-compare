@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/draw"
@@ -14,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"design-compare/comparator"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -500,6 +504,34 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if resultFail["status"] != "mismatch" {
 			t.Errorf("Expected mismatch with pass_rate=70, got status=%v, rate=%v", resultFail["status"], resultFail["match_rate"])
 		}
+
+		// 生値は 66.666...% で 66.67 未満だが、表示は 66.67%。判定も表示桁に合わせる (Issue #233)
+		reqRounded := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"pass_rate":    66.67,
+				},
+			},
+		}
+		resRounded, err := compareDesignHandler(context.Background(), reqRounded)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultRounded map[string]interface{}
+		json.Unmarshal([]byte(resRounded.Content[0].(mcp.TextContent).Text), &resultRounded)
+		if resultRounded["match_rate"] != "66.67%" {
+			t.Errorf("Expected displayed match_rate=66.67%%, got %v", resultRounded["match_rate"])
+		}
+		if resultRounded["status"] != "success" {
+			t.Errorf("Expected success when displayed match_rate equals pass_rate=66.67, got status=%v value=%v", resultRounded["status"], resultRounded["match_rate_value"])
+		}
+		if got, want := resultRounded["match_rate_value"], float64(2)/3*100; got != want {
+			t.Errorf("Expected raw match_rate_value=%v, got %v", want, got)
+		}
 	})
 
 	// =================================================================
@@ -887,6 +919,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := result1["matched_nodes"]; got != float64(1) {
 			t.Errorf("Expected matched_nodes=1, got %v", got)
 		}
+		if got := result1["absolute_mode_pairs"]; got != float64(1) {
+			t.Errorf("Expected absolute_mode_pairs=1, got %v", got)
+		}
 
 		// ケース2: 同じ構成だが絶対座標が実際に異なる場合は不一致のまま
 		// （対称化によって誤一致が生まれないことの保証）
@@ -1055,6 +1090,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultOn["extra_web_count"]; got != float64(1) {
 			t.Errorf("Expected extra_web_count=1, got %v", got)
 		}
+		if got := resultOn["count_extra_web"]; got != true {
+			t.Errorf("Expected count_extra_web=true in response, got %v", got)
+		}
 		extraOn, hasExtraOn := resultOn["extra_web_nodes"].([]interface{})
 		if !hasExtraOn || len(extraOn) != 1 || extraOn[0] != ".banner" {
 			t.Errorf("Expected extra_web_nodes=[\".banner\"], got %v", resultOn["extra_web_nodes"])
@@ -1088,6 +1126,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		// （分母への加算のみが本フラグで制御される）
 		if got := resultOff["extra_web_count"]; got != float64(1) {
 			t.Errorf("Expected extra_web_count=1 even when count_extra_web is off, got %v", got)
+		}
+		if got := resultOff["count_extra_web"]; got != false {
+			t.Errorf("Expected count_extra_web=false in response when unset, got %v", got)
 		}
 		extraOff, hasExtraOff := resultOff["extra_web_nodes"].([]interface{})
 		if !hasExtraOff || len(extraOff) != 1 || extraOff[0] != ".banner" {
@@ -1130,8 +1171,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !ok {
 			t.Fatalf("Expected details array, got %v", resultAll["details"])
 		}
-		if len(detailsAll) != 4 {
-			t.Fatalf("Expected 4 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
+		if len(detailsAll) != 5 {
+			t.Fatalf("Expected 5 details when max_details is omitted (summary + abs-mode note + 3 pairs), got %d: %v", len(detailsAll), detailsAll)
 		}
 
 		reqCap := mcp.CallToolRequest{
@@ -1163,7 +1204,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Errorf("Expected summary line first, got %v", detailsCap[0])
 		}
 		omit, _ := detailsCap[len(detailsCap)-1].(string)
-		if omit != "... and 2 more details omitted (max_details=2)" {
+		if omit != "... and 3 more details omitted (max_details=2)" {
 			t.Errorf("Expected omit line, got %q", omit)
 		}
 	})
@@ -2409,6 +2450,57 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// strict の差分 0 合格は両画像が単色ベタ塗りでも success・100% になる。
+	// status / match_rate は変えず warnings で空洞比較を通知する (Issue #227)
+	t.Run("Strict_UniformImage_Warnings", func(t *testing.T) {
+		const wantWarning = "degenerate comparison: both images are uniform; strict match may be vacuous (blank capture failure or over-broad ignore_region)"
+
+		reqUniform := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathF,
+					"image_path_b": pathF,
+				},
+			},
+		}
+		resUniform, err := compareDesignHandler(context.Background(), reqUniform)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultUniform map[string]interface{}
+		json.Unmarshal([]byte(resUniform.Content[0].(mcp.TextContent).Text), &resultUniform)
+		if resultUniform["status"] != "success" || resultUniform["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match for all-white pair (behavior unchanged), got status=%v, rate=%v", resultUniform["status"], resultUniform["match_rate"])
+		}
+		gotWarnings, ok := resultUniform["warnings"].([]interface{})
+		if !ok || len(gotWarnings) != 1 || gotWarnings[0] != wantWarning {
+			t.Errorf("Expected warnings=[%q], got %v", wantWarning, resultUniform["warnings"])
+		}
+
+		reqNormal := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathA,
+					"image_path_b": pathA,
+				},
+			},
+		}
+		resNormal, err := compareDesignHandler(context.Background(), reqNormal)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNormal map[string]interface{}
+		json.Unmarshal([]byte(resNormal.Content[0].(mcp.TextContent).Text), &resultNormal)
+		if resultNormal["status"] != "success" {
+			t.Errorf("Expected success for identical non-uniform pair, got status=%v", resultNormal["status"])
+		}
+		if _, ok := resultNormal["warnings"]; ok {
+			t.Errorf("Expected no warnings for non-uniform pair, got %v", resultNormal["warnings"])
+		}
+	})
+
 	// 背景透過PNG (Figma のフレーム書き出し等) の透過ピクセルを白背景に合成して
 	// から輝度化することを検証する (Issue #134)。アルファを無視して透過部分を
 	// 「黒」として扱うと、strict (pixelmatch は白背景に合成して比較) だけが通り、
@@ -2563,6 +2655,51 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 		if result["status"] != "mismatch" {
 			t.Errorf("Expected mismatch with min_match=98.0, got status=%v", result["status"])
+		}
+	})
+
+	t.Run("Perceptual_MinMatch_DisplayRounding", func(t *testing.T) {
+		// 16x16 の左右分割で 5 セルだけ反転すると一致率は 98.046875% → 表示 98.05%
+		imgBase := generateSplitImage(16, 16, color.White, color.Black)
+		imgFlip := generateSplitImage(16, 16, color.White, color.Black)
+		rgba, ok := imgFlip.(*image.RGBA)
+		if !ok {
+			t.Fatalf("expected *image.RGBA from generateSplitImage")
+		}
+		for i := 0; i < 5; i++ {
+			rgba.Set(i, 0, color.Black)
+		}
+		pathBase := saveTempImage(t, tmpDir, "perceptual-round-base.png", imgBase)
+		pathFlip := saveTempImage(t, tmpDir, "perceptual-round-flip.png", imgFlip)
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathBase,
+					"image_path_b": pathFlip,
+					"min_match":    98.05,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["diff_blocks"] != float64(5) {
+			t.Fatalf("Expected diff_blocks=5, got %v", result["diff_blocks"])
+		}
+		wantRaw := float64(256-5) / 256 * 100
+		if got := result["match_rate_value"]; got != wantRaw {
+			t.Errorf("Expected raw match_rate_value=%v, got %v", wantRaw, got)
+		}
+		if result["match_rate"] != "98.05%" {
+			t.Errorf("Expected displayed match_rate=98.05%%, got %v", result["match_rate"])
+		}
+		if result["status"] != "success" {
+			t.Errorf("Expected success when displayed match_rate equals min_match=98.05, got status=%v", result["status"])
 		}
 	})
 
@@ -3402,6 +3539,52 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	t.Run("StrictMode_MinMatch_DisplayRounding", func(t *testing.T) {
+		// 200x100=20,000px・差分 401px → 一致率 97.995% → 表示 98.00%、生値は 98 未満
+		imgWhite := generateSolidImage(200, 100, color.White)
+		imgDiff := generateSolidImage(200, 100, color.White)
+		rgba, ok := imgDiff.(*image.RGBA)
+		if !ok {
+			t.Fatalf("expected *image.RGBA from generateSolidImage")
+		}
+		for i := 0; i < 401; i++ {
+			rgba.Set(i%200, i/200, color.Black)
+		}
+		pathWhite := saveTempImage(t, tmpDir, "strict-round-white.png", imgWhite)
+		pathDiff := saveTempImage(t, tmpDir, "strict-round-diff.png", imgDiff)
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "strict",
+					"image_path_a":    pathWhite,
+					"image_path_b":    pathDiff,
+					"min_match":       98.0,
+					"max_diff_pixels": 401.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["diff_pixels"] != float64(401) || result["total_pixels"] != float64(20000) {
+			t.Fatalf("Expected 401/20000 diff pixels, got diff=%v total=%v", result["diff_pixels"], result["total_pixels"])
+		}
+		wantRaw := (20000.0 - 401.0) / 20000.0 * 100.0
+		if got := result["match_rate_value"]; got != wantRaw {
+			t.Errorf("Expected raw match_rate_value=%v, got %v", wantRaw, got)
+		}
+		if result["match_rate"] != "98.00%" {
+			t.Errorf("Expected displayed match_rate=98.00%%, got %v", result["match_rate"])
+		}
+		if result["status"] != "success" {
+			t.Errorf("Expected success when displayed match_rate equals min_match=98, got status=%v value=%v", result["status"], result["match_rate_value"])
+		}
+	})
+
 	// min_match のみ指定し max_diff_pixels を省略すると既定 0 が判定を支配する。
 	// status / match_rate は変えず、warnings で呼び出し側に気付かせる (Issue #206)
 	t.Run("StrictMode_MinMatch_DefaultMaxDiffPixels_Warning", func(t *testing.T) {
@@ -3492,6 +3675,70 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !res.IsError {
 				t.Errorf("Expected error for strict min_match=%.1f, got content=%v", val, res.Content[0].(mcp.TextContent).Text)
 			}
+		}
+	})
+
+	// include_aa: デフォルト/false は AA 境界を差分カウントから除外し、
+	// true のときだけ pixelmatch.IncludeAntiAlias で差分が増える (Issue #239)。
+	t.Run("StrictMode_IncludeAA", func(t *testing.T) {
+		const w, h = 12, 12
+		black := color.RGBA{0, 0, 0, 255}
+		white := color.RGBA{255, 255, 255, 255}
+		grayDark := color.RGBA{64, 64, 64, 255}
+		grayLight := color.RGBA{192, 192, 192, 255}
+
+		imgA := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.Draw(imgA, imgA.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+		draw.Draw(imgA, image.Rect(0, 0, 5, h), &image.Uniform{black}, image.Point{}, draw.Src)
+		draw.Draw(imgA, image.Rect(5, 0, 6, h), &image.Uniform{grayDark}, image.Point{}, draw.Src)
+
+		imgB := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+		draw.Draw(imgB, image.Rect(0, 0, 5, h), &image.Uniform{black}, image.Point{}, draw.Src)
+		draw.Draw(imgB, image.Rect(5, 0, 6, h), &image.Uniform{grayLight}, image.Point{}, draw.Src)
+
+		pathAA := saveTempImage(t, tmpDir, "imageAA_a.png", imgA)
+		pathAB := saveTempImage(t, tmpDir, "imageAA_b.png", imgB)
+
+		call := func(args map[string]any) map[string]interface{} {
+			t.Helper()
+			req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %v", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			return result
+		}
+
+		base := map[string]any{
+			"mode":          "strict",
+			"image_path_a":  pathAA,
+			"image_path_b":  pathAB,
+			"generate_diff": false,
+		}
+		omitted := call(base)
+		withFalse := call(map[string]any{
+			"mode": "strict", "image_path_a": pathAA, "image_path_b": pathAB,
+			"generate_diff": false, "include_aa": false,
+		})
+		withTrue := call(map[string]any{
+			"mode": "strict", "image_path_a": pathAA, "image_path_b": pathAB,
+			"generate_diff": false, "include_aa": true,
+		})
+
+		omittedDiff := omitted["diff_pixels"].(float64)
+		falseDiff := withFalse["diff_pixels"].(float64)
+		trueDiff := withTrue["diff_pixels"].(float64)
+		if omittedDiff != falseDiff {
+			t.Errorf("unspecified include_aa should match include_aa=false: omitted=%v false=%v", omittedDiff, falseDiff)
+		}
+		if trueDiff <= omittedDiff {
+			t.Errorf("include_aa=true should increase diff_pixels (omitted=%v, true=%v)", omittedDiff, trueDiff)
 		}
 	})
 
@@ -3931,6 +4178,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_tree", "image_a_base64", "not-base64", true, ""},
 			{"layout_tree", "image_b_base64", "not-base64", true, ""},
 			{"layout_tree", "max_diff_pixels", 10.0, true, ""},
+			{"layout_tree", "include_aa", true, true, ""},
 			{"layout_tree", "generate_diff", false, true, ""},
 			{"layout_tree", "diff_on_mismatch", true, true, ""},
 			{"layout_tree", "diff_image_content", true, true, ""},
@@ -3952,6 +4200,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"perceptual", "max_details", 2.0, true, ""},
 			{"perceptual", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			{"perceptual", "max_diff_pixels", 10.0, true, ""},
+			{"perceptual", "include_aa", true, true, ""},
 			// perceptual: 対応パラメータはエラーにならない
 			{"perceptual", "min_match", 98.0, false, ""},
 			{"perceptual", "threshold", 98.0, false, ""},
@@ -3970,6 +4219,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			// strict: 対応パラメータはエラーにならない
 			{"strict", "max_diff_pixels", 100000.0, false, ""},
+			{"strict", "include_aa", true, false, ""},
 			{"strict", "min_match", 10.0, false, ""},
 			{"strict", "threshold", 0.1, false, ""},
 			{"strict", "ignore_region", "0,0,10,10", false, ""},
@@ -3983,6 +4233,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_integrity", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
 			{"layout_integrity", "threshold", 0.15, true, ""},
 			{"layout_integrity", "max_diff_pixels", 10.0, true, ""},
+			{"layout_integrity", "include_aa", true, true, ""},
 			{"layout_integrity", "generate_diff", false, true, ""},
 			{"layout_integrity", "diff_image_content", true, true, ""},
 			{"layout_integrity", "count_extra_web", true, true, ""},
@@ -4204,7 +4455,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("failed to write text fixture: %v", err)
 		}
 		// strict と perceptual の両モードで共有される対応フォーマットヒント (Issue #122)。
-		const formatsHint = "(supported: PNG, JPEG, GIF; WebP/SVG are not supported)"
+		const formatsHint = "(supported: PNG, JPEG, GIF, WebP; SVG and animated WebP are not supported)"
 
 		t.Run("perceptual_txt", func(t *testing.T) {
 			req := mcp.CallToolRequest{
@@ -4306,6 +4557,95 @@ func TestParseIgnoreRegions_OverflowRejected(t *testing.T) {
 	_, err = parseIgnoreRegions("2147483647,0,1,1")
 	if err != nil {
 		t.Errorf("MaxInt32 should be accepted, got %v", err)
+	}
+}
+
+func TestParseIgnoreRegions_FractionalValues(t *testing.T) {
+	got, err := parseIgnoreRegions("327.5,30,100.5,40")
+	if err != nil {
+		t.Fatalf("expected fractional ignore_region to parse, got %v", err)
+	}
+	if len(got) != 1 || got[0].X != 328 || got[0].Y != 30 || got[0].W != 101 || got[0].H != 40 {
+		t.Errorf("expected rounded region {328,30,101,40}, got %+v", got)
+	}
+
+	_, err = parseIgnoreRegions("a,b,c,d")
+	if err == nil {
+		t.Fatal("expected invalid ignore_region string to fail")
+	}
+	if !strings.Contains(err.Error(), "must be numbers") {
+		t.Errorf("expected numbers error, got %v", err)
+	}
+}
+
+func TestIgnoreRegion_FractionalValuesInModes(t *testing.T) {
+	tmpDir := t.TempDir()
+	imgE := image.NewRGBA(image.Rect(0, 0, 200, 200))
+	draw.Draw(imgE, imgE.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+	draw.Draw(imgE, image.Rect(0, 0, 100, 100), &image.Uniform{color.Black}, image.Point{}, draw.Src)
+	pathE := saveTempImage(t, tmpDir, "imageE.png", imgE)
+	pathF := saveTempImage(t, tmpDir, "imageF.png", generateSolidImage(200, 200, color.White))
+
+	figmaLayout := `[{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},{"id":"2","name":"banner","x":400,"y":400,"w":200,"h":80}]`
+	webLayout := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100},{"selector":".banner","x":650,"y":420,"w":200,"h":80}]`
+
+	successCases := []struct {
+		mode string
+		args map[string]any
+	}{
+		{
+			mode: "layout_tree",
+			args: map[string]any{
+				"mode": "layout_tree", "figma_layout": figmaLayout, "web_layout": webLayout,
+				"threshold": 0.15, "ignore_region": "399.6,399.6,500.4,100.4",
+			},
+		},
+		{
+			mode: "perceptual",
+			args: map[string]any{
+				"mode": "perceptual", "image_path_a": pathE, "image_path_b": pathF,
+				"ignore_region": "0.4,0.4,99.6,99.6",
+			},
+		},
+		{
+			mode: "strict",
+			args: map[string]any{
+				"mode": "strict", "image_path_a": pathE, "image_path_b": pathF,
+				"ignore_region": "0.4,0.4,99.6,99.6",
+			},
+		},
+	}
+	for _, c := range successCases {
+		req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: c.args}}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: handler failed: %v", c.mode, err)
+		}
+		if res.IsError {
+			t.Fatalf("%s: expected success with fractional ignore_region, got %v", c.mode, res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("%s: expected status=success, got %v", c.mode, result["status"])
+		}
+	}
+
+	invalidArgs := []map[string]any{
+		{"mode": "layout_tree", "figma_layout": figmaLayout, "web_layout": webLayout, "ignore_region": "a,b,c,d"},
+		{"mode": "perceptual", "image_path_a": pathE, "image_path_b": pathF, "ignore_region": "a,b,c,d"},
+		{"mode": "strict", "image_path_a": pathE, "image_path_b": pathF, "ignore_region": "a,b,c,d"},
+	}
+	for _, args := range invalidArgs {
+		mode := args["mode"].(string)
+		req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s invalid: handler failed: %v", mode, err)
+		}
+		if !res.IsError {
+			t.Errorf("%s: expected error for invalid ignore_region, got %v", mode, res.Content[0].(mcp.TextContent).Text)
+		}
 	}
 }
 
@@ -4499,22 +4839,20 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 }
 
 // TestPerceptualDecodeErrorListsSupportedFormats verifies that perceptual-mode
-// decode failures for unsupported image formats (e.g. WebP, SVG) include a hint
-// about the supported formats (PNG, JPEG, GIF) in the error message, so callers
+// decode failures for unsupported image formats (e.g. SVG) include a hint
+// about the supported formats (PNG, JPEG, GIF, WebP) in the error message, so callers
 // can determine the corrective action (format conversion) without an extra
 // round-trip (Issue #122).
 func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vrt-webp-*")
+	tmpDir, err := os.MkdirTemp("", "vrt-svg-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// WebP のマジックナンバー ("RIFF" + "WEBP") を含むファイル。
-	// Go 標準の image パッケージはデコードできず "image: unknown format" になる。
-	webpPath := filepath.Join(tmpDir, "image.webp")
-	if err := os.WriteFile(webpPath, []byte("RIFF\x00\x00\x00\x00WEBPVP8 fake payload"), 0o644); err != nil {
-		t.Fatalf("failed to write WebP file: %v", err)
+	svgPath := filepath.Join(tmpDir, "image.svg")
+	if err := os.WriteFile(svgPath, []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>`), 0o644); err != nil {
+		t.Fatalf("failed to write SVG file: %v", err)
 	}
 	pngPath := saveTempImage(t, tmpDir, "valid.png", generateSolidImage(10, 10, color.White))
 
@@ -4523,8 +4861,8 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 		pathA, pathB string
 		wantMsg      string
 	}{
-		{"webp_as_image_A", webpPath, pngPath, "Failed to decode image A"},
-		{"webp_as_image_B", pngPath, webpPath, "Failed to decode image B"},
+		{"svg_as_image_A", svgPath, pngPath, "Failed to decode image A"},
+		{"svg_as_image_B", pngPath, svgPath, "Failed to decode image B"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{
@@ -4547,7 +4885,7 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 			if !strings.Contains(got, c.wantMsg) {
 				t.Errorf("expected error to contain %q, got %q", c.wantMsg, got)
 			}
-			if !strings.Contains(got, "supported: PNG, JPEG, GIF") {
+			if !strings.Contains(got, comparator.UnsupportedImageFormatHint) {
 				t.Errorf("expected decode error to contain supported-format hint, got %q", got)
 			}
 		})
@@ -4556,8 +4894,8 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 
 // TestPerceptualDecodeError_CorruptImageOmitsFormatHint verifies that a
 // corrupted/truncated PNG (image.ErrFormat ではない失敗、例: unexpected EOF)
-// does NOT get the unsupported-format hint in perceptual mode. PNG/JPEG/GIF だが
-// 破損・途中切れのファイルで「WebP/SVG は非対応」と読める文面が付くと、原因を
+// does NOT get the unsupported-format hint in perceptual mode. PNG/JPEG/GIF/WebP だが
+// 破損・途中切れのファイルで「SVG and animated WebP are not supported」と読める文面が付くと、原因を
 // 形式違いだと誤認するためである (Issue #122)。
 func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vrt-corrupt-*")
@@ -4598,7 +4936,153 @@ func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 	if !strings.Contains(got, "Failed to decode image A") {
 		t.Errorf("expected decode error prefix, got %q", got)
 	}
-	if strings.Contains(got, "WebP/SVG are not supported") {
+	if strings.Contains(got, comparator.UnsupportedImageFormatHint) {
 		t.Errorf("expected no unsupported-format hint for a corrupted image, got %q", got)
+	}
+}
+
+func testdataWebP(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("missing WebP fixture %s: %v", path, err)
+	}
+	return path
+}
+
+func mustWebPChunk(t *testing.T, path, chunk string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if !bytes.Contains(b, []byte(chunk)) {
+		t.Fatalf("%s: expected %s chunk, got header %q", path, chunk, b[:min(len(b), 16)])
+	}
+}
+
+// TestCompareDesign_WebP_VP8AndVP8L は静止画 WebP (lossy VP8 / lossless VP8L) を
+// perceptual と strict に渡し、同一ファイル同士の比較がデコード成功することを確認する
+// (Issue #232)。
+func TestCompareDesign_WebP_VP8AndVP8L(t *testing.T) {
+	vp8 := testdataWebP(t, "webp-vp8.webp")
+	vp8l := testdataWebP(t, "webp-vp8l.webp")
+	mustWebPChunk(t, vp8, "VP8 ")
+	mustWebPChunk(t, vp8l, "VP8L")
+
+	for _, tc := range []struct {
+		name, path, mode string
+	}{
+		{"vp8_perceptual", vp8, "perceptual"},
+		{"vp8_strict", vp8, "strict"},
+		{"vp8l_perceptual", vp8l, "perceptual"},
+		{"vp8l_strict", vp8l, "strict"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         tc.mode,
+						"image_path_a": tc.path,
+						"image_path_b": tc.path,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("expected WebP decode success, got %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]any
+			if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			if result["status"] != "success" {
+				t.Errorf("expected status=success for identical WebP, got %v", result["status"])
+			}
+		})
+	}
+}
+
+// pngWithDeclaredSize は IHDR に width/height を宣言した最小 PNG（画素データなし）。
+func pngWithDeclaredSize(width, height uint32) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8] = 8
+	ihdr[9] = 2
+	writePNGChunk(&buf, []byte("IHDR"), ihdr)
+	writePNGChunk(&buf, []byte("IEND"), nil)
+	return buf.Bytes()
+}
+
+func writePNGChunk(buf *bytes.Buffer, typ, data []byte) {
+	var lenbuf [4]byte
+	binary.BigEndian.PutUint32(lenbuf[:], uint32(len(data)))
+	buf.Write(lenbuf[:])
+	crc := crc32.NewIEEE()
+	crc.Write(typ)
+	crc.Write(data)
+	buf.Write(typ)
+	buf.Write(data)
+	var crcbuf [4]byte
+	binary.BigEndian.PutUint32(crcbuf[:], crc.Sum32())
+	buf.Write(crcbuf[:])
+}
+
+// TestPerceptualPreDecodeSizeLimit verifies the perceptual handler rejects
+// header-only PNGs whose IHDR exceeds the pre-decode limits (Issue #237).
+func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vrt-ihdr-limit-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validPath := saveTempImage(t, tmpDir, "valid.png", generateSolidImage(10, 10, color.White))
+	hugePath := filepath.Join(tmpDir, "huge.png")
+	if err := os.WriteFile(hugePath, pngWithDeclaredSize(30001, 1), 0o644); err != nil {
+		t.Fatalf("failed to write IHDR-only PNG: %v", err)
+	}
+	pixelsPath := filepath.Join(tmpDir, "pixels.png")
+	if err := os.WriteFile(pixelsPath, pngWithDeclaredSize(10000, 6000), 0o644); err != nil {
+		t.Fatalf("failed to write pixel-limit PNG: %v", err)
+	}
+
+	for _, c := range []struct {
+		name         string
+		pathA, pathB string
+		want         string
+	}{
+		{"oversized_image_A", hugePath, validPath, "image A is 30001x1 (30001 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+		{"oversized_image_B", validPath, hugePath, "image B is 30001x1 (30001 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+		{"over_total_pixels_A", pixelsPath, validPath, "image A is 10000x6000 (60000000 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "perceptual",
+						"image_path_a": c.pathA,
+						"image_path_b": c.pathB,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("expected size-limit error, got content=%v", res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if got != c.want {
+				t.Errorf("error message: got %q want %q", got, c.want)
+			}
+		})
 	}
 }

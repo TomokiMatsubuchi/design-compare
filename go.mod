@@ -1,10 +1,11 @@
 module design-compare
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/mark3labs/mcp-go v0.55.1
 	github.com/orisano/pixelmatch v0.0.0-20230914042517-fa304d1dc785
+	golang.org/x/image v0.46.0
 )
 
 require (
@@ -13,5 +14,5 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
