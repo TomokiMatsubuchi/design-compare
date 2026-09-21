@@ -105,7 +105,10 @@ func decodeImageError(what string, err error) error {
 
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
 // generateDiff is false, the diff image is not rendered and an empty string
-// is returned instead of its base64 data URI. ignoreRegions are masked with
+// is returned instead of its base64 data URI. When includeAA is true,
+// anti-aliased boundary pixels are counted as diffs (pixelmatch.IncludeAntiAlias).
+// The default false matches pixelmatch's includeAA=false and excludes those
+// pixels from the diff count. ignoreRegions are masked with
 // white on both images before comparison so their content is ignored.
 // ignoreRegions のうち画像矩形と全く交差しない領域は draw.Draw の自動クリップ
 // により何もマスクされないため、"x,y,w,h" 形式の文字列リストとして検出結果を
@@ -114,7 +117,7 @@ func decodeImageError(what string, err error) error {
 // 同一サイズなので A/B を分けず image_size として応答へ echo できる。
 // generateDiff が true かつ diffCount>0 のとき、7 番目に赤ピクセルの連結成分
 // bounding box (最大 10 件) を返す。generateDiff が false なら nil。
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, error) {
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, error) {
 	if err := ValidateImageSizeLimit(imgABytes, "design image"); err != nil {
 		return 0, 0, 0, "", nil, "", nil, err
 	}
@@ -165,9 +168,12 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 
 	opts := []pixelmatch.MatchOption{
 		pixelmatch.Threshold(threshold),
-		// 注: IncludeAntiAlias を渡さないデフォルト (includeAA=false) では、
-		// アンチエイリアス境界ピクセルは差分カウントから自動除外される
-		// （README の「アンチエイリアスの境界は自動除外」と整合する）。
+	}
+	// デフォルト (includeAA=false) では IncludeAntiAlias を渡さず、
+	// アンチエイリアス境界ピクセルは差分カウントから自動除外される。
+	// includeAA=true のときだけ pixelmatch 本来の AA 差分検知を有効にする。
+	if includeAA {
+		opts = append(opts, pixelmatch.IncludeAntiAlias)
 	}
 	var diffImg image.Image
 	if generateDiff {
