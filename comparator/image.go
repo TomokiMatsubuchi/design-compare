@@ -60,6 +60,31 @@ func isPixelmatchDiffColor(c color.Color) bool {
 // 上限を超えた画像は修復可能な明示的エラーとして弾く (Issue #158)。
 const maxImageDimension = 8192
 
+// maxDecodeImageDimension / maxDecodeImagePixels は image.Decode によるフル展開の
+// 前に image.DecodeConfig で見る寸法上限 (Issue #237)。#158 の 8192 は展開後の
+// 比較処理向けで、30000x30000 級は Decode 時点で数GB を確保して OOM し得る。
+const (
+	maxDecodeImageDimension = 30000
+	maxDecodeImagePixels    = 50_000_000
+)
+
+// ValidateImageSizeLimit はヘッダだけ読んで幅・高さを確認し、上限を超えていれば
+// フルデコードせずエラーを返す。ヘッダが読めない場合は nil を返し、後続の
+// image.Decode に既存の形式・破損エラーを任せる。
+func ValidateImageSizeLimit(data []byte, label string) error {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	w, h := cfg.Width, cfg.Height
+	pixels := int64(w) * int64(h)
+	if w > maxDecodeImageDimension || h > maxDecodeImageDimension || pixels > maxDecodeImagePixels {
+		return fmt.Errorf("%s is %dx%d (%d pixels); maximum is %dpx per side and %d total pixels, resize or crop the images before comparison",
+			label, w, h, pixels, maxDecodeImageDimension, maxDecodeImagePixels)
+	}
+	return nil
+}
+
 // UnsupportedImageFormatHint は image.Decode 失敗エラーに付ける対応フォーマットの
 // ヒント (Issue #122 の指定文面)。strict (RunPixelMatch) と perceptual (main.go)
 // の両モードで同じ文面を使うため exported の共有定数とし、文面修正はこの
@@ -80,7 +105,10 @@ func decodeImageError(what string, err error) error {
 
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
 // generateDiff is false, the diff image is not rendered and an empty string
-// is returned instead of its base64 data URI. ignoreRegions are masked with
+// is returned instead of its base64 data URI. When includeAA is true,
+// anti-aliased boundary pixels are counted as diffs (pixelmatch.IncludeAntiAlias).
+// The default false matches pixelmatch's includeAA=false and excludes those
+// pixels from the diff count. ignoreRegions are masked with
 // white on both images before comparison so their content is ignored.
 // ignoreRegions のうち画像矩形と全く交差しない領域は draw.Draw の自動クリップ
 // により何もマスクされないため、"x,y,w,h" 形式の文字列リストとして検出結果を
@@ -91,12 +119,18 @@ func decodeImageError(what string, err error) error {
 // bounding box (最大 10 件) を返す。generateDiff が false なら nil。
 // 8 番目は warnings。diffCount==0 かつマスク後の両画像が単色ベタ塗りのとき、
 // 空洞比較の可能性を status / match_rate は変えずに通知する (Issue #227)。
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, []string, error) {
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, []string, error) {
+	if err := ValidateImageSizeLimit(imgABytes, "design image"); err != nil {
+		return 0, 0, 0, "", nil, "", nil, nil, err
+	}
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
 		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("design image", err)
 	}
 
+	if err := ValidateImageSizeLimit(imgBBytes, "web screenshot"); err != nil {
+		return 0, 0, 0, "", nil, "", nil, nil, err
+	}
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
 		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("web screenshot", err)
@@ -136,9 +170,12 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff 
 
 	opts := []pixelmatch.MatchOption{
 		pixelmatch.Threshold(threshold),
-		// 注: IncludeAntiAlias を渡さないデフォルト (includeAA=false) では、
-		// アンチエイリアス境界ピクセルは差分カウントから自動除外される
-		// （README の「アンチエイリアスの境界は自動除外」と整合する）。
+	}
+	// デフォルト (includeAA=false) では IncludeAntiAlias を渡さず、
+	// アンチエイリアス境界ピクセルは差分カウントから自動除外される。
+	// includeAA=true のときだけ pixelmatch 本来の AA 差分検知を有効にする。
+	if includeAA {
+		opts = append(opts, pixelmatch.IncludeAntiAlias)
 	}
 	var diffImg image.Image
 	if generateDiff {

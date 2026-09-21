@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | **`layout_tree`**<br>(構造的比較) | **DOM構造 vs Figma構造** | FigmaとWebそれぞれの要素の幾何位置 (Bounding Box JSON) | 親要素に対する相対的なX, Y, Width, Height比率を算出し、要素の並び順や階層が合っているかをデータレベルで比較します。文字や色の違いを完全に無視して**「配置テンプレート（木）」**を検証します。 |
 | **`perceptual`**<br>(知覚的画像VRT) | **空間の明暗配置パターン** | 画像パス / base64 で指定した Figma の画像 vs Web スクショ | 画像を粗く縮小（16x16）してグレースケール化し、Average Hash（aHash）の明暗パターンとして比較します。文字内容やフォント・色の違いを無視し、**「見た目の大まかなレイアウト配置」**が合っているかを判定します。 |
-| **`strict`**<br>(厳密画素VRT) | **画素単位のビジュアル比較** | 画像パス / base64 で指定した Figma の画像 vs Web スクショ | pixelmatch アルゴリズム（Go 実装: github.com/orisano/pixelmatch）を用い、画素単位で色の違いを厳密に比較します（アンチエイリアスの境界は自動除外）。色味や余白、線の太さなど、**微細なビジュアル差異の検知**に使用します。**両画像はピクセル寸法（縦横の画素数）が完全に一致している必要があります。** Retina 環境の DPR（device pixel ratio）差やフルページ撮影などでサイズが異なる場合は `image size mismatch` エラーになるため、同じビューポートサイズと DPR で両スクリーンショットを撮り直すか、サイズの異なる画像も比較できる `perceptual` モードを使用してください。 |
+| **`strict`**<br>(厳密画素VRT) | **画素単位のビジュアル比較** | 画像パス / base64 で指定した Figma の画像 vs Web スクショ | pixelmatch アルゴリズム（Go 実装: github.com/orisano/pixelmatch）を用い、画素単位で色の違いを厳密に比較します（既定ではアンチエイリアスの境界は自動除外。`include_aa=true` で AA 境界も差分に含める）。色味や余白、線の太さなど、**微細なビジュアル差異の検知**に使用します。**両画像はピクセル寸法（縦横の画素数）が完全に一致している必要があります。** Retina 環境の DPR（device pixel ratio）差やフルページ撮影などでサイズが異なる場合は `image size mismatch` エラーになるため、同じビューポートサイズと DPR で両スクリーンショットを撮り直すか、サイズの異なる画像も比較できる `perceptual` モードを使用してください。 |
 | **`layout_integrity`**<br>(レイアウト崩れ検査) | **Web DOMボックス vs CSSビューポート** | Web側の要素の幾何位置 (Bounding Box JSON) のみ（**Figma不要**） | Figmaのデスクトップ/モバイル フレームがピクセルパーフェクトでも、タブレット幅では崩れることがあります。Web DOMのBounding BoxとCSSビューポートだけを比較し、横方向のはみ出し（`viewport_overflow_x`）と親要素からの逸脱（`parent_overflow`）を検出します。既定は iPad **縦向き 768x1024** CSS px。**横向き 1024x768** は `viewport_preset=ipad_landscape`（または `viewport_width`/`viewport_height`）で検査します。縦スクロール（高さ超え）は失敗にしません。 |
 
 ### 差分画像 (`diff_image`) の見方 (`perceptual` モード)
@@ -33,7 +33,7 @@
 `strict` モードのレスポンス `diff_image` は、pixelmatch が生成した差分画像（base64 data URI）です。pixelmatch の既定の配色で描画されます（マゼンタ等の色は使われません）。
 
 - **赤いピクセル**: 両画像で色差が `threshold` を超えた差分ピクセル（差分カウント `diff_pixels` の対象）。
-- **黄色いピクセル**: アンチエイリアス境界由来と判定され、差分カウントから自動除外されたピクセル。
+- **黄色いピクセル**: アンチエイリアス境界由来と判定され、差分カウントから自動除外されたピクセル（`include_aa=false` の既定時）。`include_aa=true` では AA 境界も差分として数え、黄色除外は行われません。
 - **それ以外の領域**: 差分がなかった箇所で、image A（Figma側）の輝度をグレースケール化して白寄りに薄めた階調で表示されます。
 - `generate_diff` を `false` に指定した場合は差分画像を生成せず、`diff_image` は空文字列で返されます。このとき算出対象の差分画像が存在しないため、`diff_regions` も応答に含まれません。
 - `diff_on_mismatch` を `true` に指定した場合、判定が `success` なら `diff_image` は空文字列、`mismatch` なら差分画像が返されます。
@@ -44,7 +44,7 @@
 
 Figma 比較は「あるキャンバス幅での再現」しか見ないため、iPad 縦向き・横向きのような別幅での崩れは見逃します。`layout_integrity` は **Web の Bounding Box だけ**を見て、指定した CSS ビューポートではみ出していないかを判定します。
 
-- **入力:** `web_layout` または `web_layout_path`（`layout_tree` と同じ WebNode JSON）。`figma_*`・画像・`threshold` / `min_match` / `pass_rate` / `max_diff_pixels` / `generate_diff` / `diff_image_content` / `count_extra_web` / `max_details` は非対応です。
+- **入力:** `web_layout` または `web_layout_path`（`layout_tree` と同じ WebNode JSON）。`figma_*`・画像・`threshold` / `min_match` / `pass_rate` / `max_diff_pixels` / `include_aa` / `generate_diff` / `diff_image_content` / `count_extra_web` / `max_details` は非対応です。
 - **既定ビューポート:** 768×1024 CSS px（`viewport_preset` 未指定 = `ipad_portrait`）。
 - **横向き:** `viewport_preset=ipad_landscape`（1024×768）。任意サイズは `viewport_width` / `viewport_height`（0 より大きい値。指定時はプリセットを上書き）。
 - **`viewport_overflow_x`:** `x < 0` または `x+w > viewport_width`（1px の丸めは許容）。ビューポート高さ超えはページスクロールとして扱い、失敗にしません。
@@ -98,6 +98,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。`max_diff_pixels` を省略したまま指定すると既定 0 が判定を支配するため、status / match_rate は変えず応答へ `warnings` を付ける。 |
 | `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。 |
 | `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
+| `include_aa` | boolean | `strict` | true / false | false | `true` の場合、アンチエイリアス境界ピクセルも差分として数える（pixelmatch の IncludeAntiAlias）。既定 `false` は現行どおり AA 境界を差分カウントから除外する。 |
 | `ignore_nodes` | string | `layout_tree` / `layout_integrity` | — | 空 | 比較から除外する識別子のカンマ区切りリスト。`layout_tree` では Figma Node ID / Node Name / Web Selector、`layout_integrity` では Web Selector。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。全ノードが除外されて比較ペアがなくなった場合は比較を実施せず、status は `skipped`（比較未実施）になる。 |
 | `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。`perceptual` / `strict` では比較前に両画像を白でマスクし、パースできた領域数は応答の `ignored_regions` に常に含まれる。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`perceptual` で両画像のサイズが異なる場合、同じ座標は各画像の絶対ピクセルとして適用され、`details` に注記が入る。`layout_tree` / `layout_integrity` では BoundingBox の中心点が領域内にあるノードを除外し（`layout_tree` では両側から、`layout_integrity` では Web ノードを）、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。どのノード中心とも重ならない領域は `unmatched_ignore_regions` として応答される。 |
 | `viewport_preset` | string | `layout_integrity` | `ipad_portrait` / `ipad_landscape` | 未指定時は縦向き相当 | iPad 既定サイズ。`ipad_portrait` = 768×1024、`ipad_landscape` = 1024×768。 |
@@ -148,7 +149,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 ]
 ```
 
-`parent` を持つノードは「親の BoundingBox に対する相対的な位置・サイズ（比率 0–1）」で比較され、レスポンシブなスケール差が吸収されます。親を持たないノード（および幅・高さが 0 の親を持つノード）は絶対座標のまま比較され、比較ペアの両側で座標空間は自動的に揃えられます。`parent` が空でないのに解決できない参照は `status` を変えず `unresolved_parent_refs`（例: `Figma: '999'` / `Web: '.foo'`）として応答されます（`unmatched_ignores` と同様の誤用検出）。
+`parent` を持つノードは「親の BoundingBox に対する相対的な位置・サイズ（比率 0–1）」で比較され、レスポンシブなスケール差が吸収されます。親を持たないノード（および幅・高さが 0 の親を持つノード、解決できない `parent`）は絶対座標のまま比較され、比較ペアの片側でも絶対座標なら両側を生ピクセルにそろえます。このとき `threshold`（0.0–1.0、既定 0.15）は比率ではなく **px 差分** に対して適用されます。実比較されたペアのうち絶対座標空間で比較された件数は応答の `absolute_mode_pairs` に入り、`details` にも 1 行注記されます。`parent` が空でないのに解決できない参照は `status` を変えず `unresolved_parent_refs`（例: `Figma: '999'` / `Web: '.foo'`）として応答されます（`unmatched_ignores` と同様の誤用検出）。
 
 `width` / `height` など `w` / `h` 以外のキー名は Unmarshal 時に無視され、幾何値がすべて 0 のノードになります。Figma または Web のいずれかで過半数のノードが幅・高さともに 0 の場合、`status` は変えず応答に `zero_geometry_warning` を付けます（`unmatched_ignores` と同様の誤用検出）。
 
@@ -190,6 +191,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `effective_threshold` | number | ○ | 判定に使った BoundingBox 許容差（未指定時は既定 0.15）。 |
 | `pass_rate` | number | ○ | 合格に使った最低一致率 %（未指定時は既定 98.0）。 |
 | `extra_web_count` | number | ○ | どの Figma ノードにもマッチしなかった Web ノード数。 |
+| `absolute_mode_pairs` | number | ○ | 実比較ペアのうち絶対座標（生 px）空間で比較された件数。この件数では `threshold` は比率ではなく px に対して適用される。 |
 | `unmatched_ignores` | string[] | 非空時のみ | `ignore_nodes` のうちどのノードにも一致しなかったエントリ。 |
 | `unmatched_ignore_regions` | string[] | 非空時のみ | どのノード中心とも重ならない `ignore_region`。 |
 | `extra_web_nodes` | string[] | 非空時のみ | 余分な Web ノードのセレクタ。 |
@@ -215,7 +217,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | フィールド | 型 | 常に返す | 説明 |
 | :--- | :--- | :--- | :--- |
 | `total_pixels` | number | ○ | 比較したピクセル総数。 |
-| `diff_pixels` | number | ○ | 色差が `threshold` を超えた差分ピクセル数（アンチエイリアス除外後）。 |
+| `diff_pixels` | number | ○ | 色差が `threshold` を超えた差分ピクセル数（既定ではアンチエイリアス除外後。`include_aa=true` なら AA 境界も含む）。 |
 | `min_match` | number | 指定時のみ | 指定したときだけ判定に使い、応答へ echo する。 |
 | `diff_image` | string | ○ | pixelmatch 差分画像の base64 data URI。生成しない場合は空文字列。 |
 | `image_size` | string | ○ | 両画像共通のピクセル寸法。 |
@@ -253,7 +255,7 @@ go build -o design-compare
 ./design-compare --help
 ```
 
-主なフラグ: `--mode` / `--image-a` / `--image-b` / `--figma-layout-file` / `--web-layout-file` / `--threshold` / `--min-match` / `--pass-rate` / `--max-diff-pixels` / `--ignore-region` / `--generate-diff`
+主なフラグ: `--mode` / `--image-a` / `--image-b` / `--figma-layout-file` / `--web-layout-file` / `--threshold` / `--min-match` / `--pass-rate` / `--max-diff-pixels` / `--include-aa` / `--ignore-region` / `--generate-diff`
 
 ### 単体テストの実行
 ブラウザの起動を必要としない超高速なメモリ内画像/ツリーデータ検証テストが実行できます。
@@ -300,6 +302,15 @@ go test -v ./...
 claude mcp add design-compare "/Users/username/workspace/design-compare/design-compare"
 ```
 
+### D. Pi に追加する場合
+npm からインストールすると、`compare_design` ツールと `design-compare` スキルが有効になります。初回ロード時に Go バイナリをビルドするため、利用マシンに **Go 1.26 以上** が必要です。
+
+```bash
+pi install npm:design-compare
+pi update npm:design-compare   # 更新
+pi remove npm:design-compare   # アンインストール
+```
+
 ---
 
 ## 6. 全自動でのデザイン検証ワークフロー
@@ -333,6 +344,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
    Retinaディスプレイ環境と非Retina環境では、スクリーンショットの画素数や縮小処理時のブレンドピクセルが変化します。
 3. **GPUハードウェアアクセラレーションの差:**
    ブラウザのGPUレンダリングによって、グラデーションや色の境界部分で数カラー値の微差が生じることがあります。
+4. **巨大画像:** `perceptual` / `strict` はフルデコード前にヘッダ寸法を確認し、各辺 30,000px または総ピクセル 50,000,000 を超える入力は展開せずエラーにする（フルページ撮り直しミスなどによる OOM 防止）。超過時はリサイズまたは切り出しが必要。
 
 ---
 
@@ -388,7 +400,7 @@ claude mcp add design-compare "/Users/username/workspace/design-compare/design-c
 | `count_extra_web` / `pass_rate` / `max_details` | `layout_tree` |
 | `ignore_region` | `layout_tree`, `perceptual`, `strict`, `layout_integrity` |
 | `generate_diff` / `diff_on_mismatch` / `diff_image_content` / `min_match` | `perceptual`, `strict` |
-| `max_diff_pixels` | `strict` |
+| `max_diff_pixels` / `include_aa` | `strict` |
 | `threshold` | `layout_tree`, `perceptual`, `strict` (`perceptual` では `min_match` の後方互換エイリアスとして 1.0–100.0 を受け付ける。`min_match` との同時指定は不可) |
 | `viewport_preset` / `viewport_width` / `viewport_height` | `layout_integrity` |
 
