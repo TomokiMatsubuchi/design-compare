@@ -53,6 +53,9 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		if result.Status != "success" {
 			t.Errorf("Expected status 'success', got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
 		}
+		if result.AbsoluteModePairs != 1 {
+			t.Errorf("Expected absolute_mode_pairs=1 (Figma side has no parent), got %d", result.AbsoluteModePairs)
+		}
 	})
 
 	// Sub-test 2: Figma absolute (no parent), Web relative (has parent),
@@ -70,6 +73,9 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		}
 		if result.MatchedNodes != 0 {
 			t.Errorf("Expected 0 matched nodes (different absolute positions should not match), got %d", result.MatchedNodes)
+		}
+		if result.AbsoluteModePairs != 1 {
+			t.Errorf("Expected absolute_mode_pairs=1 even when the abs pair mismatches, got %d", result.AbsoluteModePairs)
 		}
 	})
 
@@ -96,6 +102,9 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		}
 		if result.Status != "success" {
 			t.Errorf("Expected status 'success', got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
+		}
+		if result.AbsoluteModePairs != 2 {
+			t.Errorf("Expected absolute_mode_pairs=2 (root parents + Web child without parent), got %d", result.AbsoluteModePairs)
 		}
 	})
 
@@ -125,6 +134,80 @@ func TestLayoutTree_MixedModeSymmetricCompare(t *testing.T) {
 		// child mismatch by checking that the match rate is below 100%.
 		if result.MatchRate >= 100.0 {
 			t.Errorf("Expected match rate < 100%% (child nodes at different positions should not be inflated to match), got %.1f%% (matched=%d/%d)", result.MatchRate, result.MatchedNodes, result.TotalNodes)
+		}
+		if result.AbsoluteModePairs != 2 {
+			t.Errorf("Expected absolute_mode_pairs=2 (0-size parent + child fallback), got %d", result.AbsoluteModePairs)
+		}
+	})
+}
+
+// TestLayoutTree_AbsoluteModePairs verifies that pairs compared in absolute
+// pixel space (no usable parent, unresolved parent, or zero-size parent) are
+// counted in AbsoluteModePairs and noted in details. Relative-ratio pairs
+// (usable parent on both sides) are not counted.
+func TestLayoutTree_AbsoluteModePairs(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+	wantNote := func(n int) string {
+		return fmt.Sprintf("%d pairs were compared in absolute pixel space (no usable parent); tolerance applies to pixel units there", n)
+	}
+
+	t.Run("parentless_roots", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"root","x":0,"y":0,"w":1000,"h":1000},
+			{"id":"2","name":"hero","x":10,"y":10,"w":100,"h":100}
+		]`
+		webJSON := `[
+			{"selector":"#root","x":0,"y":0,"w":1010,"h":1000},
+			{"selector":".hero","x":10,"y":10,"w":100,"h":100}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.AbsoluteModePairs != 2 {
+			t.Errorf("Expected absolute_mode_pairs=2 for parentless nodes, got %d", result.AbsoluteModePairs)
+		}
+		if result.TotalNodes != 2 {
+			t.Errorf("Expected 2 compared pairs, got total=%d", result.TotalNodes)
+		}
+		var found bool
+		for _, d := range result.Details {
+			if d == wantNote(2) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Expected absolute-mode detail line, got details: %v", result.Details)
+		}
+	})
+
+	t.Run("relative_children_not_counted", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"root","x":0,"y":0,"w":1000,"h":1000},
+			{"id":"2","name":"hero","x":10,"y":10,"w":100,"h":100,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#root","x":0,"y":0,"w":1000,"h":1000},
+			{"selector":".hero","x":10,"y":10,"w":100,"h":100,"parent":"#root"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.AbsoluteModePairs != 1 {
+			t.Errorf("Expected absolute_mode_pairs=1 (root only), got %d", result.AbsoluteModePairs)
+		}
+		var found bool
+		for _, d := range result.Details {
+			if d == wantNote(1) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Expected absolute-mode detail for the root pair, got details: %v", result.Details)
 		}
 	})
 }
@@ -230,6 +313,72 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 			t.Errorf("Expected details to contain %q (same numbers as mismatched_nodes), got %v", detailLine, result.Details)
 		}
 	})
+}
+
+// TestLayoutTree_DetailsOrderPutsFailuresFirst verifies that after the
+// summary line, mismatch and extra-Web rows come before matched pairs so
+// failures are not buried behind hundreds of "Matched: …" lines.
+func TestLayoutTree_DetailsOrderPutsFailuresFirst(t *testing.T) {
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"},
+		{"id":"3","name":"nav","x":600,"y":10,"w":380,"h":80,"parent":"1"},
+		{"id":"4","name":"hero","x":0,"y":200,"w":100,"h":100}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"},
+		{"selector":".nav","x":600,"y":10,"w":380,"h":80,"parent":"#header"},
+		{"selector":".hero","x":50,"y":200,"w":100,"h":100},
+		{"selector":".banner","x":0,"y":400,"w":200,"h":50}
+	]`
+
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if len(result.Details) < 2 {
+		t.Fatalf("Expected summary plus detail rows, got %v", result.Details)
+	}
+	if !strings.Contains(result.Details[0], "Matched 3 out of 4") {
+		t.Errorf("Expected summary first, got %q", result.Details[0])
+	}
+
+	firstMatchIdx := -1
+	var sawMismatch, sawExtra bool
+	for i, d := range result.Details {
+		if i == 0 {
+			continue
+		}
+		if strings.HasPrefix(d, "Matched:") {
+			firstMatchIdx = i
+			break
+		}
+		if strings.Contains(d, "did not match") && strings.Contains(d, "hero") {
+			sawMismatch = true
+		}
+		if strings.Contains(d, "extra element") {
+			sawExtra = true
+		}
+	}
+	if firstMatchIdx < 0 {
+		t.Fatalf("Expected matched-pair rows after failures, got %v", result.Details)
+	}
+	if !sawMismatch {
+		t.Errorf("Expected a hero mismatch row before matched pairs, got %v", result.Details)
+	}
+	if !sawExtra {
+		t.Errorf("Expected extra Web rows before matched pairs, got %v", result.Details)
+	}
+	if firstMatchIdx < 2 {
+		t.Errorf("Expected at least one failure row immediately after summary, first Matched at %d: %v", firstMatchIdx, result.Details)
+	}
+	for i := firstMatchIdx; i < len(result.Details); i++ {
+		d := result.Details[i]
+		if !strings.HasPrefix(d, "Matched:") {
+			t.Errorf("Expected only matched pairs after first Matched row, details[%d]=%q", i, d)
+		}
+	}
 }
 
 // TestLayoutTree_IgnoreRegion verifies that nodes whose bounding-box center
@@ -460,6 +609,69 @@ func TestLayoutTree_IgnoreNodesWildcard(t *testing.T) {
 		}
 		if len(result.UnmatchedIgnores) != 1 || result.UnmatchedIgnores[0] != "ad-*-1" {
 			t.Errorf("Expected unmatched_ignores=[ad-*-1], got %v", result.UnmatchedIgnores)
+		}
+	})
+}
+
+// TestLayoutTree_IgnoredParentKeepsRelativeCoords verifies that excluding a
+// parent via ignore_nodes still lets children use that parent's geometry for
+// relative comparison. Absolute px would mismatch because the Web tree is
+// scaled 2x; relative ratios stay (0.25, 0.25, 0.25, 0.25) on both sides.
+//
+//  1. one_side_parent_ignored  – only the Figma parent id is ignored. The
+//     Web parent remains in the match set as an extra node, but the child
+//     pair must still match relatively (not fall into mixed absolute mode).
+//  2. both_sides_parent_ignored – both parents are ignored; only children
+//     remain and must match relatively. Ignored parents must not appear in
+//     UnresolvedParentRefs.
+func TestLayoutTree_IgnoredParentKeepsRelativeCoords(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"P","name":"dyn-container","x":0,"y":0,"w":400,"h":400},
+		{"id":"1","name":"card","x":100,"y":100,"w":100,"h":100,"parent":"P"}
+	]`
+	webJSON := `[
+		{"selector":".dyn-container","x":0,"y":0,"w":800,"h":800},
+		{"selector":".card","x":200,"y":200,"w":200,"h":200,"parent":".dyn-container"}
+	]`
+
+	t.Run("one_side_parent_ignored", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"P"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 1 {
+			t.Errorf("Expected IgnoredCount=1 (Figma parent only), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 {
+			t.Errorf("Expected child pair to match relatively, got MatchedNodes=%d (rate=%.1f%% details=%v)", result.MatchedNodes, result.MatchRate, result.Details)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success', got '%s' (rate=%.1f%% details=%v)", result.Status, result.MatchRate, result.Details)
+		}
+		if len(result.UnresolvedParentRefs) != 0 {
+			t.Errorf("Expected ignored parent not to be reported as unresolved, got %v", result.UnresolvedParentRefs)
+		}
+	})
+
+	t.Run("both_sides_parent_ignored", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"dyn-container"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 2 {
+			t.Errorf("Expected IgnoredCount=2 (both parents), got %d", result.IgnoredCount)
+		}
+		if result.MatchedNodes != 1 || result.TotalNodes != 1 {
+			t.Errorf("Expected only the child pair (matched=1, total=1), got matched=%d, total=%d (details=%v)", result.MatchedNodes, result.TotalNodes, result.Details)
+		}
+		if result.Status != "success" {
+			t.Errorf("Expected status 'success', got '%s' (rate=%.1f%% details=%v)", result.Status, result.MatchRate, result.Details)
+		}
+		if len(result.UnresolvedParentRefs) != 0 {
+			t.Errorf("Expected ignored parents not to be reported as unresolved, got %v", result.UnresolvedParentRefs)
 		}
 	})
 }
@@ -827,4 +1039,14 @@ func TestLimitLayoutTreeDetails(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestRoundMatchRateDisplay(t *testing.T) {
+	// Issue #233 の例: 97.999846% は表示 98.00 と同じ桁に丸まる
+	if got := RoundMatchRateDisplay(97.999846); got != 98.0 {
+		t.Errorf("RoundMatchRateDisplay(97.999846)=%v, want 98", got)
+	}
+	if got := RoundMatchRateDisplay(98.046875); got != 98.05 {
+		t.Errorf("RoundMatchRateDisplay(98.046875)=%v, want 98.05", got)
+	}
 }
