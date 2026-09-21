@@ -548,6 +548,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"details":             treeResult.Details,
 			"effective_threshold": tolerance,
 			"pass_rate":           passRate,
+			"count_extra_web":     countExtraWeb,
 			"ignored_count":       treeResult.IgnoredCount,
 			"extra_web_count":      treeResult.ExtraWebCount,
 			"absolute_mode_pairs":  treeResult.AbsoluteModePairs,
