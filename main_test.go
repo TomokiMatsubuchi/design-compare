@@ -2443,6 +2443,52 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if result["image_size_a"] != "200x200" || result["image_size_b"] != "100x100" {
 			t.Errorf("Expected image_size_a=200x200 image_size_b=100x100, got a=%v b=%v", result["image_size_a"], result["image_size_b"])
 		}
+		const wantIgnoreSizeWarning = "ignore_region is applied to each image's own pixel coordinates; image sizes differ (A 200x200, B 100x100), so the same region may mask different areas"
+		gotWarnings, ok := result["warnings"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected warnings when ignore_region is set and image sizes differ, got %v", result["warnings"])
+		}
+		found := false
+		for _, w := range gotWarnings {
+			if w == wantIgnoreSizeWarning {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected warnings to include %q, got %v", wantIgnoreSizeWarning, gotWarnings)
+		}
+	})
+
+	// サイズ差だけでは ignore_region 座標の取り違えは起きないため、当該 warning は出さない
+	t.Run("Perceptual_DifferentImageSizes_NoIgnoreRegion_NoSizeWarning", func(t *testing.T) {
+		pathSmallWhite := saveTempImage(t, tmpDir, "imageSmallWhiteNoRegion.png", generateSolidImage(100, 100, color.White))
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathE, // 200x200
+					"image_path_b": pathSmallWhite,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if got := result["ignored_regions"]; got != float64(0) {
+			t.Errorf("Expected ignored_regions=0, got %v", got)
+		}
+		if warnings, ok := result["warnings"].([]interface{}); ok {
+			for _, w := range warnings {
+				s, _ := w.(string)
+				if strings.Contains(s, "ignore_region is applied to each image's own pixel coordinates") {
+					t.Errorf("Expected no ignore_region size-mismatch warning without ignore_region, got %v", warnings)
+				}
+			}
+		}
 	})
 
 	// diff_blocks / total_blocks: aHash の差分セル数を数量として応答へ含める

@@ -101,7 +101,7 @@ func newDesignCompareMCPServer() *server.MCPServer {
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image and a note is added to 'details'. In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image (a note is added to 'details', and 'warnings' notes that the same region may mask different areas). In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
@@ -705,8 +705,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
 		// サイズが異なる画像では同じ x,y,w,h が各画像の絶対ピクセルとして
 		// マスクされるため、割合的に別領域になることを呼び出し側へ伝える。
-		if boundsA.Dx() != boundsB.Dx() || boundsA.Dy() != boundsB.Dy() {
+		sizeMismatch := boundsA.Dx() != boundsB.Dx() || boundsA.Dy() != boundsB.Dy()
+		if sizeMismatch {
 			details = append(details, fmt.Sprintf("note: image A is %dx%d, image B is %dx%d; ignore_region is applied in absolute pixels of each image", boundsA.Dx(), boundsA.Dy(), boundsB.Dx(), boundsB.Dy()))
+		}
+		// ignore_region があるときだけ warnings にも出す。サイズ差のみでは
+		// マスク座標の取り違えは起きない (Issue #244)。
+		if len(ignoreRegions) > 0 && sizeMismatch {
+			warnings = append(warnings, fmt.Sprintf("ignore_region is applied to each image's own pixel coordinates; image sizes differ (A %dx%d, B %dx%d), so the same region may mask different areas", boundsA.Dx(), boundsA.Dy(), boundsB.Dx(), boundsB.Dy()))
 		}
 		responseMap = map[string]interface{}{
 			"status":           status,
