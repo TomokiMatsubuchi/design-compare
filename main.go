@@ -43,16 +43,16 @@ func main() {
 			mcp.Description("Comparison mode: 'layout_tree' (DOM/Figma hierarchy comparison), 'perceptual' (aHash image template check), 'strict' (pixelmatch VRT; both images must have identical pixel dimensions), or 'layout_integrity' (detect horizontal viewport overflow and parent overflow from Web bounding boxes only; default iPad portrait 768x1024 CSS px)"),
 		),
 		mcp.WithString("image_path_a",
-			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes unless image_a_base64 is given; mutually exclusive with image_a_base64). Supported formats: PNG / JPEG / GIF. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
+			mcp.Description("Path to reference image A (required for 'perceptual' and 'strict' modes unless image_a_base64 is given; mutually exclusive with image_a_base64). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_path_b",
-			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Supported formats: PNG / JPEG / GIF. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
+			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_a_base64",
-			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Supported formats: PNG / JPEG / GIF. Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
 		),
 		mcp.WithString("image_b_base64",
-			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF. Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
@@ -170,9 +170,10 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 // decodeImageErrorMessage は perceptual モードの image.Decode 失敗メッセージを
 // 組み立てる。対応外の画像形式 (image.ErrFormat) のときだけ、strict モード
 // (comparator.RunPixelMatch) と共通の対応フォーマットヒント
-// (comparator.UnsupportedImageFormatHint) を付ける。PNG/JPEG/GIF だが破損・
-// 途中切れのファイル (例: unexpected EOF) では「WebP/SVG は非対応」と読める
-// 文面が原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
+// (comparator.UnsupportedImageFormatHint) を付ける。PNG/JPEG/GIF/WebP だが破損・
+// 途中切れのファイル (例: unexpected EOF) では「SVG and animated WebP are not
+// supported」と読める文面が原因を形式違いだと誤認させるため、ヒントは付けない
+// (Issue #122)。
 func decodeImageErrorMessage(what string, err error) string {
 	if errors.Is(err, image.ErrFormat) {
 		return fmt.Sprintf("Failed to decode %s: %v %s", what, err, comparator.UnsupportedImageFormatHint)

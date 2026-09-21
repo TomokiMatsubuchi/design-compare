@@ -10,6 +10,8 @@ import (
 	"image/draw"
 	"image/png"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -145,14 +147,13 @@ func TestRunPixelMatch_AntiAliasExclusion(t *testing.T) {
 }
 
 // TestRunPixelMatch_UnsupportedFormatHint verifies that decode failures caused
-// by unsupported image formats (e.g. WebP, SVG) include a hint about the
-// supported formats (PNG, JPEG, GIF) in the error message, so callers can
+// by unsupported image formats (e.g. SVG) include a hint about the
+// supported formats (PNG, JPEG, GIF, WebP) in the error message, so callers can
 // determine the corrective action (format conversion) without an extra
 // round-trip (Issue #122).
 func TestRunPixelMatch_UnsupportedFormatHint(t *testing.T) {
-	// WebP のマジックナンバー ("RIFF" + "WEBP") を含むバイト列。
-	// Go 標準の image パッケージはデコードできず "image: unknown format" になる。
-	webpBytes := []byte("RIFF\x00\x00\x00\x00WEBPVP8 fake payload")
+	// SVG は image.RegisterFormat されていないため image.ErrFormat になる。
+	svgBytes := []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>`)
 	pngBytes := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
 
 	for _, tc := range []struct {
@@ -160,8 +161,8 @@ func TestRunPixelMatch_UnsupportedFormatHint(t *testing.T) {
 		imgA, imgB  []byte
 		wantKeyword string
 	}{
-		{"webp_as_design_image", webpBytes, pngBytes, "failed to decode design image"},
-		{"webp_as_web_screenshot", pngBytes, webpBytes, "failed to decode web screenshot"},
+		{"svg_as_design_image", svgBytes, pngBytes, "failed to decode design image"},
+		{"svg_as_web_screenshot", pngBytes, svgBytes, "failed to decode web screenshot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// RunPixelMatch は9戻り値 (matchRate, totalPixels, diffPixels, diffImage,
@@ -169,16 +170,13 @@ func TestRunPixelMatch_UnsupportedFormatHint(t *testing.T) {
 			// 不要な戻り値も含めて受ける。
 			_, _, _, _, _, _, _, _, err := RunPixelMatch(tc.imgA, tc.imgB, 0.1, false, false, nil)
 			if err == nil {
-				t.Fatal("expected decode error for WebP bytes, got nil")
+				t.Fatal("expected decode error for SVG bytes, got nil")
 			}
 			if !strings.Contains(err.Error(), tc.wantKeyword) {
 				t.Errorf("expected error to contain %q, got %q", tc.wantKeyword, err.Error())
 			}
-			if !strings.Contains(err.Error(), "supported: PNG, JPEG, GIF") {
+			if !strings.Contains(err.Error(), UnsupportedImageFormatHint) {
 				t.Errorf("expected error to contain supported-format hint, got %q", err.Error())
-			}
-			if !strings.Contains(err.Error(), "WebP/SVG are not supported") {
-				t.Errorf("expected error to mention unsupported formats, got %q", err.Error())
 			}
 		})
 	}
@@ -186,9 +184,9 @@ func TestRunPixelMatch_UnsupportedFormatHint(t *testing.T) {
 
 // TestRunPixelMatch_CorruptImageOmitsFormatHint verifies that decode failures
 // for a recognized but corrupted/truncated PNG (image.ErrFormat ではない失敗、
-// 例: unexpected EOF) do NOT append UnsupportedImageFormatHint. PNG/JPEG/GIF
-// だが破損・途中切れのファイルで「WebP/SVG は非対応」と読める文面が付くと、
-// 原因を形式違いだと誤認するためである (Issue #122)。
+// 例: unexpected EOF) do NOT append UnsupportedImageFormatHint. PNG/JPEG/GIF/WebP
+// だが破損・途中切れのファイルで「SVG and animated WebP are not supported」と
+// 読める文面が付くと、原因を形式違いだと誤認するためである (Issue #122)。
 func TestRunPixelMatch_CorruptImageOmitsFormatHint(t *testing.T) {
 	// PNG シグネチャは有効だが途中で切れたバイト列 → image.Decode は
 	// "unexpected EOF" を返し image.ErrFormat ではない。
@@ -752,7 +750,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 }
 
 // strict と perceptual の両モードで共有される対応フォーマットヒント (Issue #122)。
-const supportedImageFormatsHint = "(supported: PNG, JPEG, GIF; WebP/SVG are not supported)"
+const supportedImageFormatsHint = "(supported: PNG, JPEG, GIF, WebP; SVG and animated WebP are not supported)"
 
 // TestRunPixelMatch_DecodeErrorListsSupportedFormats verifies that undecodable
 // input (empty bytes or a text payload) reports the formats callers can retry
@@ -924,4 +922,42 @@ func TestRunPixelMatch_PreDecodeSizeLimit(t *testing.T) {
 			t.Errorf("expected nil when DecodeConfig fails, got %v", err)
 		}
 	})
+}
+
+func testdataWebPBytes(t *testing.T, name string) []byte {
+	t.Helper()
+	path := filepath.Join("..", "testdata", name)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("missing WebP fixture %s: %v", path, err)
+	}
+	return b
+}
+
+// TestRunPixelMatch_WebP_VP8AndVP8L は golang.org/x/image/webp で VP8 / VP8L を
+// デコードし、同一バイト列同士の strict 比較が成功することを確認する (Issue #232)。
+func TestRunPixelMatch_WebP_VP8AndVP8L(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, chunk string
+	}{
+		{"vp8", "webp-vp8.webp", "VP8 "},
+		{"vp8l", "webp-vp8l.webp", "VP8L"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := testdataWebPBytes(t, tc.file)
+			if !bytes.Contains(data, []byte(tc.chunk)) {
+				t.Fatalf("%s: expected %s chunk", tc.file, tc.chunk)
+			}
+			matchRate, _, diffCount, _, _, _, _, _, err := RunPixelMatch(data, data, 0.1, false, false, nil)
+			if err != nil {
+				t.Fatalf("RunPixelMatch failed for %s: %v", tc.file, err)
+			}
+			if diffCount != 0 {
+				t.Errorf("expected 0 diff pixels for identical WebP, got %d", diffCount)
+			}
+			if matchRate != 100 {
+				t.Errorf("expected 100%% match for identical WebP, got %v", matchRate)
+			}
+		})
+	}
 }

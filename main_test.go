@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"design-compare/comparator"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -4334,7 +4336,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("failed to write text fixture: %v", err)
 		}
 		// strict と perceptual の両モードで共有される対応フォーマットヒント (Issue #122)。
-		const formatsHint = "(supported: PNG, JPEG, GIF; WebP/SVG are not supported)"
+		const formatsHint = "(supported: PNG, JPEG, GIF, WebP; SVG and animated WebP are not supported)"
 
 		t.Run("perceptual_txt", func(t *testing.T) {
 			req := mcp.CallToolRequest{
@@ -4718,22 +4720,20 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 }
 
 // TestPerceptualDecodeErrorListsSupportedFormats verifies that perceptual-mode
-// decode failures for unsupported image formats (e.g. WebP, SVG) include a hint
-// about the supported formats (PNG, JPEG, GIF) in the error message, so callers
+// decode failures for unsupported image formats (e.g. SVG) include a hint
+// about the supported formats (PNG, JPEG, GIF, WebP) in the error message, so callers
 // can determine the corrective action (format conversion) without an extra
 // round-trip (Issue #122).
 func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vrt-webp-*")
+	tmpDir, err := os.MkdirTemp("", "vrt-svg-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// WebP のマジックナンバー ("RIFF" + "WEBP") を含むファイル。
-	// Go 標準の image パッケージはデコードできず "image: unknown format" になる。
-	webpPath := filepath.Join(tmpDir, "image.webp")
-	if err := os.WriteFile(webpPath, []byte("RIFF\x00\x00\x00\x00WEBPVP8 fake payload"), 0o644); err != nil {
-		t.Fatalf("failed to write WebP file: %v", err)
+	svgPath := filepath.Join(tmpDir, "image.svg")
+	if err := os.WriteFile(svgPath, []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>`), 0o644); err != nil {
+		t.Fatalf("failed to write SVG file: %v", err)
 	}
 	pngPath := saveTempImage(t, tmpDir, "valid.png", generateSolidImage(10, 10, color.White))
 
@@ -4742,8 +4742,8 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 		pathA, pathB string
 		wantMsg      string
 	}{
-		{"webp_as_image_A", webpPath, pngPath, "Failed to decode image A"},
-		{"webp_as_image_B", pngPath, webpPath, "Failed to decode image B"},
+		{"svg_as_image_A", svgPath, pngPath, "Failed to decode image A"},
+		{"svg_as_image_B", pngPath, svgPath, "Failed to decode image B"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{
@@ -4766,7 +4766,7 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 			if !strings.Contains(got, c.wantMsg) {
 				t.Errorf("expected error to contain %q, got %q", c.wantMsg, got)
 			}
-			if !strings.Contains(got, "supported: PNG, JPEG, GIF") {
+			if !strings.Contains(got, comparator.UnsupportedImageFormatHint) {
 				t.Errorf("expected decode error to contain supported-format hint, got %q", got)
 			}
 		})
@@ -4775,8 +4775,8 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 
 // TestPerceptualDecodeError_CorruptImageOmitsFormatHint verifies that a
 // corrupted/truncated PNG (image.ErrFormat ではない失敗、例: unexpected EOF)
-// does NOT get the unsupported-format hint in perceptual mode. PNG/JPEG/GIF だが
-// 破損・途中切れのファイルで「WebP/SVG は非対応」と読める文面が付くと、原因を
+// does NOT get the unsupported-format hint in perceptual mode. PNG/JPEG/GIF/WebP だが
+// 破損・途中切れのファイルで「SVG and animated WebP are not supported」と読める文面が付くと、原因を
 // 形式違いだと誤認するためである (Issue #122)。
 func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vrt-corrupt-*")
@@ -4817,8 +4817,73 @@ func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 	if !strings.Contains(got, "Failed to decode image A") {
 		t.Errorf("expected decode error prefix, got %q", got)
 	}
-	if strings.Contains(got, "WebP/SVG are not supported") {
+	if strings.Contains(got, comparator.UnsupportedImageFormatHint) {
 		t.Errorf("expected no unsupported-format hint for a corrupted image, got %q", got)
+	}
+}
+
+func testdataWebP(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("missing WebP fixture %s: %v", path, err)
+	}
+	return path
+}
+
+func mustWebPChunk(t *testing.T, path, chunk string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if !bytes.Contains(b, []byte(chunk)) {
+		t.Fatalf("%s: expected %s chunk, got header %q", path, chunk, b[:min(len(b), 16)])
+	}
+}
+
+// TestCompareDesign_WebP_VP8AndVP8L は静止画 WebP (lossy VP8 / lossless VP8L) を
+// perceptual と strict に渡し、同一ファイル同士の比較がデコード成功することを確認する
+// (Issue #232)。
+func TestCompareDesign_WebP_VP8AndVP8L(t *testing.T) {
+	vp8 := testdataWebP(t, "webp-vp8.webp")
+	vp8l := testdataWebP(t, "webp-vp8l.webp")
+	mustWebPChunk(t, vp8, "VP8 ")
+	mustWebPChunk(t, vp8l, "VP8L")
+
+	for _, tc := range []struct {
+		name, path, mode string
+	}{
+		{"vp8_perceptual", vp8, "perceptual"},
+		{"vp8_strict", vp8, "strict"},
+		{"vp8l_perceptual", vp8l, "perceptual"},
+		{"vp8l_strict", vp8l, "strict"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         tc.mode,
+						"image_path_a": tc.path,
+						"image_path_b": tc.path,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("expected WebP decode success, got %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]any
+			if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			if result["status"] != "success" {
+				t.Errorf("expected status=success for identical WebP, got %v", result["status"])
+			}
+		})
 	}
 }
 
