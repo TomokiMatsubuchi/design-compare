@@ -797,7 +797,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, warnings, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -842,12 +842,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// min_match だけ指定して max_diff_pixels を省略すると既定 0 が判定を支配し、
 		// 差分が 1px でも mismatch になる。status / match_rate は変えず、
 		// perceptual の一様画像 warnings と同様に応答へ通知する (Issue #206)。
+		// 両画像が単色ベタ塗りで diff_pixels=0 の空洞比較も同じフィールドへ載せる
+		// (Issue #227)。非空時のみ含めるのは perceptual と同じ。
+		var respWarnings []string
 		if hasMinMatch {
 			if _, hasMaxDiffPixels := args["max_diff_pixels"]; !hasMaxDiffPixels {
-				responseMap["warnings"] = []string{
-					"max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)",
-				}
+				respWarnings = append(respWarnings, "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)")
 			}
+		}
+		respWarnings = append(respWarnings, warnings...)
+		if len(respWarnings) > 0 {
+			responseMap["warnings"] = respWarnings
 		}
 		// ignore_region のうち画像矩形と全く交差しない領域は何もマスクされず
 		// 座標ミスの可能性が高いため、非空時のみ応答へ含めて通知する
