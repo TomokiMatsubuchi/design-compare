@@ -2113,6 +2113,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := result["diff_cells"]; ok {
 			t.Errorf("Expected no diff_cells on full match, got %v", result["diff_cells"])
 		}
+		if _, ok := result["diff_region"]; ok {
+			t.Errorf("Expected no diff_region on full match, got %v", result["diff_region"])
+		}
 		assertDiffDataURI(t, result)
 		// 数値一致率フィールドの検証
 		if got := result["match_rate_value"]; got != float64(100) {
@@ -2546,13 +2549,20 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got, want := resultNoRegion["match_rate_value"], float64(256-64)/256*100; got != want {
 			t.Errorf("Expected match_rate_value=%v consistent with diff_blocks/total_blocks, got %v", want, got)
 		}
-		// details は差分セル数を "N of 256 blocks differ" として含む (単一要素のまま)
+		// details は差分セル数を "N of 256 blocks differ" として含み、
+		// 非空の diff_region があるとき場所の1文を追記する (Issue #253)
 		details, ok := resultNoRegion["details"].([]interface{})
-		if !ok || len(details) != 1 {
-			t.Fatalf("Expected 1 detail entry in perceptual result, got %v", resultNoRegion["details"])
+		if !ok || len(details) != 2 {
+			t.Fatalf("Expected 2 detail entries in perceptual result, got %v", resultNoRegion["details"])
 		}
 		if s, ok := details[0].(string); !ok || !strings.Contains(s, "64 of 256 blocks differ") {
 			t.Errorf("Expected details to contain '64 of 256 blocks differ', got %v", details[0])
+		}
+		if resultNoRegion["diff_region"] != "0,0,100,100" {
+			t.Errorf("Expected diff_region=0,0,100,100 (top-left 8x8 cells on 200x200), got %v", resultNoRegion["diff_region"])
+		}
+		if s, ok := details[1].(string); !ok || !strings.Contains(s, "0,0,100,100") {
+			t.Errorf("Expected details to mention diff_region 0,0,100,100, got %v", details[1])
 		}
 		if resultNoRegion["image_size_a"] != "200x200" || resultNoRegion["image_size_b"] != "200x200" {
 			t.Errorf("Expected image_size_a/b=200x200, got a=%v b=%v", resultNoRegion["image_size_a"], resultNoRegion["image_size_b"])
@@ -2582,6 +2592,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("Expected 1 detail entry with ignore_region, got %v", resultRegion["details"])
 		} else if str, ok := detailsRegion[0].(string); !ok || !strings.Contains(str, "0 of 256 blocks differ") {
 			t.Errorf("Expected details to contain '0 of 256 blocks differ', got %v", detailsRegion[0])
+		}
+		if _, ok := resultRegion["diff_region"]; ok {
+			t.Errorf("Expected no diff_region when all cells match, got %v", resultRegion["diff_region"])
 		}
 	})
 
