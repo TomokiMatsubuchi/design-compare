@@ -669,7 +669,7 @@ func collectUnresolvedParentRefs(fNodes []FigmaNode, wNodes []WebNode, figmaByID
 // （呼び出し元は比較ペアの両側で座標空間をそろえる責務を負う）。
 func getFigmaRelativeCoords(n FigmaNode, parent *FigmaNode) (x, y, w, h float64, absolute bool) {
 	if parent == nil {
-		// 親が無い場合は絶対値をそのまま返す（または仮想的な全体キャンバスに対する比率）
+		// 親が無い場合は絶対値をそのまま返す (absolute=true)
 		return n.X, n.Y, n.W, n.H, true
 	}
 	if parent.W == 0 || parent.H == 0 {
