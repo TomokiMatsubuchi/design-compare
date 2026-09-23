@@ -341,21 +341,24 @@ func collectDiffRegions(img image.Image) []DiffRegion {
 // 不一致セルの 16x16 グリッド座標は行優先・決定論的順序の DiffCell スライス
 // として返し、generateDiff が false でも空でなければ呼び出し側が画像なしで
 // 差分位置を特定できる。
-func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, int, string, []string, []string, []DiffCell, error) {
+// 不一致セルの bounding box は画像 A のピクセル座標 "x,y,w,h"
+// (ignore_region と同じ書式) として返す。セル bx は画素
+// [bx*W/16, (bx+1)*W/16) に対応する。diffBits==0 なら空文字列。
+func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool, ignoreRegions []Region) (float64, int, string, []string, []string, []DiffCell, string, error) {
 	// 0次元画像は意味のある比較ができないため明示的なエラーとする。
 	if b := imgA.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, 0, "", nil, nil, nil, fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, 0, "", nil, nil, nil, "", fmt.Errorf("image A dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 	if b := imgB.Bounds(); b.Dx() == 0 || b.Dy() == 0 {
-		return 0, 0, "", nil, nil, nil, fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
+		return 0, 0, "", nil, nil, nil, "", fmt.Errorf("image B dimensions are zero (%dx%d); perceptual comparison requires non-zero image size", b.Dx(), b.Dy())
 	}
 	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーによる
 	// 追加確保の前に修復可能なエラーとして弾く (OOM 防止、Issue #158)。
 	if b := imgA.Bounds(); b.Dx() > maxImageDimension || b.Dy() > maxImageDimension {
-		return 0, 0, "", nil, nil, nil, fmt.Errorf("image A is %dx%d; maximum supported dimension is %d, resize the images before comparison", b.Dx(), b.Dy(), maxImageDimension)
+		return 0, 0, "", nil, nil, nil, "", fmt.Errorf("image A is %dx%d; maximum supported dimension is %d, resize the images before comparison", b.Dx(), b.Dy(), maxImageDimension)
 	}
 	if b := imgB.Bounds(); b.Dx() > maxImageDimension || b.Dy() > maxImageDimension {
-		return 0, 0, "", nil, nil, nil, fmt.Errorf("image B is %dx%d; maximum supported dimension is %d, resize the images before comparison", b.Dx(), b.Dy(), maxImageDimension)
+		return 0, 0, "", nil, nil, nil, "", fmt.Errorf("image B is %dx%d; maximum supported dimension is %d, resize the images before comparison", b.Dx(), b.Dy(), maxImageDimension)
 	}
 
 	// 除外領域 (ignore_region) を両画像とも白でマスクしてから比較する。
@@ -404,6 +407,8 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 
 	diffBits := 0
 	var diffCells []DiffCell
+	minBX, minBY := AHashGridSize, AHashGridSize
+	maxBX, maxBY := -1, -1
 	for y := 0; y < AHashGridSize; y++ {
 		for x := 0; x < AHashGridSize; x++ {
 			i := y*AHashGridSize + x
@@ -413,6 +418,18 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 			if diff {
 				diffBits++
 				diffCells = append(diffCells, DiffCell{GridX: x, GridY: y})
+				if x < minBX {
+					minBX = x
+				}
+				if x > maxBX {
+					maxBX = x
+				}
+				if y < minBY {
+					minBY = y
+				}
+				if y > maxBY {
+					maxBY = y
+				}
 			}
 
 			if generateDiff {
@@ -433,13 +450,30 @@ func CalculateLayoutSimilarityWithDiff(imgA, imgB image.Image, generateDiff bool
 	if generateDiff {
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, diffImg); err != nil {
-			return 0, 0, "", nil, nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
+			return 0, 0, "", nil, nil, nil, "", fmt.Errorf("failed to encode diff PNG: %w", err)
 		}
 		diffDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
+	var diffRegion string
+	if diffBits > 0 {
+		wA := imgA.Bounds().Dx()
+		hA := imgA.Bounds().Dy()
+		rx := minBX * wA / AHashGridSize
+		ry := minBY * hA / AHashGridSize
+		rw := (maxBX+1)*wA/AHashGridSize - rx
+		rh := (maxBY+1)*hA/AHashGridSize - ry
+		if rw <= 0 {
+			rw = 1
+		}
+		if rh <= 0 {
+			rh = 1
+		}
+		diffRegion = fmt.Sprintf("%d,%d,%d,%d", rx, ry, rw, rh)
+	}
+
 	similarity := float64(AHashBlocks-diffBits) / float64(AHashBlocks) * 100.0
-	return similarity, diffBits, diffDataURI, outOfBounds, warnings, diffCells, nil
+	return similarity, diffBits, diffDataURI, outOfBounds, warnings, diffCells, diffRegion, nil
 }
 
 // maskRegions returns a copy of img with the given regions filled with white,

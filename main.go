@@ -689,7 +689,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		matchRate, diffBlocks, diffImage, outOfBounds, warnings, diffCells, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, generateDiff, ignoreRegions)
+		matchRate, diffBlocks, diffImage, outOfBounds, warnings, diffCells, diffRegion, err := comparator.CalculateLayoutSimilarityWithDiff(imgA, imgB, generateDiff, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual comparison failed: %v", err)), nil
 		}
@@ -708,6 +708,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 256 段階の離散値のため、一致率だけよりも差分セル数の方が min_match の
 		// 調整や差分の解釈が容易になる (Issue #141)。
 		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
+		if diffRegion != "" {
+			details = append(details, fmt.Sprintf("Differing blocks cluster near (%s) on image A.", diffRegion))
+		}
 		// サイズが異なる画像では同じ x,y,w,h が各画像の絶対ピクセルとして
 		// マスクされるため、割合的に別領域になることを呼び出し側へ伝える。
 		sizeMismatch := boundsA.Dx() != boundsB.Dx() || boundsA.Dy() != boundsB.Dy()
@@ -743,6 +746,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// (画像ペイロードなしで修正箇所を特定するため。Issue #186)。
 		if len(diffCells) > 0 {
 			responseMap["diff_cells"] = diffCells
+		}
+		// 不一致セルの bounding box（画像 A のピクセル座標 "x,y,w,h"）。
+		// テキストだけのクライアントでも差分の場所を絞り込める (Issue #253)。
+		if diffRegion != "" {
+			responseMap["diff_region"] = diffRegion
 		}
 		// 一様画像 (ベタ塗り) は aHash が退化するため比較として情報を持たず、
 		// 全面白 vs 全面黒でも一致率100% pass が誤った安心感を与える。status /

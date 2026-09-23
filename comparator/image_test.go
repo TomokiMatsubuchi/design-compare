@@ -407,7 +407,7 @@ func TestCalculateLayoutSimilarityWithDiff_IgnoreRegionOutOfBounds(t *testing.T)
 	draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
 
 	// 両画像とも範囲外の領域は報告される
-	_, _, _, outOfBounds, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, []Region{{X: 500, Y: 500, W: 100, H: 100}})
+	_, _, _, outOfBounds, _, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, []Region{{X: 500, Y: 500, W: 100, H: 100}})
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestCalculateLayoutSimilarityWithDiff_IgnoreRegionOutOfBounds(t *testing.T)
 	}
 
 	// 範囲内の領域は報告されない
-	_, _, _, outOfBounds, _, _, err = CalculateLayoutSimilarityWithDiff(imgA, imgB, false, []Region{{X: 0, Y: 0, W: 100, H: 100}})
+	_, _, _, outOfBounds, _, _, _, err = CalculateLayoutSimilarityWithDiff(imgA, imgB, false, []Region{{X: 0, Y: 0, W: 100, H: 100}})
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
@@ -425,7 +425,7 @@ func TestCalculateLayoutSimilarityWithDiff_IgnoreRegionOutOfBounds(t *testing.T)
 	}
 
 	// 画像B (200x200) には範囲内だが画像A (100x100) では範囲外の領域も報告される
-	_, _, _, outOfBounds, _, _, err = CalculateLayoutSimilarityWithDiff(imgA, imgB, false, []Region{{X: 150, Y: 150, W: 50, H: 50}})
+	_, _, _, outOfBounds, _, _, _, err = CalculateLayoutSimilarityWithDiff(imgA, imgB, false, []Region{{X: 150, Y: 150, W: 50, H: 50}})
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestCalculateLayoutSimilarityWithDiff_UniformImageWarning(t *testing.T) {
 		imgB := image.NewRGBA(image.Rect(0, 0, 100, 100))
 		draw.Draw(imgB, imgB.Bounds(), &image.Uniform{black}, image.Point{}, draw.Src)
 
-		matchRate, _, _, _, warnings, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+		matchRate, _, _, _, warnings, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 		if err != nil {
 			t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 		}
@@ -476,7 +476,7 @@ func TestCalculateLayoutSimilarityWithDiff_UniformImageWarning(t *testing.T) {
 		draw.Draw(imgB, image.Rect(0, 0, 50, 100), &image.Uniform{white}, image.Point{}, draw.Src)
 		draw.Draw(imgB, image.Rect(50, 0, 100, 100), &image.Uniform{black}, image.Point{}, draw.Src)
 
-		_, _, _, _, warnings, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+		_, _, _, _, warnings, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 		if err != nil {
 			t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 		}
@@ -494,7 +494,7 @@ func TestCalculateLayoutSimilarityWithDiff_UniformImageWarning(t *testing.T) {
 		draw.Draw(imgB, image.Rect(0, 0, 100, 50), &image.Uniform{white}, image.Point{}, draw.Src)
 		draw.Draw(imgB, image.Rect(0, 50, 100, 100), &image.Uniform{black}, image.Point{}, draw.Src)
 
-		_, _, _, _, warnings, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+		_, _, _, _, warnings, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 		if err != nil {
 			t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 		}
@@ -524,7 +524,7 @@ func TestCalculateLayoutSimilarityWithDiff_AspectRatioMismatchWarning(t *testing
 	t.Run("mismatched_aspect_warns", func(t *testing.T) {
 		imgA := splitLR(100, 100)  // aspect 1.00
 		imgB := splitLR(1000, 100) // aspect 10.00
-		_, _, _, _, warnings, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+		_, _, _, _, warnings, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 		if err != nil {
 			t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 		}
@@ -544,7 +544,7 @@ func TestCalculateLayoutSimilarityWithDiff_AspectRatioMismatchWarning(t *testing
 	t.Run("same_aspect_no_warning", func(t *testing.T) {
 		imgA := splitLR(100, 100) // aspect 1.00
 		imgB := splitLR(200, 200) // aspect 1.00
-		_, _, _, _, warnings, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+		_, _, _, _, warnings, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 		if err != nil {
 			t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 		}
@@ -580,7 +580,7 @@ func TestCalculateLayoutSimilarityWithDiff_TransparentCompositesOntoWhite(t *tes
 	draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
 	draw.Draw(imgB, image.Rect(32, 0, 64, 64), &image.Uniform{black}, image.Point{}, draw.Src)
 
-	matchRate, diffBits, _, _, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+	matchRate, diffBits, _, _, _, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestCalculateLayoutSimilarityWithDiff_DiffBits(t *testing.T) {
 	draw.Draw(imgB, image.Rect(0, 0, 200, 100), &image.Uniform{white}, image.Point{}, draw.Src)
 	draw.Draw(imgB, image.Rect(0, 100, 200, 200), &image.Uniform{black}, image.Point{}, draw.Src)
 
-	matchRate, diffBits, _, _, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+	matchRate, diffBits, _, _, _, _, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestCalculateLayoutSimilarityWithDiff_DiffBits(t *testing.T) {
 	}
 
 	// 同一画像同士は全セル一致のため diffBits=0
-	_, diffBits, _, _, _, _, err = CalculateLayoutSimilarityWithDiff(imgA, imgA, false, nil)
+	_, diffBits, _, _, _, _, _, err = CalculateLayoutSimilarityWithDiff(imgA, imgA, false, nil)
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
@@ -645,7 +645,7 @@ func TestCalculateLayoutSimilarityWithDiff_DiffCells(t *testing.T) {
 	draw.Draw(imgB, image.Rect(0, 0, 200, 100), &image.Uniform{white}, image.Point{}, draw.Src)
 	draw.Draw(imgB, image.Rect(0, 100, 200, 200), &image.Uniform{black}, image.Point{}, draw.Src)
 
-	_, diffBits, _, _, _, diffCells, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+	_, diffBits, _, _, _, diffCells, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
@@ -663,12 +663,45 @@ func TestCalculateLayoutSimilarityWithDiff_DiffCells(t *testing.T) {
 		}
 	}
 
-	_, _, _, _, _, sameCells, err := CalculateLayoutSimilarityWithDiff(imgA, imgA, false, nil)
+	_, _, _, _, _, sameCells, _, err := CalculateLayoutSimilarityWithDiff(imgA, imgA, false, nil)
 	if err != nil {
 		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
 	}
 	if len(sameCells) != 0 {
 		t.Errorf("Expected no diffCells for identical images, got %v", sameCells)
+	}
+}
+
+// TestCalculateLayoutSimilarityWithDiff_DiffRegion verifies that mismatched
+// aHash cells are reported as one image-A pixel bounding box "x,y,w,h"
+// (Issue #253)。16x16 画像で左上 1 セルだけ不一致なら画素 [0,1)×[0,1)。
+func TestCalculateLayoutSimilarityWithDiff_DiffRegion(t *testing.T) {
+	white := color.RGBA{255, 255, 255, 255}
+	black := color.RGBA{0, 0, 0, 255}
+
+	imgA := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	draw.Draw(imgA, imgA.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+	imgA.Set(0, 0, black)
+	imgB := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	draw.Draw(imgB, imgB.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+
+	_, diffBits, _, _, _, _, diffRegion, err := CalculateLayoutSimilarityWithDiff(imgA, imgB, false, nil)
+	if err != nil {
+		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
+	}
+	if diffBits != 1 {
+		t.Fatalf("Expected diffBits=1 (top-left cell), got %d", diffBits)
+	}
+	if diffRegion != "0,0,1,1" {
+		t.Errorf("Expected diffRegion=0,0,1,1, got %q", diffRegion)
+	}
+
+	_, _, _, _, _, _, sameRegion, err := CalculateLayoutSimilarityWithDiff(imgA, imgA, false, nil)
+	if err != nil {
+		t.Fatalf("CalculateLayoutSimilarityWithDiff failed: %v", err)
+	}
+	if sameRegion != "" {
+		t.Errorf("Expected empty diffRegion for identical images, got %q", sameRegion)
 	}
 }
 
@@ -729,7 +762,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 		oversized := image.NewRGBA(image.Rect(0, 0, 1, maxImageDimension+1))
 		small := image.NewRGBA(image.Rect(0, 0, 100, 100))
 
-		_, _, _, _, _, _, err := CalculateLayoutSimilarityWithDiff(oversized, small, false, nil)
+		_, _, _, _, _, _, _, err := CalculateLayoutSimilarityWithDiff(oversized, small, false, nil)
 		if err == nil {
 			t.Fatal("Expected an error for oversized image A (1x8193), got nil")
 		}
@@ -738,7 +771,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 			t.Errorf("Expected error %q, got %q", wantA, err.Error())
 		}
 
-		_, _, _, _, _, _, err = CalculateLayoutSimilarityWithDiff(small, oversized, false, nil)
+		_, _, _, _, _, _, _, err = CalculateLayoutSimilarityWithDiff(small, oversized, false, nil)
 		if err == nil {
 			t.Fatal("Expected an error for oversized image B (1x8193), got nil")
 		}
