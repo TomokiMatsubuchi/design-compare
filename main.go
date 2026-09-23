@@ -459,7 +459,7 @@ func boolArg(request mcp.CallToolRequest, key string, def bool) (bool, error) {
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
 	if err != nil {
-		return mcp.NewToolResultError("mode parameter is required (valid modes: layout_tree, perceptual, strict, layout_integrity)"), nil
+		return mcp.NewToolResultError(fmt.Sprintf("invalid mode parameter: %v", err)), nil
 	}
 
 	// モード非対応パラメータの検証: 当該モードで効果を持たないパラメータ

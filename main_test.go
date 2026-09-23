@@ -4596,9 +4596,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
-	// mode 未指定のエラーにも有効モード名が列挙されている (未知モード時と同じ
-	// 自己修復体験に揃え、呼び出し側のリトライ回数を減らす)
-	t.Run("MissingMode_ListsValidModes", func(t *testing.T) {
+	// mode 未指定時は RequireString の実エラーを潰さず伝える (Issue #249)
+	t.Run("MissingMode_IncludesUnderlyingError", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{},
@@ -4612,13 +4611,39 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("Expected error for missing mode, got content=%v", res.Content[0].(mcp.TextContent).Text)
 		}
 		got := res.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(got, "mode parameter is required") {
-			t.Errorf("Expected missing mode error to state mode is required, got %q", got)
+		if !strings.Contains(got, "invalid mode parameter") {
+			t.Errorf("Expected missing mode error to prefix invalid mode parameter, got %q", got)
 		}
-		for _, valid := range []string{"layout_tree", "perceptual", "strict", "layout_integrity"} {
-			if !strings.Contains(got, valid) {
-				t.Errorf("Expected missing mode error to list valid mode %q, got %q", valid, got)
-			}
+		if !strings.Contains(got, "required") && !strings.Contains(got, "not found") {
+			t.Errorf("Expected missing mode error to include RequireString required/not found detail, got %q", got)
+		}
+	})
+
+	// mode が非文字列のときは required と誤認させず、型違いの実エラーを返す (Issue #249)
+	t.Run("NonStringMode_IncludesNotAString", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode": 123,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("Expected error for non-string mode, got content=%v", res.Content[0].(mcp.TextContent).Text)
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if strings.Contains(got, "mode parameter is required") {
+			t.Errorf("non-string mode must not be reported as required, got %q", got)
+		}
+		if !strings.Contains(got, "invalid mode parameter") {
+			t.Errorf("Expected non-string mode error to prefix invalid mode parameter, got %q", got)
+		}
+		if !strings.Contains(got, "not a string") {
+			t.Errorf("Expected non-string mode error to include not a string, got %q", got)
 		}
 	})
 
