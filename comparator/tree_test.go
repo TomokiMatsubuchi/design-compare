@@ -1041,6 +1041,94 @@ func TestLimitLayoutTreeDetails(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_IgnoredNodes verifies that ignore_nodes / ignore_region
+// collect machine-readable identifiers (figma:<id>, web:<selector>) whose
+// length matches IgnoredCount, including the skipped early-return path.
+func TestLayoutTree_IgnoredNodes(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	figmaJSON := `[
+		{"id":"1:23","name":"Button","x":0,"y":0,"w":100,"h":40},
+		{"id":"2","name":"header","x":0,"y":100,"w":1000,"h":80}
+	]`
+	webJSON := `[
+		{"selector":"#date-banner","x":0,"y":0,"w":100,"h":40},
+		{"selector":"#header","x":0,"y":100,"w":1000,"h":80}
+	]`
+
+	t.Run("ignore_nodes_lists_excluded_ids", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"Button", "#date-banner"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 2 {
+			t.Errorf("Expected IgnoredCount=2, got %d", result.IgnoredCount)
+		}
+		want := []string{"figma:1:23", "web:#date-banner"}
+		if !stringSlicesEqual(result.IgnoredNodes, want) {
+			t.Errorf("Expected IgnoredNodes=%v, got %v", want, result.IgnoredNodes)
+		}
+	})
+
+	t.Run("ignore_region_lists_excluded_ids", func(t *testing.T) {
+		regions := []Region{{X: 0, Y: 0, W: 120, H: 50}}
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, regions)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 2 {
+			t.Errorf("Expected IgnoredCount=2, got %d", result.IgnoredCount)
+		}
+		want := []string{"figma:1:23", "web:#date-banner"}
+		if !stringSlicesEqual(result.IgnoredNodes, want) {
+			t.Errorf("Expected IgnoredNodes=%v, got %v", want, result.IgnoredNodes)
+		}
+	})
+
+	t.Run("skipped_includes_ignored_nodes", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{"Button", "header", "#date-banner", "#header"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.Status != "skipped" {
+			t.Errorf("Expected status skipped, got %s", result.Status)
+		}
+		if result.IgnoredCount != 4 {
+			t.Errorf("Expected IgnoredCount=4, got %d", result.IgnoredCount)
+		}
+		want := []string{"figma:1:23", "figma:2", "web:#date-banner", "web:#header"}
+		if !stringSlicesEqual(result.IgnoredNodes, want) {
+			t.Errorf("Expected IgnoredNodes=%v, got %v", want, result.IgnoredNodes)
+		}
+	})
+
+	t.Run("no_ignores_omits_list", func(t *testing.T) {
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.IgnoredCount != 0 {
+			t.Errorf("Expected IgnoredCount=0, got %d", result.IgnoredCount)
+		}
+		if len(result.IgnoredNodes) != 0 {
+			t.Errorf("Expected empty IgnoredNodes, got %v", result.IgnoredNodes)
+		}
+	})
+}
+
+func stringSlicesEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestRoundMatchRateDisplay(t *testing.T) {
 	// Issue #233 の例: 97.999846% は表示 98.00 と同じ桁に丸まる
 	if got := RoundMatchRateDisplay(97.999846); got != 98.0 {

@@ -47,6 +47,7 @@ type LayoutTreeResult struct {
 	MatchedNodes           int              `json:"matched_nodes"`
 	TotalNodes             int              `json:"total_nodes"`
 	IgnoredCount           int              `json:"ignored_count"`
+	IgnoredNodes           []string         `json:"ignored_nodes,omitempty"`
 	UnmatchedIgnores       []string         `json:"unmatched_ignores,omitempty"`
 	UnmatchedIgnoreRegions []string         `json:"unmatched_ignore_regions,omitempty"`
 	ExtraWebCount          int              `json:"extra_web_count"`
@@ -68,7 +69,8 @@ const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the lay
 // グループ（例: '.ad-*'、'Icon/*'）を全要素列挙なしで除外できる。プレフィックスに
 // 一致するノードが1つも無い場合のみ UnmatchedIgnores に入る。
 // ignoreRegions は画像モードの ignore_region 相当の領域除外で、BoundingBox の
-// 中心点が領域内にあるノードを両側から除外する（除外数は IgnoredCount に加算）。
+// 中心点が領域内にあるノードを両側から除外する（除外数は IgnoredCount に加算し、
+// 識別子は IgnoredNodes に figma:<id> / web:<selector> として入れる）。
 // どのノード中心とも重ならない領域は UnmatchedIgnoreRegions に "x,y,w,h" で入る
 // （ignore_nodes の unmatched_ignores / 画像モードの out_of_bounds_regions と同種）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
@@ -139,6 +141,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 扱い、命名規則に従うグループ（広告・計測タグ等）を列挙なしで除外できる。
 	// 途中の '*' や '?' はワイルドカードではなく通常の完全一致扱いとする。
 	var ignoredCount int
+	var ignoredNodes []string
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
 		ignoreMap := make(map[string]bool)
@@ -172,6 +175,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		for _, fn := range fNodes {
 			if isNodeValueIgnored(fn.ID, ignoreMap, wildcardPrefixes) || isNodeValueIgnored(fn.Name, ignoreMap, wildcardPrefixes) {
 				ignoredCount++
+				ignoredNodes = append(ignoredNodes, ignoredFigmaID(fn))
 				continue
 			}
 			filteredFNodes = append(filteredFNodes, fn)
@@ -182,6 +186,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		for _, wn := range wNodes {
 			if isNodeValueIgnored(wn.Selector, ignoreMap, wildcardPrefixes) {
 				ignoredCount++
+				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
 			}
 			filteredWNodes = append(filteredWNodes, wn)
@@ -217,6 +222,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		for _, fn := range fNodes {
 			if boundingBoxCenterInRegions(fn.X, fn.Y, fn.W, fn.H, ignoreRegions, regionHits) {
 				ignoredCount++
+				ignoredNodes = append(ignoredNodes, ignoredFigmaID(fn))
 				continue
 			}
 			filteredFNodes = append(filteredFNodes, fn)
@@ -227,6 +233,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		for _, wn := range wNodes {
 			if boundingBoxCenterInRegions(wn.X, wn.Y, wn.W, wn.H, ignoreRegions, regionHits) {
 				ignoredCount++
+				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
 			}
 			filteredWNodes = append(filteredWNodes, wn)
@@ -268,6 +275,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				Status:                 "mismatch",
 				Details:                []string{emptyDetail},
 				IgnoredCount:           ignoredCount,
+				IgnoredNodes:           ignoredNodes,
 				UnmatchedIgnores:       unmatchedIgnores,
 				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 				ZeroGeometryWarning:    zeroGeometryWarning,
@@ -289,6 +297,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				Status:                 "skipped",
 				Details:                []string{fmt.Sprintf("All %s nodes were excluded by ignore_nodes / ignore_region (%s); no comparison pairs left", side, ignoredNodesInTotalPhrase(ignoredCount))},
 				IgnoredCount:           ignoredCount,
+				IgnoredNodes:           ignoredNodes,
 				UnmatchedIgnores:       unmatchedIgnores,
 				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 				ZeroGeometryWarning:    zeroGeometryWarning,
@@ -310,6 +319,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			Status:                 "mismatch",
 			Details:                []string{emptyDetail},
 			IgnoredCount:           ignoredCount,
+			IgnoredNodes:           ignoredNodes,
 			UnmatchedIgnores:       unmatchedIgnores,
 			UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 			ZeroGeometryWarning:    zeroGeometryWarning,
@@ -463,6 +473,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		MatchedNodes:           matchedCount,
 		TotalNodes:             totalCompared,
 		IgnoredCount:           ignoredCount,
+		IgnoredNodes:           ignoredNodes,
 		UnmatchedIgnores:       unmatchedIgnores,
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 		ExtraWebCount:          len(extraWebSelectors),
@@ -699,6 +710,16 @@ func ignoredNodesInTotalPhrase(n int) string {
 		return "1 node ignored in total"
 	}
 	return fmt.Sprintf("%d nodes ignored in total", n)
+}
+
+// ignoredFigmaID / ignoredWebID は除外ノードの機械可読識別子。
+// Figma は Node ID、Web はセレクタを使い、過剰一致の検証に使う。
+func ignoredFigmaID(fn FigmaNode) string {
+	return "figma:" + fn.ID
+}
+
+func ignoredWebID(wn WebNode) string {
+	return "web:" + wn.Selector
 }
 
 func cleanNodeName(s string) string {

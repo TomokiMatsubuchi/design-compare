@@ -251,6 +251,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultMatch["ignored_count"]; got != float64(0) {
 			t.Errorf("Expected ignored_count=0, got %v", got)
 		}
+		if _, ok := resultMatch["ignored_nodes"]; ok {
+			t.Errorf("Expected no ignored_nodes when ignored_count=0, got %v", resultMatch["ignored_nodes"])
+		}
 		if _, ok := resultMatch["zero_geometry_warning"]; ok {
 			t.Errorf("Expected no zero_geometry_warning for valid w/h keys, got %v", resultMatch["zero_geometry_warning"])
 		}
@@ -358,6 +361,12 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultIgnore["ignored_count"]; got != float64(2) {
 			t.Errorf("Expected ignored_count=2 after ignoring 'nav', got %v", got)
 		}
+		ignoredNodes, ok := resultIgnore["ignored_nodes"].([]interface{})
+		if !ok || len(ignoredNodes) != 2 {
+			t.Errorf("Expected ignored_nodes length to match ignored_count=2, got %v", resultIgnore["ignored_nodes"])
+		} else if ignoredNodes[0] != "figma:3" || ignoredNodes[1] != "web:.nav" {
+			t.Errorf("Expected ignored_nodes=[figma:3 web:.nav], got %v", ignoredNodes)
+		}
 		if _, ok := resultIgnore["unmatched_ignores"]; ok {
 			t.Errorf("Expected no unmatched_ignores for valid entry 'nav', got %v", resultIgnore["unmatched_ignores"])
 		}
@@ -441,6 +450,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := resultIgnoreNothing["ignored_count"]; got != float64(0) {
 			t.Errorf("Expected ignored_count=0 when ignore entry matches nothing, got %v", got)
+		}
+		if _, ok := resultIgnoreNothing["ignored_nodes"]; ok {
+			t.Errorf("Expected no ignored_nodes when ignore entry matches nothing, got %v", resultIgnoreNothing["ignored_nodes"])
 		}
 		unmatchedNothing, ok := resultIgnoreNothing["unmatched_ignores"].([]interface{})
 		if !ok || len(unmatchedNothing) != 1 || unmatchedNothing[0] != "nope" {
@@ -796,6 +808,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := result["ignored_count"]; got != float64(4) {
 			t.Errorf("Expected ignored_count=4, got %v", got)
+		}
+		ignoredAll, ok := result["ignored_nodes"].([]interface{})
+		if !ok || len(ignoredAll) != 4 {
+			t.Errorf("Expected ignored_nodes length to match ignored_count=4, got %v", result["ignored_nodes"])
 		}
 		details, ok := result["details"].([]interface{})
 		if !ok || len(details) == 0 {
