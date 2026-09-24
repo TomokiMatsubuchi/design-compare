@@ -5302,8 +5302,29 @@ func writePNGChunk(buf *bytes.Buffer, typ, data []byte) {
 	buf.Write(crcbuf[:])
 }
 
+func pngWithRewrittenIHDR(t *testing.T, src []byte, width, height uint32) []byte {
+	t.Helper()
+	out := append([]byte(nil), src...)
+	if len(out) < 33 || string(out[12:16]) != "IHDR" {
+		t.Fatalf("expected PNG with IHDR at offset 12, got %d bytes", len(out))
+	}
+	binary.BigEndian.PutUint32(out[16:20], width)
+	binary.BigEndian.PutUint32(out[20:24], height)
+	binary.BigEndian.PutUint32(out[29:33], crc32.ChecksumIEEE(out[12:29]))
+	return out
+}
+
+func encodePNGBytes(t *testing.T, img image.Image) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("failed to encode PNG: %v", err)
+	}
+	return buf.Bytes()
+}
+
 // TestPerceptualPreDecodeSizeLimit verifies the perceptual handler rejects
-// header-only PNGs whose IHDR exceeds the pre-decode limits (Issue #237).
+// header-only PNGs whose IHDR exceeds the pre-decode limits (Issue #237 / #273).
 func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vrt-ihdr-limit-*")
 	if err != nil {
@@ -5317,8 +5338,12 @@ func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
 		t.Fatalf("failed to write IHDR-only PNG: %v", err)
 	}
 	pixelsPath := filepath.Join(tmpDir, "pixels.png")
-	if err := os.WriteFile(pixelsPath, pngWithDeclaredSize(10000, 6000), 0o644); err != nil {
+	if err := os.WriteFile(pixelsPath, pngWithDeclaredSize(8000, 7000), 0o644); err != nil {
 		t.Fatalf("failed to write pixel-limit PNG: %v", err)
+	}
+	bombPath := filepath.Join(tmpDir, "bomb.png")
+	if err := os.WriteFile(bombPath, pngWithRewrittenIHDR(t, encodePNGBytes(t, generateSolidImage(2, 2, color.White)), 40000, 40000), 0o644); err != nil {
+		t.Fatalf("failed to write rewritten-IHDR PNG: %v", err)
 	}
 
 	for _, c := range []struct {
@@ -5326,9 +5351,11 @@ func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
 		pathA, pathB string
 		want         string
 	}{
-		{"oversized_image_A", hugePath, validPath, "image A is 30001x1 (30001 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
-		{"oversized_image_B", validPath, hugePath, "image B is 30001x1 (30001 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
-		{"over_total_pixels_A", pixelsPath, validPath, "image A is 10000x6000 (60000000 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+		{"oversized_image_A", hugePath, validPath, "image A is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
+		{"oversized_image_B", validPath, hugePath, "image B is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
+		{"over_total_pixels_A", pixelsPath, validPath, "image A is 8000x7000 (56000000 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
+		{"bomb_ihdr_40000_A", bombPath, validPath, "image A is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
+		{"bomb_ihdr_40000_B", validPath, bombPath, "image B is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{

@@ -54,6 +54,26 @@ func writePNGChunk(buf *bytes.Buffer, typ, data []byte) {
 	buf.Write(crcbuf[:])
 }
 
+// pngWithRewrittenIHDR は小さな有効 PNG の IHDR 幅/高さを書き換え CRC を再計算する。
+// 画素データは元のままなのでフルデコードすると壊れるか巨大確保になる。ヘッダ
+// 寸法チェックが Decode より先に弾くことを検証する (Issue #273)。
+func pngWithRewrittenIHDR(t *testing.T, src []byte, width, height uint32) []byte {
+	t.Helper()
+	out := append([]byte(nil), src...)
+	if len(out) < 33 || string(out[12:16]) != "IHDR" {
+		t.Fatalf("expected PNG with IHDR at offset 12, got %d bytes", len(out))
+	}
+	binary.BigEndian.PutUint32(out[16:20], width)
+	binary.BigEndian.PutUint32(out[20:24], height)
+	binary.BigEndian.PutUint32(out[29:33], crc32.ChecksumIEEE(out[12:29]))
+	return out
+}
+
+func wantHeaderSizeError(label string, w, h int) string {
+	return fmt.Sprintf("%s is %dx%d; maximum supported dimension is %d, resize the images before comparison",
+		label, w, h, maxImageDimension)
+}
+
 func wantSizeLimitError(label string, w, h int) string {
 	return fmt.Sprintf("%s is %dx%d (%d pixels); maximum is %dpx per side and %d total pixels, resize or crop the images before comparison",
 		label, w, h, int64(w)*int64(h), maxDecodeImageDimension, maxDecodeImagePixels)
@@ -736,7 +756,7 @@ func TestMaxImageDimensionLimit(t *testing.T) {
 		if err == nil {
 			t.Fatal("Expected an error for an oversized image (8193x1), got nil")
 		}
-		want := fmt.Sprintf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", maxImageDimension+1, 1, maxImageDimension)
+		want := wantHeaderSizeError("design image", maxImageDimension+1, 1)
 		if err.Error() != want {
 			t.Errorf("Expected error %q, got %q", want, err.Error())
 		}
@@ -917,7 +937,7 @@ func TestRunPixelMatch_PreDecodeSizeLimit(t *testing.T) {
 		huge := pngWithDeclaredSize(uint32(maxDecodeImageDimension)+1, 1)
 		if err := ValidateImageSizeLimit(huge, "design image"); err == nil {
 			t.Fatal("expected size-limit error from ValidateImageSizeLimit")
-		} else if got, want := err.Error(), wantSizeLimitError("design image", maxDecodeImageDimension+1, 1); got != want {
+		} else if got, want := err.Error(), wantHeaderSizeError("design image", maxDecodeImageDimension+1, 1); got != want {
 			t.Errorf("ValidateImageSizeLimit error: got %q want %q", got, want)
 		}
 
@@ -925,7 +945,7 @@ func TestRunPixelMatch_PreDecodeSizeLimit(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected RunPixelMatch to reject oversized design image")
 		}
-		if got, want := err.Error(), wantSizeLimitError("design image", maxDecodeImageDimension+1, 1); got != want {
+		if got, want := err.Error(), wantHeaderSizeError("design image", maxDecodeImageDimension+1, 1); got != want {
 			t.Errorf("RunPixelMatch A error: got %q want %q", got, want)
 		}
 
@@ -933,19 +953,19 @@ func TestRunPixelMatch_PreDecodeSizeLimit(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected RunPixelMatch to reject oversized web screenshot")
 		}
-		if got, want := err.Error(), wantSizeLimitError("web screenshot", maxDecodeImageDimension+1, 1); got != want {
+		if got, want := err.Error(), wantHeaderSizeError("web screenshot", maxDecodeImageDimension+1, 1); got != want {
 			t.Errorf("RunPixelMatch B error: got %q want %q", got, want)
 		}
 	})
 
 	t.Run("rejects_over_total_pixels", func(t *testing.T) {
-		// 10000x6000 = 60,000,000 > 50,000,000。各辺は 30000 未満。
-		huge := pngWithDeclaredSize(10000, 6000)
+		// 8000x7000 = 56,000,000 > 50,000,000。各辺は 8192 未満なので #273 ではなく画素上限。
+		huge := pngWithDeclaredSize(8000, 7000)
 		_, _, _, _, _, _, _, _, err := RunPixelMatch(huge, small, 0.1, false, false, nil)
 		if err == nil {
 			t.Fatal("expected RunPixelMatch to reject image over total pixel limit")
 		}
-		if got, want := err.Error(), wantSizeLimitError("design image", 10000, 6000); got != want {
+		if got, want := err.Error(), wantSizeLimitError("design image", 8000, 7000); got != want {
 			t.Errorf("RunPixelMatch pixel-limit error: got %q want %q", got, want)
 		}
 	})
@@ -954,7 +974,40 @@ func TestRunPixelMatch_PreDecodeSizeLimit(t *testing.T) {
 		if err := ValidateImageSizeLimit([]byte("not an image"), "design image"); err != nil {
 			t.Errorf("expected nil when DecodeConfig fails, got %v", err)
 		}
+		if err := CheckImageHeaderSize([]byte("not an image"), "design image"); err != nil {
+			t.Errorf("expected nil from CheckImageHeaderSize when DecodeConfig fails, got %v", err)
+		}
 	})
+}
+
+// TestCheckImageHeaderSize_BombPNG は小さな有効 PNG の IHDR を 40000x40000 に
+// 書き換えた圧縮爆弾を、フルデコードせず "maximum supported dimension" で弾く
+// ことを検証する (Issue #273)。
+func TestCheckImageHeaderSize_BombPNG(t *testing.T) {
+	small := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 2, 2)))
+	bomb := pngWithRewrittenIHDR(t, small, 40000, 40000)
+
+	if err := CheckImageHeaderSize(bomb, "design image"); err == nil {
+		t.Fatal("expected CheckImageHeaderSize to reject 40000x40000 header")
+	} else if got, want := err.Error(), wantHeaderSizeError("design image", 40000, 40000); got != want {
+		t.Errorf("CheckImageHeaderSize error: got %q want %q", got, want)
+	}
+
+	_, _, _, _, _, _, _, _, err := RunPixelMatch(bomb, small, 0.1, false, false, nil)
+	if err == nil {
+		t.Fatal("expected RunPixelMatch to reject bomb design image")
+	}
+	if got, want := err.Error(), wantHeaderSizeError("design image", 40000, 40000); got != want {
+		t.Errorf("RunPixelMatch A error: got %q want %q", got, want)
+	}
+
+	_, _, _, _, _, _, _, _, err = RunPixelMatch(small, bomb, 0.1, false, false, nil)
+	if err == nil {
+		t.Fatal("expected RunPixelMatch to reject bomb web screenshot")
+	}
+	if got, want := err.Error(), wantHeaderSizeError("web screenshot", 40000, 40000); got != want {
+		t.Errorf("RunPixelMatch B error: got %q want %q", got, want)
+	}
 }
 
 func testdataWebPBytes(t *testing.T, name string) []byte {

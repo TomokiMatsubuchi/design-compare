@@ -77,10 +77,29 @@ const (
 	maxDecodeImagePixels    = 50_000_000
 )
 
+// CheckImageHeaderSize は画像ヘッダ (DecodeConfig) だけを読んで寸法上限を検査する。
+// #158 の maxImageDimension (8192) をフルデコード前に適用し、圧縮爆弾的な
+// PNG がピクセルバッファを確保する前に修復可能なエラーで弾く (Issue #273)。
+// ヘッダが読めない場合は nil を返し、後続の image.Decode に任せる。
+func CheckImageHeaderSize(data []byte, label string) error {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	if cfg.Width > maxImageDimension || cfg.Height > maxImageDimension {
+		return fmt.Errorf("%s is %dx%d; maximum supported dimension is %d, resize the images before comparison", label, cfg.Width, cfg.Height, maxImageDimension)
+	}
+	return nil
+}
+
 // ValidateImageSizeLimit はヘッダだけ読んで幅・高さを確認し、上限を超えていれば
-// フルデコードせずエラーを返す。ヘッダが読めない場合は nil を返し、後続の
-// image.Decode に既存の形式・破損エラーを任せる。
+// フルデコードせずエラーを返す。先に CheckImageHeaderSize (8192) を適用し、
+// 各辺が比較上限内でも総画素が大きすぎる画像は #237 の画素上限で弾く。
+// ヘッダが読めない場合は nil を返し、後続の image.Decode に既存の形式・破損エラーを任せる。
 func ValidateImageSizeLimit(data []byte, label string) error {
+	if err := CheckImageHeaderSize(data, label); err != nil {
+		return err
+	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil
