@@ -412,7 +412,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		} else {
 			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
-			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			bestWeb := wNodes[bestMatchIdx]
+			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, fn.X, fn.Y, fn.W, fn.H, bestWeb.X, bestWeb.Y, bestWeb.W, bestWeb.H, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
 			mismatchedNodes = append(mismatchedNodes, MismatchedNode{
 				FigmaName:   fn.Name,
 				WebSelector: bestMatchSelector,
