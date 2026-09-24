@@ -520,6 +520,23 @@ func TestLayoutTree_UnmatchedIgnoreRegions(t *testing.T) {
 	if len(resultMixed.UnmatchedIgnoreRegions) != 1 || resultMixed.UnmatchedIgnoreRegions[0] != "10,800,50,50" {
 		t.Errorf("Expected unmatched_ignore_regions=[10,800,50,50] (miss only), got %v", resultMixed.UnmatchedIgnoreRegions)
 	}
+
+	// A covering region excludes every node (skipped) while a miss is still
+	// reported — unmatched_ignore_regions is independent of the skipped path.
+	coverAndMiss := []Region{
+		{X: 0, Y: 0, W: 2000, H: 2000},
+		{X: 10, Y: 800, W: 50, H: 50},
+	}
+	resultSkipped, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, coverAndMiss)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if resultSkipped.Status != "skipped" {
+		t.Errorf("Expected status 'skipped' when a covering region excludes all nodes, got '%s'", resultSkipped.Status)
+	}
+	if len(resultSkipped.UnmatchedIgnoreRegions) != 1 || resultSkipped.UnmatchedIgnoreRegions[0] != "10,800,50,50" {
+		t.Errorf("Expected unmatched_ignore_regions=[10,800,50,50] on skipped, got %v", resultSkipped.UnmatchedIgnoreRegions)
+	}
 }
 
 // TestLayoutTree_IgnoreNodesWildcard verifies that ignore_nodes entries ending
