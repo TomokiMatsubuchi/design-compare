@@ -1711,6 +1711,35 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Errorf("ignore_region=%q: expected no unmatched_ignore_regions, got %v", c.region, result["unmatched_ignore_regions"])
 			}
 		}
+
+		// 全件除外 (skipped) でも、1件も当たらない領域は unmatched_ignore_regions に残る。
+		reqSkipped := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "layout_tree",
+					"figma_layout":  figmaLayout,
+					"web_layout":    webLayout,
+					"threshold":     0.15,
+					"ignore_region": "0,0,2000,2000;9000,9000,50,50",
+				},
+			},
+		}
+		resSkipped, err := compareDesignHandler(context.Background(), reqSkipped)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resSkipped.IsError {
+			t.Fatalf("Expected no error for skipped unmatched ignore_region, got content=%v", resSkipped.Content[0].(mcp.TextContent).Text)
+		}
+		var skippedResult map[string]interface{}
+		json.Unmarshal([]byte(resSkipped.Content[0].(mcp.TextContent).Text), &skippedResult)
+		if skippedResult["status"] != "skipped" {
+			t.Errorf("expected status=skipped, got %v", skippedResult["status"])
+		}
+		gotSkipped, ok := skippedResult["unmatched_ignore_regions"].([]interface{})
+		if !ok || len(gotSkipped) != 1 || gotSkipped[0] != "9000,9000,50,50" {
+			t.Errorf("expected unmatched_ignore_regions=[9000,9000,50,50] on skipped, got %v", skippedResult["unmatched_ignore_regions"])
+		}
 	})
 
 	// =================================================================
