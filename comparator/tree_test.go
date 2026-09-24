@@ -287,6 +287,17 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if !found {
 			t.Errorf("Expected a detail stating the geometric diff exceeds tolerance, got details: %v", result.Details)
 		}
+		bboxLine := "figma: x=0 y=0 w=100 h=100 / web: x=50 y=0 w=100 h=100"
+		var foundBBox bool
+		for _, d := range result.Details {
+			if strings.Contains(d, bboxLine) {
+				foundBBox = true
+				break
+			}
+		}
+		if !foundBBox {
+			t.Errorf("Expected a detail containing absolute bboxes %q, got details: %v", bboxLine, result.Details)
+		}
 		if len(result.MismatchedNodes) != 1 {
 			t.Fatalf("Expected 1 mismatched_nodes entry, got %#v", result.MismatchedNodes)
 		}
@@ -300,8 +311,8 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 			t.Errorf("Expected dx=%g dy=%g dw=%g dh=%g diff=%g, got dx=%g dy=%g dw=%g dh=%g diff=%g",
 				wantDX, wantDY, wantDW, wantDH, wantDiff, mn.DX, mn.DY, mn.DW, mn.DH, mn.Diff)
 		}
-		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
-			mn.Diff, 0.15, mn.DX, mn.DY, mn.DW, mn.DH)
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+			mn.Diff, 0.15, 0.0, 0.0, 100.0, 100.0, 50.0, 0.0, 100.0, 100.0, mn.DX, mn.DY, mn.DW, mn.DH)
 		var detailsMatch bool
 		for _, d := range result.Details {
 			if strings.Contains(d, detailLine) {
