@@ -141,7 +141,7 @@ func decodeImageError(what string, err error) error {
 // ignoreRegions のうち画像矩形と全く交差しない領域は draw.Draw の自動クリップ
 // により何もマスクされないため、"x,y,w,h" 形式の文字列リストとして検出結果を
 // 返す (layout_tree モードの unmatched_ignores と同様のフィードバック)。
-// 成功時の 6 番目の戻り値は比較した画像の寸法 ("WxH")。EnsureSameSize 後の
+// 成功時の 6 番目の戻り値は比較した画像の寸法 ("WxH")。ensureSameSize 後の
 // 同一サイズなので A/B を分けず image_size として応答へ echo できる。
 // generateDiff が true かつ diffCount>0 のとき、7 番目に赤ピクセルの連結成分
 // bounding box (最大 10 件) を返す。generateDiff が false なら nil。
@@ -164,7 +164,7 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("web screenshot", err)
 	}
 
-	normA, normB, err := EnsureSameSize(imgA, imgB)
+	normA, normB, err := ensureSameSize(imgA, imgB)
 	if err != nil {
 		return 0, 0, 0, "", nil, "", nil, nil, err
 	}
@@ -179,7 +179,7 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 	}
 	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーや
 	// pixelmatch の差分画像による追加確保の前に修復可能なエラーとして弾く
-	// (EnsureSameSize 済みのため両画像の寸法は同一)。
+	// (ensureSameSize 済みのため両画像の寸法は同一)。
 	if w > maxImageDimension || h > maxImageDimension {
 		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", w, h, maxImageDimension)
 	}
@@ -533,7 +533,7 @@ func regionRect(r Region) (image.Rectangle, bool) {
 }
 
 // mergeOutOfBoundsRegions merges the out-of-bounds region lists detected on
-// each image into one deduplicated list. RunPixelMatch では EnsureSameSize に
+// each image into one deduplicated list. RunPixelMatch では ensureSameSize に
 // より両画像の寸法が同一のため同じリストが渡り、重複除去により 1 つにまとまる。
 // CalculateLayoutSimilarityWithDiff では両画像の寸法が異なり得るため、
 // いずれかの画像で範囲外の領域 (完全にはマスクされない) を報告する。
@@ -673,7 +673,7 @@ func resizeTo16x16Gray(img image.Image) []byte {
 	return gray
 }
 
-// EnsureSameSize verifies that both images have identical dimensions and returns
+// ensureSameSize verifies that both images have identical dimensions and returns
 // them unchanged. Size differences are reported as an error instead of being
 // silently padded, so that strict pixel comparison never counts padding as matches.
 // エラーメッセージには対処ヒント (同一ビューポートサイズ・DPR で両スクショを撮り
@@ -681,7 +681,7 @@ func resizeTo16x16Gray(img image.Image) []byte {
 // 縮小してマクロレイアウトを比較する perceptual モードを使う) を含め、エージェン
 // トが自己解決できるようにする (Retina 環境の DPR 差やフルページ撮影によるサイズ
 // 違いは頻出の失敗のため) (Issue #155)。
-func EnsureSameSize(imgA, imgB image.Image) (image.Image, image.Image, error) {
+func ensureSameSize(imgA, imgB image.Image) (image.Image, image.Image, error) {
 	boundsA := imgA.Bounds()
 	boundsB := imgB.Bounds()
 	wA, hA := boundsA.Dx(), boundsA.Dy()
