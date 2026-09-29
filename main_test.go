@@ -263,6 +263,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := resultMatch["mismatched_nodes"]; ok {
 			t.Errorf("Expected no mismatched_nodes when all pairs match, got %v", resultMatch["mismatched_nodes"])
 		}
+		if _, ok := resultMatch["mismatched_pairs"]; ok {
+			t.Errorf("Expected no mismatched_pairs when all pairs match, got %v", resultMatch["mismatched_pairs"])
+		}
 		// 一致ペアが details に出力されることの検証
 		detailsMatch, ok := resultMatch["details"].([]interface{})
 		if !ok {
@@ -334,6 +337,20 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if !foundGeom {
 			t.Errorf("Expected details to contain %q (same numbers as mismatched_nodes), got %v", detailLine, detailsMismatch)
+		}
+		pairs, ok := resultMismatch["mismatched_pairs"].([]interface{})
+		if !ok || len(pairs) != 1 {
+			t.Fatalf("Expected 1 mismatched_pairs entry, got %v", resultMismatch["mismatched_pairs"])
+		}
+		mp, ok := pairs[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected mismatched_pairs[0] object, got %v", pairs[0])
+		}
+		if mp["figma_name"] != "nav" || mp["web_selector"] != ".nav" || mp["reason"] != "exceeds_tolerance" {
+			t.Errorf("Expected figma_name=nav web_selector=.nav reason=exceeds_tolerance, got %v", mp)
+		}
+		if mp["geometric_diff"] != diff || mp["tolerance"] != 0.15 {
+			t.Errorf("Expected geometric_diff=%v tolerance=0.15, got geometric_diff=%v tolerance=%v", diff, mp["geometric_diff"], mp["tolerance"])
 		}
 
 		// C: 除外項目を指定して一致させるケース (Figma node名 "nav" または Web selector ".nav" を除外)

@@ -201,6 +201,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `unmatched_ignore_regions` | string[] | 非空時のみ | どのノード中心とも重ならない `ignore_region`。 |
 | `extra_web_nodes` | string[] | 非空時のみ | 余分な Web ノードのセレクタ。 |
 | `mismatched_nodes` | object[] | 非空時のみ | tolerance 超過の不一致ペア。`figma_name` / `web_selector` / `diff` / `dx` / `dy` / `dw` / `dh`（`details` の幾何差分と同じ数値）。 |
+| `mismatched_pairs` | object[] | 非空時のみ | 不一致ペア（tolerance 超過と Web 候補枯渇の両方）。`figma_name` / `reason`（`exceeds_tolerance` \| `no_unused_web_elements`）。超過時は `web_selector` / `geometric_diff` / `tolerance` も付く。 |
 | `zero_geometry_warning` | string | 非空時のみ | 過半数ノードの `w`/`h` が 0 のときの誤用検出。 |
 | `unresolved_parent_refs` | string[] | 非空時のみ | 解決できない `parent` 参照。 |
 
