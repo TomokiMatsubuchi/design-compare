@@ -90,6 +90,8 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `web_layout` | string | `layout_tree` / `layout_integrity` | Web DOM ノードリストの JSON 文字列（インライン指定）。`web_layout_path` と排他で、どちらか一方が必須。 |
 | `web_layout_path` | string | `layout_tree` / `layout_integrity` | Web DOM ノードリスト JSON ファイルのローカルパス。`web_layout` と排他。 |
 
+画像の幅・高さはそれぞれ最大 8192px。超過時はリサイズしてから比較する。
+
 ### 比較条件（閾値・除外・ビューポート）
 
 | パラメータ | 型 | 対象モード | 範囲 | デフォルト | 説明 |
