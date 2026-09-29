@@ -74,11 +74,6 @@ func wantHeaderSizeError(label string, w, h int) string {
 		label, w, h, maxImageDimension)
 }
 
-func wantRawHeaderDimensionError(w, h int) string {
-	return fmt.Sprintf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison",
-		w, h, maxImageDimension)
-}
-
 // gifWithDeclaredSize は Logical Screen Descriptor に width/height を宣言した
 // 最小 GIF ヘッダ（画素データなし）。CheckHeaderDimensions のテスト用。
 func gifWithDeclaredSize(width, height uint16) []byte {
@@ -95,35 +90,35 @@ func gifWithDeclaredSize(width, height uint16) []byte {
 func TestCheckHeaderDimensions(t *testing.T) {
 	t.Run("rejects_huge_png_ihdr", func(t *testing.T) {
 		bomb := pngWithDeclaredSize(40000, 40000)
-		err := CheckHeaderDimensions(bomb)
+		err := CheckHeaderDimensions(bomb, "image A")
 		if err == nil {
 			t.Fatal("expected CheckHeaderDimensions to reject 40000x40000 PNG")
 		}
-		if got, want := err.Error(), wantRawHeaderDimensionError(40000, 40000); got != want {
+		if got, want := err.Error(), wantHeaderSizeError("image A", 40000, 40000); got != want {
 			t.Errorf("error: got %q want %q", got, want)
 		}
 	})
 
 	t.Run("rejects_huge_gif_screen", func(t *testing.T) {
 		bomb := gifWithDeclaredSize(40000, 1)
-		err := CheckHeaderDimensions(bomb)
+		err := CheckHeaderDimensions(bomb, "image B")
 		if err == nil {
 			t.Fatal("expected CheckHeaderDimensions to reject 40000x1 GIF")
 		}
-		if got, want := err.Error(), wantRawHeaderDimensionError(40000, 1); got != want {
+		if got, want := err.Error(), wantHeaderSizeError("image B", 40000, 1); got != want {
 			t.Errorf("error: got %q want %q", got, want)
 		}
 	})
 
 	t.Run("allows_normal_png", func(t *testing.T) {
 		normal := encodePNGBytes(t, image.NewRGBA(image.Rect(0, 0, 32, 24)))
-		if err := CheckHeaderDimensions(normal); err != nil {
+		if err := CheckHeaderDimensions(normal, "image A"); err != nil {
 			t.Fatalf("normal PNG should pass: %v", err)
 		}
 	})
 
 	t.Run("allows_normal_gif", func(t *testing.T) {
-		if err := CheckHeaderDimensions(gifWithDeclaredSize(100, 80)); err != nil {
+		if err := CheckHeaderDimensions(gifWithDeclaredSize(100, 80), "image A"); err != nil {
 			t.Fatalf("normal GIF header should pass: %v", err)
 		}
 	})
@@ -131,16 +126,26 @@ func TestCheckHeaderDimensions(t *testing.T) {
 	t.Run("allows_jpeg_without_header_parse", func(t *testing.T) {
 		// JPEG は対象外。SOI だけの不完全データでもエラーにせず後段に任せる。
 		jpegSOI := []byte{0xff, 0xd8, 0xff, 0xe0}
-		if err := CheckHeaderDimensions(jpegSOI); err != nil {
+		if err := CheckHeaderDimensions(jpegSOI, "image A"); err != nil {
 			t.Fatalf("JPEG stub should not be rejected by header check: %v", err)
 		}
 	})
 
+	t.Run("ignores_malformed_ihdr_length", func(t *testing.T) {
+		// IHDR のチャンク長が 13 でない壊れた PNG は、オフセットの数値を
+		// 寸法と誤認せず後段の DecodeConfig に委ねる (Issue #287 review)。
+		bad := pngWithDeclaredSize(40000, 40000)
+		binary.BigEndian.PutUint32(bad[8:12], 8) // 不正な IHDR チャンク長
+		if err := CheckHeaderDimensions(bad, "image A"); err != nil {
+			t.Errorf("malformed IHDR length: got %v want nil", err)
+		}
+	})
+
 	t.Run("short_or_unknown_is_nil", func(t *testing.T) {
-		if err := CheckHeaderDimensions([]byte("not an image")); err != nil {
+		if err := CheckHeaderDimensions([]byte("not an image"), "image A"); err != nil {
 			t.Errorf("unknown bytes: got %v want nil", err)
 		}
-		if err := CheckHeaderDimensions(pngSignature[:4]); err != nil {
+		if err := CheckHeaderDimensions(pngSignature[:4], "image A"); err != nil {
 			t.Errorf("short PNG sig: got %v want nil", err)
 		}
 	})

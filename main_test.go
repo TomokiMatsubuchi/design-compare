@@ -4976,7 +4976,10 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 // 通ることを検証する (Issue #287)。
 func TestResolveImageInput_HeaderDimensions(t *testing.T) {
 	tmpDir := t.TempDir()
-	wantBomb := "image is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"
+	// エラー文面には入力元のパラメータ名が入り、path / base64 のどちらで
+	// 超過したかを区別できる。
+	wantBombPath := "image_path_a is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"
+	wantBombBase64 := "image_a_base64 is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"
 
 	t.Run("rejects_bomb_png_path", func(t *testing.T) {
 		bombPath := filepath.Join(tmpDir, "bomb.png")
@@ -4987,8 +4990,8 @@ func TestResolveImageInput_HeaderDimensions(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected resolveImageInput to reject bomb PNG path")
 		}
-		if got := err.Error(); got != wantBomb {
-			t.Errorf("error: got %q want %q", got, wantBomb)
+		if got := err.Error(); got != wantBombPath {
+			t.Errorf("error: got %q want %q", got, wantBombPath)
 		}
 	})
 
@@ -4998,8 +5001,8 @@ func TestResolveImageInput_HeaderDimensions(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected resolveImageInput to reject bomb PNG base64")
 		}
-		if got := err.Error(); got != wantBomb {
-			t.Errorf("error: got %q want %q", got, wantBomb)
+		if got := err.Error(); got != wantBombBase64 {
+			t.Errorf("error: got %q want %q", got, wantBombBase64)
 		}
 	})
 
@@ -5465,12 +5468,13 @@ func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
 		want         string
 	}{
 		// 8192 超の IHDR は resolveImageInput の CheckHeaderDimensions で弾く (Issue #287)。
-		{"oversized_image_A", hugePath, validPath, "Perceptual mode input error: image is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
-		{"oversized_image_B", validPath, hugePath, "Perceptual mode input error: image is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
+		// エラー文面には入力パラメータ名 (image_path_a / image_path_b) が入り、A/B を区別できる。
+		{"oversized_image_A", hugePath, validPath, "Perceptual mode input error: image_path_a is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
+		{"oversized_image_B", validPath, hugePath, "Perceptual mode input error: image_path_b is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
 		// 各辺は 8192 以内だが総画素超過は後段 ValidateImageSizeLimit (#237)。
 		{"over_total_pixels_A", pixelsPath, validPath, "image A is 8000x7000 (56000000 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
-		{"bomb_ihdr_40000_A", bombPath, validPath, "Perceptual mode input error: image is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
-		{"bomb_ihdr_40000_B", validPath, bombPath, "Perceptual mode input error: image is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
+		{"bomb_ihdr_40000_A", bombPath, validPath, "Perceptual mode input error: image_path_a is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
+		{"bomb_ihdr_40000_B", validPath, bombPath, "Perceptual mode input error: image_path_b is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{
