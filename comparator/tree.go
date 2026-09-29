@@ -40,6 +40,17 @@ type MismatchedNode struct {
 	DH          float64 `json:"dh"`
 }
 
+// MismatchPair は layout_tree の不一致 2 分岐（tolerance 超過 / Web 候補枯渇）を
+// 機械可読に返す。details の free-text と同じ対象を文字列パースなしで特定できる。
+// Reason は "exceeds_tolerance" または "no_unused_web_elements"。
+type MismatchPair struct {
+	FigmaName     string  `json:"figma_name"`
+	WebSelector   string  `json:"web_selector,omitempty"` // 候補枯渇時は空
+	GeometricDiff float64 `json:"geometric_diff,omitempty"`
+	Tolerance     float64 `json:"tolerance,omitempty"`
+	Reason        string  `json:"reason"`
+}
+
 type LayoutTreeResult struct {
 	MatchRate              float64          `json:"match_rate"`
 	Status                 string           `json:"status"`
@@ -53,6 +64,7 @@ type LayoutTreeResult struct {
 	ExtraWebCount          int              `json:"extra_web_count"`
 	ExtraWebNodes          []string         `json:"extra_web_nodes,omitempty"`
 	MismatchedNodes        []MismatchedNode `json:"mismatched_nodes,omitempty"`
+	MismatchedPairs        []MismatchPair   `json:"mismatched_pairs,omitempty"`
 	ZeroGeometryWarning    string           `json:"zero_geometry_warning,omitempty"`
 	UnresolvedParentRefs   []string         `json:"unresolved_parent_refs,omitempty"`
 	AbsoluteModePairs      int              `json:"absolute_mode_pairs"`
@@ -335,6 +347,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var mismatchDetails []string
 	var extraWebDetails []string
 	var mismatchedNodes []MismatchedNode
+	var mismatchedPairs []MismatchPair
 
 	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
 	usedWeb := make(map[int]bool)
@@ -409,6 +422,10 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			// このとき bestMatchSelector / minDiff は初期値（空文字・math.MaxFloat64）のまま意味を
 			// なさないため、幾何差分ではなく「候補が枯渇した」ことを明示するメッセージを出す。
 			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match any Web element: no unused Web element is left to compare (Web side has fewer elements than the Figma side)", fn.Name))
+			mismatchedPairs = append(mismatchedPairs, MismatchPair{
+				FigmaName: fn.Name,
+				Reason:    "no_unused_web_elements",
+			})
 		} else {
 			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
@@ -422,6 +439,13 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				DY:          bestDiffY,
 				DW:          bestDiffW,
 				DH:          bestDiffH,
+			})
+			mismatchedPairs = append(mismatchedPairs, MismatchPair{
+				FigmaName:     fn.Name,
+				WebSelector:   bestMatchSelector,
+				GeometricDiff: minDiff,
+				Tolerance:     tolerance,
+				Reason:        "exceeds_tolerance",
 			})
 		}
 	}
@@ -480,6 +504,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		ExtraWebCount:          len(extraWebSelectors),
 		ExtraWebNodes:          extraWebSelectors,
 		MismatchedNodes:        mismatchedNodes,
+		MismatchedPairs:        mismatchedPairs,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
 		AbsoluteModePairs:      absoluteModePairs,

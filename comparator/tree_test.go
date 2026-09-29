@@ -259,6 +259,14 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if len(result.MismatchedNodes) != 0 {
 			t.Errorf("Expected no mismatched_nodes when no unused Web element is left, got %#v", result.MismatchedNodes)
 		}
+		// 候補枯渇は mismatched_pairs に reason=no_unused_web_elements で載る。
+		if len(result.MismatchedPairs) != 1 {
+			t.Fatalf("Expected 1 mismatched_pairs entry, got %#v", result.MismatchedPairs)
+		}
+		mp := result.MismatchedPairs[0]
+		if mp.FigmaName != "childB" || mp.Reason != "no_unused_web_elements" || mp.WebSelector != "" || mp.GeometricDiff != 0 || mp.Tolerance != 0 {
+			t.Errorf("Expected figma_name=childB reason=no_unused_web_elements empty selector/diff/tolerance, got %#v", mp)
+		}
 	})
 
 	t.Run("tolerance_exceeded", func(t *testing.T) {
@@ -322,6 +330,16 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		}
 		if !detailsMatch {
 			t.Errorf("Expected details to contain %q (same numbers as mismatched_nodes), got %v", detailLine, result.Details)
+		}
+		if len(result.MismatchedPairs) != 1 {
+			t.Fatalf("Expected 1 mismatched_pairs entry, got %#v", result.MismatchedPairs)
+		}
+		mp := result.MismatchedPairs[0]
+		if mp.FigmaName != "hero" || mp.WebSelector != ".hero" || mp.Reason != "exceeds_tolerance" {
+			t.Errorf("Expected figma_name=hero web_selector=.hero reason=exceeds_tolerance, got %#v", mp)
+		}
+		if mp.GeometricDiff != wantDiff || mp.Tolerance != 0.15 {
+			t.Errorf("Expected geometric_diff=%g tolerance=0.15, got geometric_diff=%g tolerance=%g", wantDiff, mp.GeometricDiff, mp.Tolerance)
 		}
 	})
 }
