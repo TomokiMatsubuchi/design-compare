@@ -11,6 +11,8 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"image/gif"
+	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -4969,6 +4971,71 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 	}
 }
 
+// TestResolveImageInput_HeaderDimensions は path / base64 両入力で、巨大寸法を
+// IHDR に書いた最小 PNG がデコード前に拒否され、通常サイズの PNG/GIF/JPEG は
+// 通ることを検証する (Issue #287)。
+func TestResolveImageInput_HeaderDimensions(t *testing.T) {
+	tmpDir := t.TempDir()
+	wantBomb := "image is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"
+
+	t.Run("rejects_bomb_png_path", func(t *testing.T) {
+		bombPath := filepath.Join(tmpDir, "bomb.png")
+		if err := os.WriteFile(bombPath, pngWithDeclaredSize(40000, 40000), 0o644); err != nil {
+			t.Fatalf("write bomb png: %v", err)
+		}
+		_, err := resolveImageInput(bombPath, "", "image_path_a", "image_a_base64")
+		if err == nil {
+			t.Fatal("expected resolveImageInput to reject bomb PNG path")
+		}
+		if got := err.Error(); got != wantBomb {
+			t.Errorf("error: got %q want %q", got, wantBomb)
+		}
+	})
+
+	t.Run("rejects_bomb_png_base64", func(t *testing.T) {
+		b64 := base64.StdEncoding.EncodeToString(pngWithDeclaredSize(40000, 40000))
+		_, err := resolveImageInput("", b64, "image_path_a", "image_a_base64")
+		if err == nil {
+			t.Fatal("expected resolveImageInput to reject bomb PNG base64")
+		}
+		if got := err.Error(); got != wantBomb {
+			t.Errorf("error: got %q want %q", got, wantBomb)
+		}
+	})
+
+	t.Run("allows_normal_png_gif_jpeg", func(t *testing.T) {
+		pngPath := saveTempImage(t, tmpDir, "ok.png", generateSolidImage(16, 16, color.White))
+		if _, err := resolveImageInput(pngPath, "", "image_path_a", "image_a_base64"); err != nil {
+			t.Fatalf("normal PNG path: %v", err)
+		}
+
+		var gifBuf bytes.Buffer
+		gifImg := image.NewPaletted(image.Rect(0, 0, 8, 8), color.Palette{color.White, color.Black})
+		if err := gif.Encode(&gifBuf, gifImg, nil); err != nil {
+			t.Fatalf("encode GIF: %v", err)
+		}
+		gifPath := filepath.Join(tmpDir, "ok.gif")
+		if err := os.WriteFile(gifPath, gifBuf.Bytes(), 0o644); err != nil {
+			t.Fatalf("write gif: %v", err)
+		}
+		if _, err := resolveImageInput(gifPath, "", "image_path_a", "image_a_base64"); err != nil {
+			t.Fatalf("normal GIF path: %v", err)
+		}
+
+		var jpegBuf bytes.Buffer
+		if err := jpeg.Encode(&jpegBuf, generateSolidImage(12, 12, color.White), &jpeg.Options{Quality: 90}); err != nil {
+			t.Fatalf("encode JPEG: %v", err)
+		}
+		jpegPath := filepath.Join(tmpDir, "ok.jpg")
+		if err := os.WriteFile(jpegPath, jpegBuf.Bytes(), 0o644); err != nil {
+			t.Fatalf("write jpeg: %v", err)
+		}
+		if _, err := resolveImageInput(jpegPath, "", "image_path_a", "image_a_base64"); err != nil {
+			t.Fatalf("normal JPEG path: %v", err)
+		}
+	})
+}
+
 func reqWithArgs(args map[string]any) mcp.CallToolRequest {
 	return mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
 }
@@ -5397,11 +5464,13 @@ func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
 		pathA, pathB string
 		want         string
 	}{
-		{"oversized_image_A", hugePath, validPath, "image A is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
-		{"oversized_image_B", validPath, hugePath, "image B is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
+		// 8192 超の IHDR は resolveImageInput の CheckHeaderDimensions で弾く (Issue #287)。
+		{"oversized_image_A", hugePath, validPath, "Perceptual mode input error: image is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
+		{"oversized_image_B", validPath, hugePath, "Perceptual mode input error: image is 30001x1; maximum supported dimension is 8192, resize the images before comparison"},
+		// 各辺は 8192 以内だが総画素超過は後段 ValidateImageSizeLimit (#237)。
 		{"over_total_pixels_A", pixelsPath, validPath, "image A is 8000x7000 (56000000 pixels); maximum is 30000px per side and 50000000 total pixels, resize or crop the images before comparison"},
-		{"bomb_ihdr_40000_A", bombPath, validPath, "image A is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
-		{"bomb_ihdr_40000_B", validPath, bombPath, "image B is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
+		{"bomb_ihdr_40000_A", bombPath, validPath, "Perceptual mode input error: image is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
+		{"bomb_ihdr_40000_B", validPath, bombPath, "Perceptual mode input error: image is 40000x40000; maximum supported dimension is 8192, resize the images before comparison"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{

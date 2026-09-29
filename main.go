@@ -151,6 +151,8 @@ func newDesignCompareMCPServer() *server.MCPServer {
 // diff_image responses is stripped before decoding; a bare base64 string is
 // accepted unchanged. ASCII whitespace in the payload (newlines, spaces, tabs)
 // is removed so MIME-style wrapped copies still decode.
+// path / base64 のどちらでも、返却前に PNG/GIF ヘッダ寸法を検査する
+// (CheckHeaderDimensions)。巨大 IHDR 宣言の PNG が image.Decode 到達前に弾かれる。
 func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
 	switch {
 	case pathValue != "" && base64Value != "":
@@ -171,11 +173,17 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode %s: %w", base64Param, err)
 		}
+		if err := comparator.CheckHeaderDimensions(data); err != nil {
+			return nil, err
+		}
 		return data, nil
 	case pathValue != "":
 		data, err := os.ReadFile(pathValue)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read %s: %w", pathParam, err)
+		}
+		if err := comparator.CheckHeaderDimensions(data); err != nil {
+			return nil, err
 		}
 		return data, nil
 	default:

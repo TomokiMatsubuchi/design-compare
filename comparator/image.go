@@ -3,6 +3,7 @@ package comparator
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -76,6 +77,55 @@ const (
 	maxDecodeImageDimension = 30000
 	maxDecodeImagePixels    = 50_000_000
 )
+
+// pngSignature は PNG ファイルシグネチャ (8 バイト)。IHDR の幅・高さは
+// シグネチャ直後のチャンク先頭からオフセット 16–23 のビッグエンディアン。
+var pngSignature = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+
+// CheckHeaderDimensions は PNG / GIF の先頭数十バイトだけを読んで寸法上限を
+// 検査する。image.Decode / DecodeConfig を呼ばないため、IHDR に巨大寸法を
+// 宣言した数 KB の PNG がデコーダ内でラスタ全体を確保する前に弾ける
+// (Issue #287)。JPEG は SOF 走査が必要なため対象外（後段の DecodeConfig /
+// 展開後チェックがバックストップ）。PNG/GIF 以外、またはヘッダ不足は nil。
+func CheckHeaderDimensions(data []byte) error {
+	if w, h, ok := pngHeaderDimensions(data); ok {
+		return headerDimensionError(w, h)
+	}
+	if w, h, ok := gifHeaderDimensions(data); ok {
+		return headerDimensionError(w, h)
+	}
+	return nil
+}
+
+func headerDimensionError(w, h int) error {
+	if w > maxImageDimension || h > maxImageDimension {
+		return fmt.Errorf("image is %dx%d; maximum supported dimension is %d, resize the images before comparison", w, h, maxImageDimension)
+	}
+	return nil
+}
+
+func pngHeaderDimensions(data []byte) (w, h int, ok bool) {
+	// signature(8) + length(4) + "IHDR"(4) + width(4) + height(4) = 24
+	if len(data) < 24 || !bytes.Equal(data[:8], pngSignature) {
+		return 0, 0, false
+	}
+	if string(data[12:16]) != "IHDR" {
+		return 0, 0, false
+	}
+	return int(binary.BigEndian.Uint32(data[16:20])), int(binary.BigEndian.Uint32(data[20:24])), true
+}
+
+func gifHeaderDimensions(data []byte) (w, h int, ok bool) {
+	// "GIF87a"/"GIF89a"(6) + width LE(2) + height LE(2) = 10
+	if len(data) < 10 {
+		return 0, 0, false
+	}
+	sig := string(data[:6])
+	if sig != "GIF87a" && sig != "GIF89a" {
+		return 0, 0, false
+	}
+	return int(binary.LittleEndian.Uint16(data[6:8])), int(binary.LittleEndian.Uint16(data[8:10])), true
+}
 
 // CheckImageHeaderSize は画像ヘッダ (DecodeConfig) だけを読んで寸法上限を検査する。
 // #158 の maxImageDimension (8192) をフルデコード前に適用し、圧縮爆弾的な
