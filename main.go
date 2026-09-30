@@ -860,6 +860,14 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if hasMinMatch {
 			details += fmt.Sprintf(" Match rate %.2f%% must be at least %.2f%%.", matchRate, minMatchRate)
 		}
+		detailLines := []string{details}
+		// min_match は満たしても max_diff_pixels 既定 0 で mismatch になる罠を
+		// details にも明示する (Issue #289)。判定ロジックは変えず、エージェントが
+		// 一致率合格なのに再撮影ループへ入るのを防ぐ。
+		_, hasMaxDiffPixels := args["max_diff_pixels"]
+		if hasMinMatch && !hasMaxDiffPixels && status == "mismatch" && comparator.RoundMatchRateDisplay(matchRate) >= minMatchRate {
+			detailLines = append(detailLines, "Match-rate condition passed, but max_diff_pixels defaults to 0 and only allows 0 differing pixels. Explicitly set max_diff_pixels to tolerate a small number of differences.")
+		}
 
 		// 実効パラメータ (threshold / max_diff_pixels) を応答に含め、どの閾値で判定されたかを
 		// 検証可能にする (layout_tree の effective_threshold / pass_rate と同じ方針)。
@@ -873,7 +881,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"image_size":          imageSize,
 			"effective_threshold": threshold,
 			"max_diff_pixels":     maxDiffPixels,
-			"details":             []string{details},
+			"details":             detailLines,
 			"diff_image":          diffImage,
 			"ignored_regions":     len(ignoreRegions),
 		}
@@ -889,10 +897,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 両画像が単色ベタ塗りで diff_pixels=0 の空洞比較も同じフィールドへ載せる
 		// (Issue #227)。非空時のみ含めるのは perceptual と同じ。
 		var respWarnings []string
-		if hasMinMatch {
-			if _, hasMaxDiffPixels := args["max_diff_pixels"]; !hasMaxDiffPixels {
-				respWarnings = append(respWarnings, "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)")
-			}
+		if hasMinMatch && !hasMaxDiffPixels {
+			respWarnings = append(respWarnings, "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)")
 		}
 		respWarnings = append(respWarnings, warnings...)
 		if len(respWarnings) > 0 {

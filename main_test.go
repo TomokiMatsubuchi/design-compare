@@ -3837,6 +3837,102 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// min_match のみ指定し一致率は合格だが max_diff_pixels 既定 0 で mismatch のとき、
+	// details に罠のヒントを載せる (Issue #289)。判定結果自体は変えない。
+	t.Run("StrictMode_MinMatch_DefaultMaxDiffPixels_DetailsHint", func(t *testing.T) {
+		const wantHint = "Match-rate condition passed, but max_diff_pixels defaults to 0 and only allows 0 differing pixels. Explicitly set max_diff_pixels to tolerate a small number of differences."
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+					"min_match":    50.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "mismatch" {
+			t.Fatalf("Expected mismatch, got status=%v", result["status"])
+		}
+		matchRate, ok := result["match_rate_value"].(float64)
+		if !ok || matchRate < 50.0 {
+			t.Fatalf("Expected match_rate_value >= 50, got %v", result["match_rate_value"])
+		}
+		details, ok := result["details"].([]interface{})
+		if !ok || len(details) < 2 {
+			t.Fatalf("Expected details with hint line, got %v", result["details"])
+		}
+		if details[len(details)-1] != wantHint {
+			t.Errorf("Expected details hint %q, got %v", wantHint, details[len(details)-1])
+		}
+
+		// max_diff_pixels を明示して success になるケースではヒントを付けない
+		reqOK := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "strict",
+					"image_path_a":    pathE,
+					"image_path_b":    pathF,
+					"min_match":       50.0,
+					"max_diff_pixels": 100000.0,
+				},
+			},
+		}
+		resOK, err := compareDesignHandler(context.Background(), reqOK)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultOK map[string]interface{}
+		json.Unmarshal([]byte(resOK.Content[0].(mcp.TextContent).Text), &resultOK)
+		if resultOK["status"] != "success" {
+			t.Fatalf("Expected success when max_diff_pixels is set, got status=%v", resultOK["status"])
+		}
+		detailsOK, _ := resultOK["details"].([]interface{})
+		for _, d := range detailsOK {
+			if d == wantHint {
+				t.Errorf("Expected no details hint on success, got %v", detailsOK)
+			}
+		}
+
+		// min_match 自体が不合格ならヒントは付けない (max_diff_pixels の罠ではない)
+		reqRateFail := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathE,
+					"image_path_b": pathF,
+					"min_match":    100.0,
+				},
+			},
+		}
+		resRateFail, err := compareDesignHandler(context.Background(), reqRateFail)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultRateFail map[string]interface{}
+		json.Unmarshal([]byte(resRateFail.Content[0].(mcp.TextContent).Text), &resultRateFail)
+		if resultRateFail["status"] != "mismatch" {
+			t.Fatalf("Expected mismatch when min_match is unmet, got status=%v", resultRateFail["status"])
+		}
+		rateVal, _ := resultRateFail["match_rate_value"].(float64)
+		if comparator.RoundMatchRateDisplay(rateVal) >= 100.0 {
+			t.Fatalf("precondition failed: expected match rate < 100, got %v", rateVal)
+		}
+		detailsRateFail, _ := resultRateFail["details"].([]interface{})
+		for _, d := range detailsRateFail {
+			if d == wantHint {
+				t.Errorf("Expected no details hint when min_match itself fails, got %v", detailsRateFail)
+			}
+		}
+	})
+
 	// min_match のみ指定し max_diff_pixels を省略すると既定 0 が判定を支配する。
 	// status / match_rate は変えず、warnings で呼び出し側に気付かせる (Issue #206)
 	t.Run("StrictMode_MinMatch_DefaultMaxDiffPixels_Warning", func(t *testing.T) {
