@@ -70,10 +70,10 @@ func newDesignCompareMCPServer() *server.MCPServer {
 			mcp.Description("Path to target image B (required for 'perceptual' and 'strict' modes unless image_b_base64 is given; mutually exclusive with image_b_base64). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
 		),
 		mcp.WithString("image_a_base64",
-			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
+			mcp.Description("Base64-encoded reference image A (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_a). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode. Standard base64 alphabet only; padding ('=') may be omitted"),
 		),
 		mcp.WithString("image_b_base64",
-			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode"),
+			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode. Standard base64 alphabet only; padding ('=') may be omitted"),
 		),
 		mcp.WithString("figma_layout",
 			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array/object is also accepted and marshaled to the same string form. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
@@ -150,7 +150,9 @@ func newDesignCompareMCPServer() *server.MCPServer {
 // returned by screenshot tools (e.g. chrome-devtools-mcp) or by this tool's own
 // diff_image responses is stripped before decoding; a bare base64 string is
 // accepted unchanged. ASCII whitespace in the payload (newlines, spaces, tabs)
-// is removed so MIME-style wrapped copies still decode.
+// is removed so MIME-style wrapped copies still decode. After stripping, decode
+// uses StdEncoding first and falls back to RawStdEncoding so padding may be
+// omitted (LLM / screenshot-tool output). URL-safe alphabet is not accepted.
 // path / base64 のどちらでも、返却前に PNG/GIF ヘッダ寸法を検査する
 // (CheckHeaderDimensions)。巨大 IHDR 宣言の PNG が image.Decode 到達前に弾かれる。
 // エラーには入力パラメータ名を label として渡し、A/B どちらの入力かを文面に残す。
@@ -168,11 +170,17 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 				payload = payload[i+len(";base64,"):]
 			}
 		}
-		// ログ等からコピーした MIME 折り返し (改行・スペース) を除去してからデコードする。
+		// ログ等からコピーした MIME 折り返し (改行・スペース・タブ) を除去してからデコードする。
 		payload = strings.Join(strings.Fields(payload), "")
 		data, err := base64.StdEncoding.DecodeString(payload)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode %s: %w", base64Param, err)
+			// LLM や一部スクショツールはパディング (=) を省略することがある。
+			if d2, err2 := base64.RawStdEncoding.DecodeString(payload); err2 == nil {
+				data, err = d2, nil
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w (standard base64 required; padding may be omitted)", base64Param, err)
 		}
 		if err := comparator.CheckHeaderDimensions(data, base64Param); err != nil {
 			return nil, err

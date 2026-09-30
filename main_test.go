@@ -3186,6 +3186,36 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// パディング省略の実 PNG base64 でも strict 比較が成功する (Issue #293)
+	t.Run("Strict_Base64_Unpadded_Success", func(t *testing.T) {
+		padded := encodePNGBase64(t, imgA)
+		unpadded := strings.TrimRight(padded, "=")
+		if unpadded == padded {
+			t.Fatal("PNG base64 unexpectedly needs no padding")
+		}
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":           "strict",
+					"image_a_base64": unpadded,
+					"image_b_base64": unpadded,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("expected success with unpadded PNG base64, got error: %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected strict unpadded base64 success, got status=%v", result["status"])
+		}
+	})
+
 	// 本ツールの diff_image が返す data URI 形式 ("data:image/png;base64,...") を
 	// そのまま再入力できることを検証する (Issue #127: ラウンドトリップ)
 	t.Run("Perceptual_Base64_DataURI_Input", func(t *testing.T) {
@@ -5046,6 +5076,29 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 		t.Errorf("whitespace-wrapped base64 decoded to %q, want %q", got, payload)
 	}
 
+	// パディング省略でも同じバイト列になる (Issue #293)
+	unpadded := strings.TrimRight(plain, "=")
+	if unpadded == plain {
+		t.Fatal("test payload unexpectedly needs no padding")
+	}
+	got, err = resolveImageInput("", unpadded, "image_path_a", "image_a_base64")
+	if err != nil {
+		t.Fatalf("unpadded base64 should decode: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("unpadded base64 decoded to %q, want %q", got, payload)
+	}
+
+	// スペース・タブ混じりでも成功する (Issue #293)
+	spaced := plain[:4] + " \t" + plain[4:]
+	got, err = resolveImageInput("", spaced, "image_path_a", "image_a_base64")
+	if err != nil {
+		t.Fatalf("space/tab-mixed base64 should decode: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("space/tab-mixed base64 decoded to %q, want %q", got, payload)
+	}
+
 	// data URI はプレフィックスが除去されて同じバイト列になる
 	got, err = resolveImageInput("", dataURI, "image_path_a", "image_a_base64")
 	if err != nil {
@@ -5064,6 +5117,17 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 	// 不正な base64 は従来通りエラーになる
 	if _, err := resolveImageInput("", "not-base64", "image_path_a", "image_a_base64"); err == nil {
 		t.Error("expected error for invalid base64, got nil")
+	} else if !strings.Contains(err.Error(), "standard base64 required") {
+		t.Errorf("expected standard-base64 hint in error, got %v", err)
+	}
+
+	// URL-safe 文字 (- / _) は拒否する (Issue #293)
+	urlSafe := strings.NewReplacer("+", "-", "/", "_").Replace(plain)
+	if urlSafe == plain {
+		urlSafe = "A-_B" + plain[4:]
+	}
+	if _, err := resolveImageInput("", urlSafe, "image_path_a", "image_a_base64"); err == nil {
+		t.Error("expected error for URL-safe base64, got nil")
 	}
 }
 
