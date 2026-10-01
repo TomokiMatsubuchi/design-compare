@@ -2555,7 +2555,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
-	// サイズ差だけでは ignore_region 座標の取り違えは起きないため、当該 warning は出さない
+	// サイズ差だけでは ignore_region 座標の取り違えは起きないため、当該 warning は出さない。
+	// details の ignore_region note も未指定時は出さない (Issue #305)。
 	t.Run("Perceptual_DifferentImageSizes_NoIgnoreRegion_NoSizeWarning", func(t *testing.T) {
 		pathSmallWhite := saveTempImage(t, tmpDir, "imageSmallWhiteNoRegion.png", generateSolidImage(100, 100, color.White))
 		req := mcp.CallToolRequest{
@@ -2575,6 +2576,14 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 		if got := result["ignored_regions"]; got != float64(0) {
 			t.Errorf("Expected ignored_regions=0, got %v", got)
+		}
+		if details, ok := result["details"].([]interface{}); ok {
+			for _, d := range details {
+				s, _ := d.(string)
+				if strings.Contains(s, "ignore_region") {
+					t.Errorf("Expected no ignore_region note in details without ignore_region, got %v", details)
+				}
+			}
 		}
 		if warnings, ok := result["warnings"].([]interface{}); ok {
 			for _, w := range warnings {
