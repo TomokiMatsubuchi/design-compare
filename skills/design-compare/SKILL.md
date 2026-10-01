@@ -70,7 +70,7 @@ A pixel-perfect match against Figma desktop/mobile frames does **NOT** prove tha
 ### Step 6: Analyze Results and Fix Code
 - Check the output `status` and, for Figma-compare modes, `match_rate`.
 - In `layout_tree` mode, missing required keys (`id`/`name`/`selector`/`x`/`y`/`w`/`h`) or empty identifiers are input errors. If `zero_geometry_warning` is present despite valid keys, most nodes have explicit `w`/`h` of 0 — do not treat a 100% match as valid until the geometry is corrected.
-- If discrepancies exist, inspect the output details and the `diff_image` field (a base64 PNG data URI returned in the response; no temporary file is written). For how the visualization is colored, see README §1. Then correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
+- If discrepancies exist, inspect the output details and the `diff_image` field (perceptual / strict modes only; layout_tree results have no diff image — rely on `details` instead; when present it is a base64 PNG data URI returned in the response; no temporary file is written). For how the visualization is colored, see README §1. Then correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
 
 ## Guardrails & Best Practices
 
