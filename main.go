@@ -734,13 +734,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		// サイズが異なる画像では同じ x,y,w,h が各画像の絶対ピクセルとして
 		// マスクされるため、割合的に別領域になることを呼び出し側へ伝える。
+		// ignore_region 未指定時はマスクが発生しないので note / warning も出さない
+		// (Issue #244 / #305)。
 		sizeMismatch := boundsA.Dx() != boundsB.Dx() || boundsA.Dy() != boundsB.Dy()
-		if sizeMismatch {
-			details = append(details, fmt.Sprintf("note: image A is %dx%d, image B is %dx%d; ignore_region is applied in absolute pixels of each image", boundsA.Dx(), boundsA.Dy(), boundsB.Dx(), boundsB.Dy()))
-		}
-		// ignore_region があるときだけ warnings にも出す。サイズ差のみでは
-		// マスク座標の取り違えは起きない (Issue #244)。
 		if len(ignoreRegions) > 0 && sizeMismatch {
+			details = append(details, fmt.Sprintf("note: image A is %dx%d, image B is %dx%d; ignore_region is applied in absolute pixels of each image", boundsA.Dx(), boundsA.Dy(), boundsB.Dx(), boundsB.Dy()))
 			warnings = append(warnings, fmt.Sprintf("ignore_region is applied to each image's own pixel coordinates; image sizes differ (A %dx%d, B %dx%d), so the same region may mask different areas", boundsA.Dx(), boundsA.Dy(), boundsB.Dx(), boundsB.Dy()))
 		}
 		responseMap = map[string]interface{}{
