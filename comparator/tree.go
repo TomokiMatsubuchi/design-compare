@@ -129,9 +129,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 	}
 
-	// width/height などキー名が異なる JSON は Unmarshal が成功したまま
-	// w/h が 0 のノードになる。両側が全零だと差分 0・一致率 100% になるため、
-	// 過半数が零幾何なら非破壊の警告を応答へ載せる（status は変えない）。
+	// width/height など必須キー欠落は parse 時点で入力エラーになる。
+	// 必須キーは揃っているが過半数が明示的な w/h=0 なら、差分 0・一致率 100% に
+	// なり得るため、非破壊の警告を応答へ載せる（status は変えない）。
 	zeroGeometryWarning := zeroGeometryWarningIfMajority(fNodes, wNodes)
 
 	// 親参照用インデックスは ignore フィルタ前の元リストから一度だけ構築する。
@@ -525,6 +525,11 @@ func LimitLayoutTreeDetails(details []string, maxDetails int) []string {
 	return limited
 }
 
+// layout_tree 入力で必須のキー。明示的な 0 は許容し、キー欠落のみ拒否する
+// （id/name/selector の空文字は別途検証する）。
+var requiredFigmaLayoutKeys = []string{"id", "name", "x", "y", "w", "h"}
+var requiredWebLayoutKeys = []string{"selector", "x", "y", "w", "h"}
+
 func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
 	var raws []json.RawMessage
 	if err := json.Unmarshal([]byte(figmaJSON), &raws); err != nil {
@@ -537,6 +542,15 @@ func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
 		}
 		if err := json.Unmarshal(raw, &nodes[i]); err != nil {
 			return nil, fmt.Errorf("failed to parse Figma layout JSON at element %d: %w", i, err)
+		}
+		if err := validateRequiredLayoutKeys(raw, "Figma", i, requiredFigmaLayoutKeys); err != nil {
+			return nil, err
+		}
+		if nodes[i].ID == "" {
+			return nil, fmt.Errorf("Figma layout node at index %d has empty required field 'id'", i)
+		}
+		if nodes[i].Name == "" {
+			return nil, fmt.Errorf("Figma layout node at index %d has empty required field 'name'", i)
 		}
 	}
 	return nodes, nil
@@ -555,8 +569,30 @@ func parseWebLayoutNodes(webJSON string) ([]WebNode, error) {
 		if err := json.Unmarshal(raw, &nodes[i]); err != nil {
 			return nil, fmt.Errorf("failed to parse Web layout JSON at element %d: %w", i, err)
 		}
+		if err := validateRequiredLayoutKeys(raw, "Web", i, requiredWebLayoutKeys); err != nil {
+			return nil, err
+		}
+		if nodes[i].Selector == "" {
+			return nil, fmt.Errorf("Web layout node at index %d has empty required field 'selector'", i)
+		}
 	}
 	return nodes, nil
+}
+
+// validateRequiredLayoutKeys はノード object に必須キーが存在するかを確認する。
+// 値の妥当性（空文字・負のサイズ等）は呼び出し元で別途検証する。
+func validateRequiredLayoutKeys(raw json.RawMessage, side string, index int, keys []string) error {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		// 型 Unmarshal 済みの要素向け。object 以外はここには来ない想定。
+		return fmt.Errorf("%s layout node at index %d is not a JSON object: %w", side, index, err)
+	}
+	for _, key := range keys {
+		if _, ok := obj[key]; !ok {
+			return fmt.Errorf("%s layout node at index %d is missing required field '%s'", side, index, key)
+		}
+	}
+	return nil
 }
 
 func isJSONNull(raw json.RawMessage) bool {

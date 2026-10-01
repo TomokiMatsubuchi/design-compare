@@ -722,24 +722,24 @@ func TestLayoutTree_IgnoredParentKeepsRelativeCoords(t *testing.T) {
 	})
 }
 
-// TestLayoutTree_ZeroGeometryWarning verifies that when layout JSON uses
-// width/height (or other names that do not unmarshal into w/h), most nodes
-// become 0×0. CompareLayoutTrees still returns the same status as before
-// (non-destructive) but sets ZeroGeometryWarning so the silent 100% match
-// is noticeable. A minority of genuine 0×0 nodes must not trigger it.
+// TestLayoutTree_ZeroGeometryWarning verifies that when a majority of nodes
+// have explicit w=0 and h=0, CompareLayoutTrees still returns the same status
+// as before (non-destructive) but sets ZeroGeometryWarning. Missing w/h keys
+// are rejected as input errors (see TestLayoutTree_RequiredFieldsValidation);
+// a minority of genuine 0×0 nodes must not trigger the warning.
 func TestLayoutTree_ZeroGeometryWarning(t *testing.T) {
 	const tolerance = 0.15
 	const passRate = 98.0
 	wantWarning := `Most nodes have zero width/height; check the layout JSON keys are {"id","name","x","y","w","h","parent"}`
 
-	t.Run("width_height_keys_warn_status_unchanged", func(t *testing.T) {
+	t.Run("majority_explicit_zero_warn_status_unchanged", func(t *testing.T) {
 		figmaJSON := `[
-			{"id":"1","name":"header","x":0,"y":0,"width":1000,"height":100},
-			{"id":"2","name":"logo","x":10,"y":10,"width":100,"height":80,"parent":"1"}
+			{"id":"1","name":"header","x":0,"y":0,"w":0,"h":0},
+			{"id":"2","name":"logo","x":10,"y":10,"w":0,"h":0,"parent":"1"}
 		]`
 		webJSON := `[
-			{"selector":"#header","x":0,"y":0,"width":1000,"height":100},
-			{"selector":".logo","x":10,"y":10,"width":100,"height":80,"parent":"#header"}
+			{"selector":"#header","x":0,"y":0,"w":0,"h":0},
+			{"selector":".logo","x":10,"y":10,"w":0,"h":0,"parent":"#header"}
 		]`
 
 		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
@@ -789,6 +789,106 @@ func TestLayoutTree_ZeroGeometryWarning(t *testing.T) {
 		}
 		if result.ZeroGeometryWarning != "" {
 			t.Errorf("Expected no warning when zeros are not a majority, got %q", result.ZeroGeometryWarning)
+		}
+	})
+}
+
+// TestLayoutTree_RequiredFieldsValidation verifies that layout_tree input
+// rejects missing required keys and empty identifiers as input errors, while
+// allowing an explicit geometric 0.
+func TestLayoutTree_RequiredFieldsValidation(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	validFigma := `[{"id":"1","name":"Card","x":0,"y":0,"w":100,"h":50}]`
+	validWeb := `[{"selector":"#card","x":0,"y":0,"w":100,"h":50}]`
+
+	tests := []struct {
+		name      string
+		figmaJSON string
+		webJSON   string
+		wantSub   []string
+	}{
+		{
+			name:      "figma_missing_w",
+			figmaJSON: `[{"id":"1","name":"Card","x":0,"y":0,"h":50},{"id":"2","name":"Title","x":0,"y":0,"w":100,"h":20}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma layout node at index 0 is missing required field 'w'"},
+		},
+		{
+			name:      "figma_missing_coords",
+			figmaJSON: `[{"id":"1","name":"Card"}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma layout node at index 0 is missing required field 'x'"},
+		},
+		{
+			name:      "web_missing_h",
+			figmaJSON: validFigma,
+			webJSON:   `[{"selector":"#card","x":0,"y":0,"w":100},{"selector":"#title","x":0,"y":0,"w":80,"h":20}]`,
+			wantSub:   []string{"Web layout node at index 0 is missing required field 'h'"},
+		},
+		{
+			name:      "width_height_keys_rejected",
+			figmaJSON: `[{"id":"1","name":"header","x":0,"y":0,"width":1000,"height":100}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma layout node at index 0 is missing required field 'w'"},
+		},
+		{
+			name:      "figma_empty_id",
+			figmaJSON: `[{"id":"","name":"Card","x":0,"y":0,"w":100,"h":50}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma layout node at index 0 has empty required field 'id'"},
+		},
+		{
+			name:      "figma_empty_name",
+			figmaJSON: `[{"id":"1","name":"","x":0,"y":0,"w":100,"h":50}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma layout node at index 0 has empty required field 'name'"},
+		},
+		{
+			name:      "web_empty_selector",
+			figmaJSON: validFigma,
+			webJSON:   `[{"selector":"","x":0,"y":0,"w":100,"h":50}]`,
+			wantSub:   []string{"Web layout node at index 0 has empty required field 'selector'"},
+		},
+		{
+			name:      "figma_missing_id_key",
+			figmaJSON: `[{"name":"Card","x":0,"y":0,"w":100,"h":50}]`,
+			webJSON:   validWeb,
+			wantSub:   []string{"Figma layout node at index 0 is missing required field 'id'"},
+		},
+		{
+			name:      "web_missing_selector_key",
+			figmaJSON: validFigma,
+			webJSON:   `[{"x":0,"y":0,"w":100,"h":50}]`,
+			wantSub:   []string{"Web layout node at index 0 is missing required field 'selector'"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := CompareLayoutTrees(tc.figmaJSON, tc.webJSON, tolerance, passRate, nil, false, nil)
+			if err == nil {
+				t.Fatal("expected input error for invalid layout node fields")
+			}
+			got := err.Error()
+			for _, sub := range tc.wantSub {
+				if !strings.Contains(got, sub) {
+					t.Errorf("error %q should contain %q", got, sub)
+				}
+			}
+		})
+	}
+
+	t.Run("explicit_zero_geometry_allowed", func(t *testing.T) {
+		figmaJSON := `[{"id":"1","name":"Collapsed","x":0,"y":0,"w":0,"h":0}]`
+		webJSON := `[{"selector":".collapsed","x":0,"y":0,"w":0,"h":0}]`
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("explicit 0 geometry must remain valid: %v", err)
+		}
+		if result.Status != "success" {
+			t.Errorf("expected success for matching collapsed nodes, got %s", result.Status)
 		}
 	})
 }

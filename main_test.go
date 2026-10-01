@@ -599,25 +599,53 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
-	// 2.4.1. layout_tree モード: width/height キーによる零幾何の警告
+	// 2.4.1. layout_tree モード: 必須フィールド欠落は入力エラー / 明示ゼロは警告
 	// =================================================================
-	t.Run("LayoutTree_ZeroGeometryWarning", func(t *testing.T) {
-		// w/h の代わりに width/height を使うと Unmarshal は成功するが幾何は全て 0。
-		// status は従来どおり success のまま、zero_geometry_warning で誤用を知らせる。
+	t.Run("LayoutTree_MissingRequiredFields", func(t *testing.T) {
+		// w/h の代わりに width/height を使うと必須キー欠落として入力エラーになる。
 		figmaWrongKeys := `[
-			{"id": "1", "name": "header", "x": 0, "y": 0, "width": 1000, "height": 100},
-			{"id": "2", "name": "logo", "x": 10, "y": 10, "width": 100, "height": 80, "parent": "1"}
+			{"id": "1", "name": "header", "x": 0, "y": 0, "width": 1000, "height": 100}
 		]`
-		webWrongKeys := `[
-			{"selector": "#header", "x": 0, "y": 0, "width": 1000, "height": 100},
-			{"selector": ".logo", "x": 10, "y": 10, "width": 100, "height": 80, "parent": "#header"}
-		]`
+		webValid := `[{"selector":"#header","x":0,"y":0,"w":1000,"h":100}]`
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
 					"mode":         "layout_tree",
 					"figma_layout": figmaWrongKeys,
-					"web_layout":   webWrongKeys,
+					"web_layout":   webValid,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatal("expected IsError for missing required field 'w'")
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "Figma layout node at index 0 is missing required field 'w'") {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("LayoutTree_ZeroGeometryWarning", func(t *testing.T) {
+		// 必須キーは揃っているが過半数が明示的な w/h=0 のとき、status は変えず警告する。
+		figmaZeros := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 0, "h": 0},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 0, "h": 0, "parent": "1"}
+		]`
+		webZeros := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 0, "h": 0},
+			{"selector": ".logo", "x": 10, "y": 10, "w": 0, "h": 0, "parent": "#header"}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaZeros,
+					"web_layout":   webZeros,
 					"threshold":    0.15,
 				},
 			},
