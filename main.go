@@ -166,9 +166,11 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 		// この形式で返すため、そのまま再入力 (ラウンドトリップ) できる。
 		payload := base64Value
 		if strings.HasPrefix(payload, "data:") {
-			if i := strings.Index(payload, ";base64,"); i >= 0 {
-				payload = payload[i+len(";base64,"):]
+			i := strings.Index(payload, ";base64,")
+			if i < 0 {
+				return nil, fmt.Errorf("%s has an unsupported data URI format; expected 'data:<mime>;base64,<payload>'", base64Param)
 			}
+			payload = payload[i+len(";base64,"):]
 		}
 		// ログ等からコピーした MIME 折り返し (改行・スペース・タブ) を除去してからデコードする。
 		payload = strings.Join(strings.Fields(payload), "")
