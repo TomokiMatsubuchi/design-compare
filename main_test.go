@@ -5146,9 +5146,11 @@ func TestResolveImageInputBase64DataURI(t *testing.T) {
 	}
 
 	// "data:" プレフィックスがあるが ";base64," マーカーを欠く入力は
-	// そのままデコードされるため illegal base64 エラーになる
+	// 期待形式を示す明示エラーになる (Issue #315)
 	if _, err := resolveImageInput("", "data:image/png", "image_path_a", "image_a_base64"); err == nil {
 		t.Error("expected error for data URI without ';base64,' marker, got nil")
+	} else if !strings.Contains(err.Error(), "expected 'data:<mime>;base64,<payload>'") {
+		t.Errorf("expected unsupported data URI format hint in error, got %v", err)
 	}
 
 	// 不正な base64 は従来通りエラーになる
