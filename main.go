@@ -343,10 +343,13 @@ var modeParamSupport = map[string]map[string]bool{
 // 代替ヒントとして載せる。min_match (perceptual/strict) と pass_rate
 // (layout_tree) はいずれも一致率%の合格ラインで、名前だけが違うため
 // layout_tree への min_match / 画像モードへの pass_rate が自然に起きる。
+// ignore_nodes は layout_tree / layout_integrity 専用で、画像モードでは
+// ignore_region を使う（SKILL.md ガードレールと同じ自己修復ヒント）。
 // 未知モードが有効モードを列挙するのと同様、1 リトライで自己修復できるようにする。
 var modeParamAlternatives = map[string]string{
-	"min_match": "pass_rate",
-	"pass_rate": "min_match",
+	"min_match":    "pass_rate",
+	"pass_rate":    "min_match",
+	"ignore_nodes": "ignore_region",
 }
 
 // recognizedParamNames は modeParamSupport のキーをソートして結合する。
