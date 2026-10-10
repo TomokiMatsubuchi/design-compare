@@ -51,13 +51,22 @@ func newDesignCompareMCPServer() *server.MCPServer {
 		server.WithInstructions(mcpInstructions),
 	)
 
+	s.AddTool(newCompareDesignTool(), compareDesignHandler)
+	return s
+}
+
+// newCompareDesignTool は compare_design のツール定義を返す。
+// ローカル入力を読んで比較結果 JSON を返す読み取り専用ツールのため、
+// mcp-go のデフォルト（destructive=true 等）ではなく read-only 系ヒントを明示する。
+func newCompareDesignTool() mcp.Tool {
 	// compare_design ツール定義 (4つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
-	compareDesignTool := mcp.NewTool("compare_design",
+	return mcp.NewTool("compare_design",
 		mcp.WithDescription("Compare designs against implementations using four deterministic modes: 'layout_tree' (structural data), 'perceptual' (macro-layout image match), 'strict' (exact pixel match), or 'layout_integrity' (web layout breakage at a CSS viewport without Figma; default iPad portrait 768x1024, landscape via viewport_preset=ipad_landscape)."),
-		mcp.WithTitleAnnotation("Compare Designs"),
+		mcp.WithTitleAnnotation("Compare Figma design with web implementation"),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithString("mode",
 			mcp.Required(),
 			mcp.Enum("layout_tree", "perceptual", "strict", "layout_integrity"),
@@ -140,8 +149,6 @@ func newDesignCompareMCPServer() *server.MCPServer {
 			mcp.Description("For 'perceptual' and 'strict' modes: when true, also return the generated diff image as an MCP image content block (MIME type image/png) after the JSON text result (default false). Existing clients that only read content[0] keep working. The extra block is added only when generate_diff produced a non-empty 'diff_image' (so generate_diff=false, or diff_on_mismatch=true on success, still return JSON alone)."),
 		),
 	)
-	s.AddTool(compareDesignTool, compareDesignHandler)
-	return s
 }
 
 // resolveImageInput returns the raw bytes of a comparison image from either a

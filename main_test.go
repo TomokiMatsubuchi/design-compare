@@ -5701,6 +5701,37 @@ func TestPerceptualPreDecodeSizeLimit(t *testing.T) {
 	}
 }
 
+// TestCompareDesignToolAnnotations は compare_design が読み取り専用ヒントを
+// 明示していることを確認する (Issue #326)。mcp-go のデフォルト
+// (readOnly=false, destructive=true, idempotent=false, openWorld=true) のまま
+// tools/list に流れると、クライアントが毎回承認を要求したり読み取り専用
+// モードで除外したりするため。
+func TestCompareDesignToolAnnotations(t *testing.T) {
+	tool := newCompareDesignTool()
+	if tool.Name != "compare_design" {
+		t.Fatalf("tool name = %q, want compare_design", tool.Name)
+	}
+	ann := tool.Annotations
+	if ann.Title != "Compare Figma design with web implementation" {
+		t.Errorf("Annotations.Title = %q, want %q", ann.Title, "Compare Figma design with web implementation")
+	}
+	assertBoolPtr(t, "ReadOnlyHint", ann.ReadOnlyHint, true)
+	assertBoolPtr(t, "DestructiveHint", ann.DestructiveHint, false)
+	assertBoolPtr(t, "IdempotentHint", ann.IdempotentHint, true)
+	assertBoolPtr(t, "OpenWorldHint", ann.OpenWorldHint, false)
+}
+
+func assertBoolPtr(t *testing.T, name string, got *bool, want bool) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("Annotations.%s is nil, want %v", name, want)
+		return
+	}
+	if *got != want {
+		t.Errorf("Annotations.%s = %v, want %v", name, *got, want)
+	}
+}
+
 // TestMCPInitializeIncludesModeInstructions は initialize 応答の instructions に
 // モード使い分け指針が含まれることを確認する (Issue #243)。
 func TestMCPInitializeIncludesModeInstructions(t *testing.T) {
