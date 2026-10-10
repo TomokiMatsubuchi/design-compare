@@ -4579,7 +4579,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 
 		// mode × param の組合せ。wantErr=true はモード非対応のため IsError、
 		// false は対応パラメータなので比較が実行されてエラーにならない。
-		// hint は min_match ↔ pass_rate の混同だけ付与する (Issue #171)。
+		// hint は min_match ↔ pass_rate と ignore_nodes → ignore_region の
+		// 混同に付与する (Issue #171 / #323)。
 		cases := []struct {
 			mode    string
 			param   string
@@ -4610,7 +4611,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"perceptual", "figma_layout_path", "/tmp/nonexistent.json", true, ""},
 			{"perceptual", "web_layout", webLayout, true, ""},
 			{"perceptual", "web_layout_path", "/tmp/nonexistent.json", true, ""},
-			{"perceptual", "ignore_nodes", "nav", true, ""},
+			{"perceptual", "ignore_nodes", "nav", true, " (use 'ignore_region' instead)"},
 			{"perceptual", "count_extra_web", true, true, ""},
 			{"perceptual", "max_details", 2.0, true, ""},
 			{"perceptual", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
@@ -4628,7 +4629,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "figma_layout_path", "/tmp/nonexistent.json", true, ""},
 			{"strict", "web_layout", webLayout, true, ""},
 			{"strict", "web_layout_path", "/tmp/nonexistent.json", true, ""},
-			{"strict", "ignore_nodes", "nav", true, ""},
+			{"strict", "ignore_nodes", "nav", true, " (use 'ignore_region' instead)"},
 			{"strict", "count_extra_web", true, true, ""},
 			{"strict", "max_details", 2.0, true, ""},
 			{"strict", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
