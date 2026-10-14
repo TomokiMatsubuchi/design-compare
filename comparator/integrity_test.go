@@ -292,6 +292,21 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 	})
 
+	t.Run("negative_geometry_is_input_error", func(t *testing.T) {
+		// 一部ノードだけ負の w/h でも、無言の除外ではなく入力エラーにする。
+		web := `[{"selector":"#page","x":0,"y":0,"w":768,"h":200},{"selector":"#badge","x":0,"y":0,"w":-120,"h":24}]`
+		_, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err == nil {
+			t.Fatal("expected input error for negative width/height")
+		}
+		msg := err.Error()
+		for _, want := range []string{"Web node", "#badge", "negative", "-120"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("error %q should contain %q", msg, want)
+			}
+		}
+	})
+
 	t.Run("all_zero_geometry_mismatch_message", func(t *testing.T) {
 		// width/height など w/h 以外のキー名を使うと幾何が全て 0 になる。
 		// 「データが空」とは区別したメッセージで幾何欠落を通知する。
