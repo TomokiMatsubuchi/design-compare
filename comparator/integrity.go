@@ -75,6 +75,14 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	if viewportW <= 0 || viewportH <= 0 {
 		return nil, fmt.Errorf("viewport_width and viewport_height must be greater than 0")
 	}
+	// BoundingBox の幅・高さは負になり得ない。負値は座標とサイズの取り違え等の
+	// 入力ミスであり、checkable から無言で外すと未検証のまま success になる。
+	// w/h=0 は collapsed ノードとして検査対象外にし、負値のみ拒否する（layout_tree と同方針）。
+	for _, wn := range wNodes {
+		if wn.W < 0 || wn.H < 0 {
+			return nil, fmt.Errorf("Web node %q has negative width/height (w=%g, h=%g)", wn.Selector, wn.W, wn.H)
+		}
+	}
 
 	var ignoredCount int
 	var unmatchedIgnores []string
