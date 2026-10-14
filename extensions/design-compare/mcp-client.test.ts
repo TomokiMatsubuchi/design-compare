@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
-import { callCompareDesign } from "./mcp-client.ts";
+import { callCompareDesign, toToolResult } from "./mcp-client.ts";
 
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const realBinary = join(repoDir, "design-compare");
@@ -252,4 +252,72 @@ test("perceptual: rejects a strict-scale threshold instead of silently passing",
   assert.equal(result.isError, true);
   const text = (result.content ?? []).map((c) => c.text ?? "").join("");
   assert.match(text, /threshold for perceptual mode must be 1\.0.100\.0/);
+});
+
+test("perceptual: diff_image_content returns text then image/png", async () => {
+  const result = await callCompareDesign({
+    binaryPath: realBinary,
+    args: {
+      mode: "perceptual",
+      image_path_a: redA,
+      image_path_b: split,
+      diff_image_content: true,
+    },
+    cwd: workDir,
+    timeoutMs: 30_000,
+  });
+
+  assert.equal(result.isError, undefined);
+  assert.ok((result.content?.length ?? 0) >= 2, "expected text + image content");
+  assert.equal(result.content?.[0]?.type, "text");
+  assert.match(result.content?.[0]?.text ?? "", /"status": "mismatch"/);
+
+  const image = result.content?.[1];
+  assert.equal(image?.type, "image");
+  assert.equal(image?.mimeType, "image/png");
+  assert.ok(typeof image?.data === "string" && image.data.length > 0, "image data must be non-empty base64");
+
+  const mapped = toToolResult(result);
+  assert.equal(mapped.content[0]?.type, "text");
+  assert.equal(mapped.content[1]?.type, "image");
+  if (mapped.content[1]?.type === "image") {
+    assert.equal(mapped.content[1].data, image?.data);
+    assert.equal(mapped.content[1].mimeType, "image/png");
+  }
+  assert.equal(mapped.details.has_image_content, true);
+});
+
+test("toToolResult: forwards image blocks and keeps errors text-only", () => {
+  const withImage = toToolResult({
+    content: [
+      { type: "text", text: '{"status":"mismatch"}' },
+      { type: "image", data: "abc123", mimeType: "image/png" },
+    ],
+  });
+  assert.deepEqual(withImage.content, [
+    { type: "text", text: '{"status":"mismatch"}' },
+    { type: "image", data: "abc123", mimeType: "image/png" },
+  ]);
+  assert.equal(withImage.details.has_image_content, true);
+
+  const missingMime = toToolResult({
+    content: [
+      { type: "text", text: "ok" },
+      { type: "image", data: "xyz" },
+    ],
+  });
+  assert.equal(missingMime.content[1]?.type, "image");
+  if (missingMime.content[1]?.type === "image") {
+    assert.equal(missingMime.content[1].mimeType, "image/png");
+  }
+
+  const onError = toToolResult({
+    isError: true,
+    content: [
+      { type: "text", text: "boom" },
+      { type: "image", data: "should-drop", mimeType: "image/png" },
+    ],
+  });
+  assert.deepEqual(onError.content, [{ type: "text", text: "Error: boom" }]);
+  assert.equal(onError.details.error, "tool_error");
 });

@@ -7,9 +7,9 @@
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type McpCallResult, callCompareDesign } from "./mcp-client.ts";
+import { callCompareDesign, toToolResult } from "./mcp-client.ts";
 
 // Pi may load an installed package through a symlink. Resolve the physical path
 // before locating the repository root and its Go binary.
@@ -19,25 +19,6 @@ const binaryPath = join(repoDir, "design-compare");
 
 const BUILD_TIMEOUT_MS = 180_000;
 const CALL_TIMEOUT_MS = 120_000;
-
-function toToolResult(result: McpCallResult): AgentToolResult<Record<string, unknown>> {
-  const text = (result.content ?? [])
-    .filter((item) => item.type === "text" && typeof item.text === "string")
-    .map((item) => item.text as string)
-    .join("\n")
-    .trim();
-
-  if (result.isError) {
-    return {
-      content: [{ type: "text", text: `Error: ${text || "compare_design failed"}` }],
-      details: { error: "tool_error" },
-    };
-  }
-  return {
-    content: [{ type: "text", text: text || "(empty result)" }],
-    details: {},
-  };
-}
 
 export default async function designCompareExtension(pi: ExtensionAPI) {
   // Always invoke `go build`: Go's build cache keeps this cheap, while this
