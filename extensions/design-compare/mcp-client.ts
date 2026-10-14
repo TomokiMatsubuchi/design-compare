@@ -6,14 +6,66 @@
 
 import { spawn } from "node:child_process";
 
-export interface McpTextContent {
+/** One MCP tools/call content block (text and/or image). */
+export interface McpContent {
   type: string;
   text?: string;
+  data?: string;
+  mimeType?: string;
 }
 
 export interface McpCallResult {
-  content?: McpTextContent[];
+  content?: McpContent[];
   isError?: boolean;
+}
+
+/** Pi AgentToolResult content shapes without importing pi-coding-agent. */
+export type ToolResultContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+export interface ToolResult {
+  content: ToolResultContent[];
+  details: Record<string, unknown>;
+}
+
+/**
+ * Map an MCP tools/call result onto Pi tool content.
+ *
+ * Text blocks are joined into a single leading text item (unchanged). Image
+ * blocks are forwarded as native image content so diff_image_content works.
+ * Errors stay text-only.
+ */
+export function toToolResult(result: McpCallResult): ToolResult {
+  const text = (result.content ?? [])
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text as string)
+    .join("\n")
+    .trim();
+
+  if (result.isError) {
+    return {
+      content: [{ type: "text", text: `Error: ${text || "compare_design failed"}` }],
+      details: { error: "tool_error" },
+    };
+  }
+
+  const content: ToolResultContent[] = [{ type: "text", text: text || "(empty result)" }];
+  let hasImageContent = false;
+  for (const item of result.content ?? []) {
+    if (item.type !== "image" || typeof item.data !== "string" || item.data === "") continue;
+    content.push({
+      type: "image",
+      data: item.data,
+      mimeType: item.mimeType || "image/png",
+    });
+    hasImageContent = true;
+  }
+
+  return {
+    content,
+    details: hasImageContent ? { has_image_content: true } : {},
+  };
 }
 
 interface JsonRpcMessage {
@@ -109,6 +161,9 @@ export function callCompareDesign(options: CallOptions): Promise<McpCallResult> 
     child.on("close", (code) =>
       finish(new Error(`design-compare exited with code ${code} before responding${stderr ? `: ${stderr.trim()}` : ""}`)),
     );
+    // Early-exit stubs close stdin before the handshake write; ignore EPIPE so
+    // the close handler can report the real exit status instead.
+    child.stdin.on("error", () => {});
 
     const callRequest = JSON.stringify({
       jsonrpc: "2.0",
