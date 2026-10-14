@@ -68,10 +68,60 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
 	}
-	for _, key := range []string{"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa", "ignore_region", "generate_diff", "figma_layout_path", "web_layout_path"} {
+	for _, key := range []string{
+		"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa",
+		"ignore_region", "generate_diff", "figma_layout_path", "web_layout_path",
+		"viewport_preset", "viewport_width", "viewport_height", "ignore_nodes",
+		"count_extra_web", "max_details", "diff_on_mismatch",
+	} {
 		if _, ok := got[key]; ok {
 			t.Errorf("unset flag %s should not be in args: %v", key, got)
 		}
+	}
+}
+
+func TestParseCLIArgsMapsViewportAndLayoutFlags(t *testing.T) {
+	var stderr bytes.Buffer
+	got, err := parseCLIArgs([]string{
+		"--mode", "layout_integrity",
+		"--web-layout-file", "web.json",
+		"--viewport-preset", "ipad_landscape",
+		"--viewport-width", "1024",
+		"--viewport-height", "768",
+		"--ignore-nodes", ".ad-*,nav",
+		"--count-extra-web",
+		"--max-details", "5",
+		"--diff-on-mismatch",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseCLIArgs: %v", err)
+	}
+	if got["mode"] != "layout_integrity" {
+		t.Errorf("mode=%v", got["mode"])
+	}
+	if got["web_layout_path"] != "web.json" {
+		t.Errorf("web_layout_path=%v", got["web_layout_path"])
+	}
+	if got["viewport_preset"] != "ipad_landscape" {
+		t.Errorf("viewport_preset=%v", got["viewport_preset"])
+	}
+	if got["viewport_width"] != 1024.0 {
+		t.Errorf("viewport_width=%v", got["viewport_width"])
+	}
+	if got["viewport_height"] != 768.0 {
+		t.Errorf("viewport_height=%v", got["viewport_height"])
+	}
+	if got["ignore_nodes"] != ".ad-*,nav" {
+		t.Errorf("ignore_nodes=%v", got["ignore_nodes"])
+	}
+	if got["count_extra_web"] != true {
+		t.Errorf("count_extra_web=%v", got["count_extra_web"])
+	}
+	if got["max_details"] != 5 {
+		t.Errorf("max_details=%v", got["max_details"])
+	}
+	if got["diff_on_mismatch"] != true {
+		t.Errorf("diff_on_mismatch=%v", got["diff_on_mismatch"])
 	}
 }
 
