@@ -79,6 +79,13 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	includeAA := fs.Bool("include-aa", false, "Count anti-aliased pixels as diffs in strict mode (maps to include_aa)")
 	ignoreRegion := fs.String("ignore-region", "", "Semicolon-separated x,y,w,h regions to ignore")
 	generateDiff := fs.Bool("generate-diff", true, "Whether to generate a diff image (default true)")
+	viewportPreset := fs.String("viewport-preset", "", "Viewport preset for layout_integrity: ipad_portrait or ipad_landscape (maps to viewport_preset)")
+	viewportWidth := fs.Float64("viewport-width", 0, "CSS viewport width for layout_integrity (maps to viewport_width)")
+	viewportHeight := fs.Float64("viewport-height", 0, "CSS viewport height for layout_integrity (maps to viewport_height)")
+	ignoreNodes := fs.String("ignore-nodes", "", "Comma-separated node ids/names/selectors to exclude (maps to ignore_nodes)")
+	countExtraWeb := fs.Bool("count-extra-web", false, "Count unmatched Web nodes in layout_tree match rate (maps to count_extra_web)")
+	maxDetails := fs.Int("max-details", 0, "Max details lines for layout_tree; 0 = unlimited (maps to max_details)")
+	diffOnMismatch := fs.Bool("diff-on-mismatch", false, "Only generate diff image on mismatch in perceptual/strict (maps to diff_on_mismatch)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -111,6 +118,20 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 			toolArgs["ignore_region"] = *ignoreRegion
 		case "generate-diff":
 			toolArgs["generate_diff"] = *generateDiff
+		case "viewport-preset":
+			toolArgs["viewport_preset"] = *viewportPreset
+		case "viewport-width":
+			toolArgs["viewport_width"] = *viewportWidth
+		case "viewport-height":
+			toolArgs["viewport_height"] = *viewportHeight
+		case "ignore-nodes":
+			toolArgs["ignore_nodes"] = *ignoreNodes
+		case "count-extra-web":
+			toolArgs["count_extra_web"] = *countExtraWeb
+		case "max-details":
+			toolArgs["max_details"] = *maxDetails
+		case "diff-on-mismatch":
+			toolArgs["diff_on_mismatch"] = *diffOnMismatch
 		}
 	})
 	return toolArgs, nil
