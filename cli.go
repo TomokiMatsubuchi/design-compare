@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -63,7 +64,8 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
-		fmt.Fprintf(stderr, "       design-compare          (no args: start stdio MCP server)\n\n")
+		fmt.Fprintf(stderr, "       design-compare          (no args: start stdio MCP server)\n")
+		fmt.Fprintf(stderr, "Positional arguments are not accepted; specify images with --image-a / --image-b.\n\n")
 		fs.PrintDefaults()
 	}
 
@@ -89,6 +91,9 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	if fs.NArg() > 0 {
+		return nil, fmt.Errorf("unexpected non-flag argument(s): %s", strings.Join(fs.Args(), " "))
 	}
 
 	toolArgs := make(map[string]any)
