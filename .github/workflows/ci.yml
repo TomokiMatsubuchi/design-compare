@@ -16,6 +16,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Vet
         run: go vet ./...
 
@@ -24,3 +28,9 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Build design-compare binary
+        run: go build -o design-compare .
+
+      - name: Extension TypeScript tests
+        run: npm run test:ext
