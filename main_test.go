@@ -508,6 +508,62 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := resultIgnorePrefix["unmatched_ignores"]; ok {
 			t.Errorf("Expected no unmatched_ignores for matching prefix '.na*', got %v", resultIgnorePrefix["unmatched_ignores"])
 		}
+
+		// C6: ネイティブ配列の ignore_nodes はカンマ区切り文字列と同じ除外結果になる
+		// (GetString だと空文字へ落ちて除外なしになる回帰を防ぐ)。
+		reqIgnoreArr := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"threshold":    0.15,
+					"ignore_nodes": []any{"nav", ".does_not_exist"},
+				},
+			},
+		}
+		resIgnoreArr, err := compareDesignHandler(context.Background(), reqIgnoreArr)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resIgnoreArr.IsError {
+			t.Fatalf("Expected native array ignore_nodes to be accepted, got error: %v", resIgnoreArr.Content[0].(mcp.TextContent).Text)
+		}
+		var resultIgnoreArr map[string]interface{}
+		json.Unmarshal([]byte(resIgnoreArr.Content[0].(mcp.TextContent).Text), &resultIgnoreArr)
+		if resultIgnoreArr["status"] != "success" {
+			t.Errorf("Expected success with array ignore_nodes, got status=%v, rate=%v", resultIgnoreArr["status"], resultIgnoreArr["match_rate"])
+		}
+		if got := resultIgnoreArr["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 with array ignore_nodes (same as string 'nav, .does_not_exist'), got %v", got)
+		}
+		unmatchedArr, ok := resultIgnoreArr["unmatched_ignores"].([]interface{})
+		if !ok || len(unmatchedArr) != 1 || unmatchedArr[0] != ".does_not_exist" {
+			t.Errorf("Expected unmatched_ignores=[.does_not_exist] with array ignore_nodes, got %v", resultIgnoreArr["unmatched_ignores"])
+		}
+
+		// 数値など受け付けない型は空文字へ落とさず明示エラー
+		reqIgnoreBadType := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayoutIncorrect,
+					"ignore_nodes": 123,
+				},
+			},
+		}
+		resIgnoreBadType, err := compareDesignHandler(context.Background(), reqIgnoreBadType)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resIgnoreBadType.IsError {
+			t.Fatal("expected IsError when ignore_nodes is a number")
+		}
+		gotBadIgnore := resIgnoreBadType.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotBadIgnore, "argument 'ignore_nodes' must be a comma-separated string (or an array of strings)") {
+			t.Errorf("got %q", gotBadIgnore)
+		}
 	})
 
 	// D: pass_rate を下げて不一致ケースを成功に切り替えるテスト
@@ -2450,6 +2506,33 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		// 範囲内の ignore_region では警告フィールド (out_of_bounds_regions) は出ない
 		if _, ok := resultRegion["out_of_bounds_regions"]; ok {
 			t.Errorf("Expected no out_of_bounds_regions for in-bounds ignore_region, got %v", resultRegion["out_of_bounds_regions"])
+		}
+
+		// ネイティブ配列の ignore_region も文字列指定と同じ除外結果になる (Issue #410)
+		reqRegionArr := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": []any{"0,0,100,100"},
+				},
+			},
+		}
+		resRegionArr, err := compareDesignHandler(context.Background(), reqRegionArr)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resRegionArr.IsError {
+			t.Fatalf("Expected native array ignore_region to be accepted, got error: %v", resRegionArr.Content[0].(mcp.TextContent).Text)
+		}
+		var resultRegionArr map[string]interface{}
+		json.Unmarshal([]byte(resRegionArr.Content[0].(mcp.TextContent).Text), &resultRegionArr)
+		if resultRegionArr["status"] != "success" || resultRegionArr["match_rate"] != "100.00%" {
+			t.Errorf("Expected success with array ignore_region, got status=%v, rate=%v", resultRegionArr["status"], resultRegionArr["match_rate"])
+		}
+		if got := resultRegionArr["ignored_regions"]; got != float64(1) {
+			t.Errorf("Expected ignored_regions=1 with array ignore_region, got %v", got)
 		}
 
 		// 空セグメントはパース時にスキップされ、有効領域数だけ ignored_regions に入る
@@ -5016,6 +5099,80 @@ func TestParseIgnoreRegions_FractionalValues(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must be numbers") {
 		t.Errorf("expected numbers error, got %v", err)
+	}
+}
+
+// Issue #410: ignore_nodes / ignore_region は文字列に加えネイティブ配列も受け付ける。
+func TestIgnoreNodesArg_StringAndArray(t *testing.T) {
+	got, err := ignoreNodesArg(map[string]any{"ignore_nodes": "nav, .foo"}, "ignore_nodes")
+	if err != nil {
+		t.Fatalf("string: %v", err)
+	}
+	if len(got) != 2 || got[0] != "nav" || got[1] != ".foo" {
+		t.Errorf("string: got %v", got)
+	}
+
+	got, err = ignoreNodesArg(map[string]any{"ignore_nodes": []any{"nav", ".foo"}}, "ignore_nodes")
+	if err != nil {
+		t.Fatalf("array: %v", err)
+	}
+	if len(got) != 2 || got[0] != "nav" || got[1] != ".foo" {
+		t.Errorf("array: got %v", got)
+	}
+
+	// 配列要素内のカンマも従来どおり展開する
+	got, err = ignoreNodesArg(map[string]any{"ignore_nodes": []any{"nav, .foo", "#bar"}}, "ignore_nodes")
+	if err != nil {
+		t.Fatalf("nested commas: %v", err)
+	}
+	if len(got) != 3 || got[0] != "nav" || got[1] != ".foo" || got[2] != "#bar" {
+		t.Errorf("nested commas: got %v", got)
+	}
+
+	got, err = ignoreNodesArg(map[string]any{}, "ignore_nodes")
+	if err != nil || got != nil {
+		t.Errorf("missing: got %v err %v", got, err)
+	}
+
+	_, err = ignoreNodesArg(map[string]any{"ignore_nodes": 1.5}, "ignore_nodes")
+	if err == nil || !strings.Contains(err.Error(), "array of strings") {
+		t.Errorf("bad type: got %v", err)
+	}
+	_, err = ignoreNodesArg(map[string]any{"ignore_nodes": []any{"ok", 1}}, "ignore_nodes")
+	if err == nil || !strings.Contains(err.Error(), "array of strings") {
+		t.Errorf("bad element: got %v", err)
+	}
+}
+
+func TestIgnoreRegionArg_StringAndArray(t *testing.T) {
+	got, err := ignoreRegionArg(map[string]any{"ignore_region": "10,20,100,50;200,300,80,60"}, "ignore_region")
+	if err != nil {
+		t.Fatalf("string: %v", err)
+	}
+	if len(got) != 2 || got[0].X != 10 || got[1].X != 200 {
+		t.Errorf("string: got %+v", got)
+	}
+
+	got, err = ignoreRegionArg(map[string]any{"ignore_region": []any{"10,20,100,50", "200,300,80,60"}}, "ignore_region")
+	if err != nil {
+		t.Fatalf("array: %v", err)
+	}
+	if len(got) != 2 || got[0].X != 10 || got[1].X != 200 {
+		t.Errorf("array: got %+v", got)
+	}
+
+	got, err = ignoreRegionArg(map[string]any{}, "ignore_region")
+	if err != nil || got != nil {
+		t.Errorf("missing: got %v err %v", got, err)
+	}
+
+	_, err = ignoreRegionArg(map[string]any{"ignore_region": true}, "ignore_region")
+	if err == nil || !strings.Contains(err.Error(), "array of strings") {
+		t.Errorf("bad type: got %v", err)
+	}
+	_, err = ignoreRegionArg(map[string]any{"ignore_region": []any{"10,20,100,50", 3}}, "ignore_region")
+	if err == nil || !strings.Contains(err.Error(), "array of strings") {
+		t.Errorf("bad element: got %v", err)
 	}
 }
 
