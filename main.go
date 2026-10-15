@@ -107,10 +107,10 @@ func newCompareDesignTool() mcp.Tool {
 			mcp.Description("CSS pixel viewport height for 'layout_integrity' only (default 1024, iPad portrait); passing it in another mode is rejected as an unsupported parameter. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset height"),
 		),
 		mcp.WithString("ignore_nodes",
-			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
+			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes), or a native JSON array of those strings. In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image (a note is added to 'details', and 'warnings' notes that the same region may mask different areas). In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. In layout_tree the same region coordinates are applied to both Figma and Web (align coordinates when the Figma canvas is offset). Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'), or a native JSON array of those region strings. In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image (a note is added to 'details', and 'warnings' notes that the same region may mask different areas). In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. In layout_tree the same region coordinates are applied to both Figma and Web (align coordinates when the Figma canvas is offset). Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
@@ -246,6 +246,77 @@ func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 		return string(b), nil
 	default:
 		return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array", key)
+	}
+}
+
+// appendCommaSeparated はカンマ区切り文字列を trim して dst へ追加する。
+// 空セグメントは無視する（従来の ignore_nodes 展開と同じ）。
+func appendCommaSeparated(dst []string, s string) []string {
+	for _, part := range strings.Split(s, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			dst = append(dst, trimmed)
+		}
+	}
+	return dst
+}
+
+// ignoreNodesArg は ignore_nodes を読む。カンマ区切り文字列、または文字列要素の
+// ネイティブ配列を受け付け、同じ展開経路で []string にする。未指定は nil。
+// mcp-go の GetString は非文字列を空文字へ落とすため、配列指定が無言で無効化
+// されないようここで明示的に受け付ける。不正型はエラー。
+func ignoreNodesArg(args map[string]any, key string) ([]string, error) {
+	if args == nil {
+		return nil, nil
+	}
+	val, ok := args[key]
+	if !ok {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case string:
+		return appendCommaSeparated(nil, v), nil
+	case []any:
+		var out []string
+		for _, el := range v {
+			s, ok := el.(string)
+			if !ok {
+				return nil, fmt.Errorf("argument '%s' must be a comma-separated string (or an array of strings)", key)
+			}
+			out = appendCommaSeparated(out, s)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("argument '%s' must be a comma-separated string (or an array of strings)", key)
+	}
+}
+
+// ignoreRegionArg は ignore_region を読む。セミコロン区切り文字列、または領域指定
+// 文字列（各要素は 'x,y,w,h'）のネイティブ配列を受け付け、parseIgnoreRegions と同じ
+// 経路へ載せる。未指定は nil。不正型は GetString のように空へ落とさず明示エラー。
+func ignoreRegionArg(args map[string]any, key string) ([]comparator.Region, error) {
+	if args == nil {
+		return nil, nil
+	}
+	val, ok := args[key]
+	if !ok {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case string:
+		return parseIgnoreRegions(v)
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, el := range v {
+			s, ok := el.(string)
+			if !ok {
+				return nil, fmt.Errorf("argument '%s' must be a semicolon-separated string (or an array of strings)", key)
+			}
+			parts = append(parts, s)
+		}
+		return parseIgnoreRegions(strings.Join(parts, ";"))
+	default:
+		return nil, fmt.Errorf("argument '%s' must be a semicolon-separated string (or an array of strings)", key)
 	}
 }
 
@@ -548,15 +619,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		ignoreNodesStr := request.GetString("ignore_nodes", "")
-		var ignoreList []string
-		if ignoreNodesStr != "" {
-			for _, part := range strings.Split(ignoreNodesStr, ",") {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					ignoreList = append(ignoreList, trimmed)
-				}
-			}
+		ignoreList, err := ignoreNodesArg(request.GetArguments(), "ignore_nodes")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 		countExtraWeb, err := boolArg(request, "count_extra_web", false)
 		if err != nil {
@@ -572,7 +637,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
 		// layout_tree では BoundingBox の中心点が領域内にあるノードを両側から除外する。
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegions, err := ignoreRegionArg(request.GetArguments(), "ignore_region")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
 		}
@@ -693,7 +758,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		// 除外領域 (ignore_region) をパースする
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegions, err := ignoreRegionArg(request.GetArguments(), "ignore_region")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
@@ -845,7 +910,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		// 除外領域 (ignore_region) をパースする
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegions, err := ignoreRegionArg(request.GetArguments(), "ignore_region")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
@@ -986,17 +1051,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		ignoreNodesStr := request.GetString("ignore_nodes", "")
-		var ignoreList []string
-		if ignoreNodesStr != "" {
-			for _, part := range strings.Split(ignoreNodesStr, ",") {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					ignoreList = append(ignoreList, trimmed)
-				}
-			}
+		ignoreList, err := ignoreNodesArg(request.GetArguments(), "ignore_nodes")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegions, err := ignoreRegionArg(request.GetArguments(), "ignore_region")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
 		}
