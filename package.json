@@ -23,6 +23,9 @@
     "extensions": ["./extensions/design-compare/index.ts"],
     "skills": ["./skills"]
   },
+  "scripts": {
+    "test:ext": "node --test extensions/design-compare/mcp-client.test.ts"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
