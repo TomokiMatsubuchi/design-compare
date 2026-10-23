@@ -5255,6 +5255,12 @@ func TestTypedArgHelpers(t *testing.T) {
 		if v, err := boolArg(req, "generate_diff", true); err != nil || v != true {
 			t.Errorf("boolArg missing: got %v, %v", v, err)
 		}
+		if v, err := stringArg(req, "ignore_region", ""); err != nil || v != "" {
+			t.Errorf("stringArg missing: got %v, %v", v, err)
+		}
+		if v, err := ignoreNodesArg(req); err != nil || v != nil {
+			t.Errorf("ignoreNodesArg missing: got %v, %v", v, err)
+		}
 	})
 
 	t.Run("numeric strings are accepted", func(t *testing.T) {
@@ -5271,6 +5277,51 @@ func TestTypedArgHelpers(t *testing.T) {
 		}
 		if v, err := boolArg(req, "generate_diff", false); err != nil || v != true {
 			t.Errorf("boolArg string: got %v, %v", v, err)
+		}
+	})
+
+	t.Run("stringArg accepts string and rejects non-string", func(t *testing.T) {
+		reqOK := reqWithArgs(map[string]any{"ignore_region": "0,0,10,10"})
+		if v, err := stringArg(reqOK, "ignore_region", ""); err != nil || v != "0,0,10,10" {
+			t.Errorf("stringArg string: got %v, %v", v, err)
+		}
+		for _, val := range []any{123, []any{"0,0,10,10"}, nil, true} {
+			req := reqWithArgs(map[string]any{"ignore_region": val})
+			if _, err := stringArg(req, "ignore_region", ""); err == nil {
+				t.Errorf("expected error for ignore_region=%#v", val)
+			} else if !strings.Contains(err.Error(), "argument 'ignore_region' must be a string") {
+				t.Errorf("unexpected error for ignore_region=%#v: %v", val, err)
+			}
+		}
+	})
+
+	t.Run("ignoreNodesArg accepts string and string array", func(t *testing.T) {
+		reqStr := reqWithArgs(map[string]any{"ignore_nodes": "nav, .ad"})
+		got, err := ignoreNodesArg(reqStr)
+		if err != nil {
+			t.Fatalf("string: %v", err)
+		}
+		if len(got) != 2 || got[0] != "nav" || got[1] != ".ad" {
+			t.Errorf("string: got %v", got)
+		}
+		reqArr := reqWithArgs(map[string]any{"ignore_nodes": []any{"nav", ".ad"}})
+		gotArr, err := ignoreNodesArg(reqArr)
+		if err != nil {
+			t.Fatalf("array: %v", err)
+		}
+		if len(gotArr) != 2 || gotArr[0] != "nav" || gotArr[1] != ".ad" {
+			t.Errorf("array: got %v", gotArr)
+		}
+	})
+
+	t.Run("ignoreNodesArg rejects non-string / non-string-array", func(t *testing.T) {
+		for _, val := range []any{123, nil, true, map[string]any{"a": 1}, []any{"nav", 1}} {
+			req := reqWithArgs(map[string]any{"ignore_nodes": val})
+			if _, err := ignoreNodesArg(req); err == nil {
+				t.Errorf("expected error for ignore_nodes=%#v", val)
+			} else if !strings.Contains(err.Error(), "argument 'ignore_nodes' must be a string or a JSON array of strings") {
+				t.Errorf("unexpected error for ignore_nodes=%#v: %v", val, err)
+			}
 		}
 	})
 
@@ -5300,6 +5351,155 @@ func TestTypedArgHelpers(t *testing.T) {
 			if err == nil {
 				t.Errorf("expected error for %s=%#v", tc.key, tc.val)
 			}
+		}
+	})
+}
+
+// TestIgnoreNodesArrayAndTypedErrors は Issue #420: ignore_nodes の JSON 配列受け付けと、
+// ignore_nodes / ignore_region への非文字列が明示エラーになることを検証する。
+func TestIgnoreNodesArrayAndTypedErrors(t *testing.T) {
+	figmaLayout := `[
+		{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+		{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"},
+		{"id": "3", "name": "nav", "x": 600, "y": 10, "w": 380, "h": 80, "parent": "1"}
+	]`
+	webLayoutIncorrect := `[
+		{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+		{"selector": ".logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+		{"selector": ".nav", "x": 200, "y": 10, "w": 380, "h": 80, "parent": "#header"}
+	]`
+
+	t.Run("ignore_nodes JSON array excludes like comma string", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":         "layout_tree",
+			"figma_layout": figmaLayout,
+			"web_layout":   webLayoutIncorrect,
+			"threshold":    0.15,
+			"ignore_nodes": []any{"nav"},
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success with ignore_nodes array, got %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" || result["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match after ignoring 'nav' via array, got status=%v, rate=%v", result["status"], result["match_rate"])
+		}
+		if got := result["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2, got %v", got)
+		}
+		if _, ok := result["unmatched_ignores"]; ok {
+			t.Errorf("Expected no unmatched_ignores, got %v", result["unmatched_ignores"])
+		}
+	})
+
+	t.Run("ignore_nodes string still works", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":         "layout_tree",
+			"figma_layout": figmaLayout,
+			"web_layout":   webLayoutIncorrect,
+			"ignore_nodes": "nav",
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success with ignore_nodes string, got %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" || result["ignored_count"] != float64(2) {
+			t.Errorf("got status=%v ignored_count=%v", result["status"], result["ignored_count"])
+		}
+	})
+
+	t.Run("ignore_nodes number is type error", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":         "layout_tree",
+			"figma_layout": figmaLayout,
+			"web_layout":   webLayoutIncorrect,
+			"ignore_nodes": 123,
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatal("expected IsError for numeric ignore_nodes")
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "argument 'ignore_nodes' must be a string or a JSON array of strings") {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("ignore_region number is type error", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":          "layout_tree",
+			"figma_layout":  figmaLayout,
+			"web_layout":    webLayoutIncorrect,
+			"ignore_region": 123,
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatal("expected IsError for numeric ignore_region")
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "argument 'ignore_region' must be a string") {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("ignore_region string still works", func(t *testing.T) {
+		// Web nav 中心 (390,50) と Figma nav 中心 (790,50) のみをピンポイント除外
+		// (header 中心 500,50 / logo 中心 60,50 は含めない)。
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":          "layout_tree",
+			"figma_layout":  figmaLayout,
+			"web_layout":    webLayoutIncorrect,
+			"ignore_region": "380,40,30,20;780,40,30,20",
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success with ignore_region string, got %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected success after ignore_region, got status=%v rate=%v", result["status"], result["match_rate"])
+		}
+		if got := result["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 for nav region, got %v", got)
+		}
+	})
+
+	t.Run("non-string image_path_a is type error not required", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		img := generateSolidImage(8, 8, color.White)
+		pathB := saveTempImage(t, tmpDir, "b.png", img)
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":         "perceptual",
+			"image_path_a": 123,
+			"image_path_b": pathB,
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatal("expected IsError for numeric image_path_a")
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "argument 'image_path_a' must be a string") {
+			t.Errorf("got %q", got)
+		}
+		if strings.Contains(got, "is required") {
+			t.Errorf("must not look like a missing-required error, got %q", got)
 		}
 	})
 }

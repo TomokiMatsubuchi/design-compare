@@ -107,7 +107,7 @@ func newCompareDesignTool() mcp.Tool {
 			mcp.Description("CSS pixel viewport height for 'layout_integrity' only (default 1024, iPad portrait); passing it in another mode is rejected as an unsupported parameter. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset height"),
 		),
 		mcp.WithString("ignore_nodes",
-			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
+			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). A JSON array of strings (e.g. [\"#ad-banner\",\".cookie\"]) is also accepted and joined the same way; non-string, non-array values are rejected. In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
 			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image (a note is added to 'details', and 'warnings' notes that the same region may mask different areas). In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. In layout_tree the same region coordinates are applied to both Figma and Web (align coordinates when the Figma canvas is offset). Useful to exclude dynamic content (dates, ads, banners) that always differs."),
@@ -484,6 +484,66 @@ func boolArg(request mcp.CallToolRequest, key string, def bool) (bool, error) {
 	return false, fmt.Errorf("argument '%s' must be a boolean", key)
 }
 
+// stringArg は文字列引数を読む。キー未指定なら def を返す。キーがあるのに
+// 文字列でない値は mcp-go の GetString のように空文字へ落とさずエラーにする
+// (指定済みなのに "… is required" と読める誤解を防ぐ。Issue #420)。
+func stringArg(request mcp.CallToolRequest, key string, def string) (string, error) {
+	args := request.GetArguments()
+	val, ok := args[key]
+	if !ok {
+		return def, nil
+	}
+	s, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("argument '%s' must be a string", key)
+	}
+	return s, nil
+}
+
+// splitIgnoreNodes はカンマ区切りの除外指定をトリム済みリストにする。
+func splitIgnoreNodes(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var ignoreList []string
+	for _, part := range strings.Split(s, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			ignoreList = append(ignoreList, trimmed)
+		}
+	}
+	return ignoreList
+}
+
+// ignoreNodesArg は ignore_nodes を読む。カンマ区切り文字列、または文字列要素の
+// JSON 配列を受け付け、同じ除外リスト経路へ載せる。未指定は nil。
+// 文字列・文字列配列以外（数値・オブジェクト等）は明示エラー (Issue #420)。
+func ignoreNodesArg(request mcp.CallToolRequest) ([]string, error) {
+	args := request.GetArguments()
+	val, ok := args["ignore_nodes"]
+	if !ok {
+		return nil, nil
+	}
+	var joined string
+	switch v := val.(type) {
+	case string:
+		joined = v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("argument 'ignore_nodes' must be a string or a JSON array of strings")
+			}
+			parts = append(parts, s)
+		}
+		joined = strings.Join(parts, ",")
+	default:
+		return nil, fmt.Errorf("argument 'ignore_nodes' must be a string or a JSON array of strings")
+	}
+	return splitIgnoreNodes(joined), nil
+}
+
 // Handler: compare_design
 func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mode, err := request.RequireString("mode")
@@ -512,8 +572,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
 		}
+		figmaLayoutPath, err := stringArg(request, "figma_layout_path", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		figmaLayout, err := resolveLayoutInput(
-			figmaInline, request.GetString("figma_layout_path", ""),
+			figmaInline, figmaLayoutPath,
 			"figma_layout", "figma_layout_path")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
@@ -522,8 +586,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
 		}
+		webLayoutPath, err := stringArg(request, "web_layout_path", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		webLayout, err := resolveLayoutInput(
-			webInline, request.GetString("web_layout_path", ""),
+			webInline, webLayoutPath,
 			"web_layout", "web_layout_path")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
@@ -548,15 +616,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		ignoreNodesStr := request.GetString("ignore_nodes", "")
-		var ignoreList []string
-		if ignoreNodesStr != "" {
-			for _, part := range strings.Split(ignoreNodesStr, ",") {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					ignoreList = append(ignoreList, trimmed)
-				}
-			}
+		ignoreList, err := ignoreNodesArg(request)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 		countExtraWeb, err := boolArg(request, "count_extra_web", false)
 		if err != nil {
@@ -572,7 +634,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
 		// layout_tree では BoundingBox の中心点が領域内にあるノードを両側から除外する。
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		ignoreRegions, err := parseIgnoreRegions(ignoreRegionStr)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout tree mode input error: %v", err)), nil
 		}
@@ -641,14 +707,30 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// =================================================================
 		// 2. 知覚的画像比較（aHashによる大まかなテンプレート検証）
 		// =================================================================
+		imagePathA, err := stringArg(request, "image_path_a", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		imageABase64, err := stringArg(request, "image_a_base64", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgABytes, err := resolveImageInput(
-			request.GetString("image_path_a", ""), request.GetString("image_a_base64", ""),
+			imagePathA, imageABase64,
 			"image_path_a", "image_a_base64")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
+		imagePathB, err := stringArg(request, "image_path_b", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		imageBBase64, err := stringArg(request, "image_b_base64", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgBBytes, err := resolveImageInput(
-			request.GetString("image_path_b", ""), request.GetString("image_b_base64", ""),
+			imagePathB, imageBBase64,
 			"image_path_b", "image_b_base64")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
@@ -693,7 +775,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		// 除外領域 (ignore_region) をパースする
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		ignoreRegions, err := parseIgnoreRegions(ignoreRegionStr)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Perceptual mode input error: %v", err)), nil
 		}
@@ -794,14 +880,30 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// =================================================================
 		// 3. 厳密ピクセル比較（Pixelmatch VRT）
 		// =================================================================
+		imagePathA, err := stringArg(request, "image_path_a", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		imageABase64, err := stringArg(request, "image_a_base64", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgABytes, err := resolveImageInput(
-			request.GetString("image_path_a", ""), request.GetString("image_a_base64", ""),
+			imagePathA, imageABase64,
 			"image_path_a", "image_a_base64")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
+		imagePathB, err := stringArg(request, "image_path_b", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		imageBBase64, err := stringArg(request, "image_b_base64", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		imgBBytes, err := resolveImageInput(
-			request.GetString("image_path_b", ""), request.GetString("image_b_base64", ""),
+			imagePathB, imageBBase64,
 			"image_path_b", "image_b_base64")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
@@ -845,7 +947,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		// 除外領域 (ignore_region) をパースする
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		ignoreRegions, err := parseIgnoreRegions(ignoreRegionStr)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Strict mode input error: %v", err)), nil
 		}
@@ -954,14 +1060,21 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
 		}
+		webLayoutPath, err := stringArg(request, "web_layout_path", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		webLayout, err := resolveLayoutInput(
-			webInline, request.GetString("web_layout_path", ""),
+			webInline, webLayoutPath,
 			"web_layout", "web_layout_path")
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
 		}
 
-		preset := request.GetString("viewport_preset", "")
+		preset, err := stringArg(request, "viewport_preset", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		viewportW, viewportH, err := comparator.ViewportSizeForPreset(preset)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -986,17 +1099,15 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			}
 		}
 
-		ignoreNodesStr := request.GetString("ignore_nodes", "")
-		var ignoreList []string
-		if ignoreNodesStr != "" {
-			for _, part := range strings.Split(ignoreNodesStr, ",") {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					ignoreList = append(ignoreList, trimmed)
-				}
-			}
+		ignoreList, err := ignoreNodesArg(request)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
-		ignoreRegions, err := parseIgnoreRegions(request.GetString("ignore_region", ""))
+		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		ignoreRegions, err := parseIgnoreRegions(ignoreRegionStr)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity mode input error: %v", err)), nil
 		}
