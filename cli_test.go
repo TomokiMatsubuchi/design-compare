@@ -60,6 +60,31 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 	if got["generate_diff"] != false {
 		t.Errorf("generate_diff=%v", got["generate_diff"])
 	}
+
+	figmaInline := `[{"id":"1","name":"card","x":0,"y":0,"w":400,"h":300}]`
+	webInline := `[{"selector":"#card","x":0,"y":0,"w":400,"h":300}]`
+	gotLayout, err := parseCLIArgs([]string{
+		"--mode", "layout_tree",
+		"--figma-layout", figmaInline,
+		"--web-layout", webInline,
+		"--figma-layout-file", "figma.json",
+		"--web-layout-file", "web.json",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseCLIArgs layout: %v", err)
+	}
+	if gotLayout["figma_layout"] != figmaInline {
+		t.Errorf("figma_layout=%v", gotLayout["figma_layout"])
+	}
+	if gotLayout["web_layout"] != webInline {
+		t.Errorf("web_layout=%v", gotLayout["web_layout"])
+	}
+	if gotLayout["figma_layout_path"] != "figma.json" {
+		t.Errorf("figma_layout_path=%v", gotLayout["figma_layout_path"])
+	}
+	if gotLayout["web_layout_path"] != "web.json" {
+		t.Errorf("web_layout_path=%v", gotLayout["web_layout_path"])
+	}
 }
 
 func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
@@ -70,7 +95,8 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	}
 	for _, key := range []string{
 		"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa",
-		"ignore_region", "generate_diff", "figma_layout_path", "web_layout_path",
+		"ignore_region", "generate_diff", "figma_layout", "web_layout",
+		"figma_layout_path", "web_layout_path",
 		"viewport_preset", "viewport_width", "viewport_height", "ignore_nodes",
 		"count_extra_web", "max_details", "diff_on_mismatch",
 	} {
