@@ -70,6 +70,8 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")
 	imageA := fs.String("image-a", "", "Path to reference image A (maps to image_path_a)")
 	imageB := fs.String("image-b", "", "Path to target image B (maps to image_path_b)")
+	figmaLayout := fs.String("figma-layout", "", "Inline Figma layout JSON (maps to figma_layout; mutually exclusive with --figma-layout-file)")
+	webLayout := fs.String("web-layout", "", "Inline Web layout JSON (maps to web_layout; mutually exclusive with --web-layout-file)")
 	figmaFile := fs.String("figma-layout-file", "", "Path to Figma layout JSON (maps to figma_layout_path)")
 	webFile := fs.String("web-layout-file", "", "Path to Web layout JSON (maps to web_layout_path)")
 	threshold := fs.Float64("threshold", 0, "Sensitivity threshold (mode-dependent; see compare_design)")
@@ -100,6 +102,10 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 			toolArgs["image_path_a"] = *imageA
 		case "image-b":
 			toolArgs["image_path_b"] = *imageB
+		case "figma-layout":
+			toolArgs["figma_layout"] = *figmaLayout
+		case "web-layout":
+			toolArgs["web_layout"] = *webLayout
 		case "figma-layout-file":
 			toolArgs["figma_layout_path"] = *figmaFile
 		case "web-layout-file":
