@@ -5348,6 +5348,11 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "generate_diff": "abc"},
 			want: "argument 'generate_diff' must be a boolean",
 		},
+		{
+			name: "diff_on_mismatch yes",
+			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "diff_on_mismatch": "yes"},
+			want: "argument 'diff_on_mismatch' must be a boolean",
+		},
 	}
 
 	for _, tc := range cases {
@@ -5381,6 +5386,40 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			t.Fatalf("Expected success for numeric strings, got %v", res.Content[0].(mcp.TextContent).Text)
 		}
 	})
+
+	// Issue #419: bool / ParseBool 可能な文字列は受け付け、success 時は diff_image を空にする
+	for _, tc := range []struct {
+		name string
+		val  any
+	}{
+		{"diff_on_mismatch bool true", true},
+		{"diff_on_mismatch string true", "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+				"mode":             "perceptual",
+				"image_path_a":     pathA,
+				"image_path_b":     pathB,
+				"diff_on_mismatch": tc.val,
+			}))
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("Expected success for %s, got %v", tc.name, res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if result["status"] != "success" {
+				t.Fatalf("Expected status=success, got %v", result["status"])
+			}
+			if diffImg, ok := result["diff_image"].(string); !ok || diffImg != "" {
+				t.Errorf("Expected empty diff_image on success with diff_on_mismatch=%#v, got %v", tc.val, result["diff_image"])
+			}
+		})
+	}
 }
 
 // TestPerceptualDecodeErrorListsSupportedFormats verifies that perceptual-mode

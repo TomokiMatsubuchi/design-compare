@@ -1038,7 +1038,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 	// 成功時は差分画像が不要な呼び出し向け: 合否確定後に diff_image だけ空にする。
 	// comparator は変更せず、generate_diff の既存挙動 (未指定時は生成) を保つ。
-	if request.GetBool("diff_on_mismatch", false) {
+	// GetBool は変換不能値を黙って false にするので、他の真偽引数と同様 boolArg で読む (Issue #419)。
+	diffOnMismatch, err := boolArg(request, "diff_on_mismatch", false)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if diffOnMismatch {
 		if status, _ := responseMap["status"].(string); status == "success" {
 			if _, ok := responseMap["diff_image"]; ok {
 				responseMap["diff_image"] = ""
