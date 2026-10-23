@@ -596,8 +596,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"pass_rate":           passRate,
 			"count_extra_web":     countExtraWeb,
 			"ignored_count":       treeResult.IgnoredCount,
-			"extra_web_count":      treeResult.ExtraWebCount,
-			"absolute_mode_pairs":  treeResult.AbsoluteModePairs,
+			"extra_web_count":     treeResult.ExtraWebCount,
+			"absolute_mode_pairs": treeResult.AbsoluteModePairs,
 		}
 		// ignore_nodes / ignore_region で実際に除外したノード（過剰一致の検証用）。
 		// unmatched_ignores / extra_web_nodes と同様、非空時のみ返す。
