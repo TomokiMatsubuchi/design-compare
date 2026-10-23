@@ -84,6 +84,12 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		}
 	}
 
+	// 親参照用インデックスは ignore フィルタ前の元リストから構築する。
+	// 除外は報告対象から外すだけにし、子の parent_overflow 検査に必要な親座標は残す。
+	// フィルタ後リストから作ると、除外された親を持つ子が親解決に失敗し
+	// parent_overflow を無言でスキップする（layout_tree の親インデックスと同方針）。
+	allWebNodes := wNodes
+
 	var ignoredCount int
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
@@ -185,10 +191,13 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		return result, nil
 	}
 
-	bySelector := make(map[string]*WebNode, len(checkable))
-	for i := range checkable {
-		if _, ok := bySelector[checkable[i].Selector]; !ok {
-			bySelector[checkable[i].Selector] = &checkable[i]
+	bySelector := make(map[string]*WebNode, len(allWebNodes))
+	for i := range allWebNodes {
+		if allWebNodes[i].W <= 0 || allWebNodes[i].H <= 0 {
+			continue
+		}
+		if _, ok := bySelector[allWebNodes[i].Selector]; !ok {
+			bySelector[allWebNodes[i].Selector] = &allWebNodes[i]
 		}
 	}
 

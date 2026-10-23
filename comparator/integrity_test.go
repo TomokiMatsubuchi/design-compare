@@ -168,6 +168,27 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 	})
 
+	t.Run("ignored_parent_still_resolves_for_child_overflow", func(t *testing.T) {
+		// 親を ignore しても、子の parent_overflow には親座標を使う（報告対象外≠親解決不能）。
+		web := `[{"selector":"#card","x":0,"y":0,"w":400,"h":200},{"selector":"#child","x":0,"y":0,"w":500,"h":50,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#card"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" || res.IgnoredCount != 1 {
+			t.Fatalf("got %#v", res)
+		}
+		found := false
+		for _, issue := range res.Issues {
+			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ignored parent must still resolve for child parent_overflow: %#v", res.Issues)
+		}
+	})
+
 	t.Run("ignore_nodes_wildcard_and_unmatched", func(t *testing.T) {
 		web := `[{"selector":".ad-banner","x":0,"y":0,"w":900,"h":50},{"selector":"#ok","x":0,"y":0,"w":100,"h":50}]`
 		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{".ad-*", "#missing"}, nil)
