@@ -1681,6 +1681,31 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array") {
 			t.Errorf("got %q", gotBad)
 		}
+
+		// オブジェクトはパース経路で Go 内部型名を含むエラーにせず、早期に明示拒否する
+		reqBadObject := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": map[string]any{"nodes": []any{}},
+					"web_layout":   webString,
+				},
+			},
+		}
+		resBadObject, err := compareDesignHandler(context.Background(), reqBadObject)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resBadObject.IsError {
+			t.Fatal("expected IsError when figma_layout is an object")
+		}
+		gotBadObject := resBadObject.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotBadObject, "figma_layout must be a JSON-encoded string or a JSON array") {
+			t.Errorf("got %q", gotBadObject)
+		}
+		if strings.Contains(gotBadObject, "cannot unmarshal object") || strings.Contains(gotBadObject, "[]json.RawMessage") {
+			t.Errorf("error must not expose Go internal type names, got %q", gotBadObject)
+		}
 	})
 
 	// =================================================================
@@ -2022,7 +2047,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatalf("got status=%v checked_nodes=%v", resultNative["status"], resultNative["checked_nodes"])
 			}
 
-			// 文字列・配列・オブジェクト以外の型は専用のエラーメッセージになる
+			// 文字列・配列以外の型は専用のエラーメッセージになる
 			// (web_layout 指定済みなのに required と言われる誤解を招く文言にはならない)。
 			reqBadType := mcp.CallToolRequest{
 				Params: mcp.CallToolParams{
@@ -2042,6 +2067,29 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			gotBad := resBadType.Content[0].(mcp.TextContent).Text
 			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array") {
 				t.Errorf("got %q", gotBad)
+			}
+
+			reqBadObject := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": map[string]any{"nodes": []any{}},
+					},
+				},
+			}
+			resBadObject, err := compareDesignHandler(context.Background(), reqBadObject)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !resBadObject.IsError {
+				t.Fatal("expected IsError when web_layout is an object")
+			}
+			gotBadObject := resBadObject.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(gotBadObject, "web_layout must be a JSON-encoded string or a JSON array") {
+				t.Errorf("got %q", gotBadObject)
+			}
+			if strings.Contains(gotBadObject, "cannot unmarshal object") || strings.Contains(gotBadObject, "[]json.RawMessage") {
+				t.Errorf("error must not expose Go internal type names, got %q", gotBadObject)
 			}
 		})
 
