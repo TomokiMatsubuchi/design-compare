@@ -2259,6 +2259,67 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 1.5b. layout_integrity モード: UTF-8 BOM 付き JSON（インライン / パス）
+	// =================================================================
+	t.Run("LayoutIntegrity_UTF8BOM", func(t *testing.T) {
+		webLayout := `[{"selector":"#page","x":0,"y":0,"w":768,"h":200}]`
+		bomWeb := "\uFEFF" + webLayout
+
+		reqInline := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":       "layout_integrity",
+					"web_layout": bomWeb,
+				},
+			},
+		}
+		resInline, err := compareDesignHandler(context.Background(), reqInline)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resInline.IsError {
+			t.Fatalf("Expected BOM-prefixed inline JSON to parse, got error: %v", resInline.Content[0].(mcp.TextContent).Text)
+		}
+		var resultInline map[string]interface{}
+		json.Unmarshal([]byte(resInline.Content[0].(mcp.TextContent).Text), &resultInline)
+		if resultInline["status"] != "success" || resultInline["mode"] != "layout_integrity" {
+			t.Errorf("Expected success with BOM-prefixed inline JSON, got status=%v, mode=%v", resultInline["status"], resultInline["mode"])
+		}
+		if resultInline["issue_count"] != float64(0) {
+			t.Errorf("issue_count=%v", resultInline["issue_count"])
+		}
+
+		webPath := filepath.Join(tmpDir, "web-layout-integrity-bom.json")
+		if err := os.WriteFile(webPath, []byte(bomWeb), 0o644); err != nil {
+			t.Fatalf("failed to write web layout file: %v", err)
+		}
+
+		reqPath := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":            "layout_integrity",
+					"web_layout_path": webPath,
+				},
+			},
+		}
+		resPath, err := compareDesignHandler(context.Background(), reqPath)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resPath.IsError {
+			t.Fatalf("Expected BOM-prefixed layout file to parse, got error: %v", resPath.Content[0].(mcp.TextContent).Text)
+		}
+		var resultPath map[string]interface{}
+		json.Unmarshal([]byte(resPath.Content[0].(mcp.TextContent).Text), &resultPath)
+		if resultPath["status"] != "success" || resultPath["mode"] != "layout_integrity" {
+			t.Errorf("Expected success via BOM-prefixed layout file path, got status=%v, mode=%v", resultPath["status"], resultPath["mode"])
+		}
+		if resultPath["issue_count"] != float64(0) {
+			t.Errorf("issue_count=%v", resultPath["issue_count"])
+		}
+	})
+
+	// =================================================================
 	// 2. perceptual モード (知覚的画像比較) のテスト
 	// =================================================================
 	t.Run("Perceptual_Layout_Match", func(t *testing.T) {
