@@ -453,3 +453,26 @@ func TestLayoutIntegrity_UTF8BOMStripped(t *testing.T) {
 		}
 	})
 }
+
+// TestLayoutIntegrity_IgnoredNodes verifies that ignore_nodes collects
+// machine-readable web:<selector> identifiers whose length matches IgnoredCount
+// (layout_tree の IgnoredNodes と同形式。Issue #431)。
+func TestLayoutIntegrity_IgnoredNodes(t *testing.T) {
+	webJSON := `[
+		{"selector":"#a","x":0,"y":0,"w":100,"h":40},
+		{"selector":"#b","x":0,"y":50,"w":100,"h":40},
+		{"selector":"#ok","x":0,"y":100,"w":100,"h":40}
+	]`
+
+	result, err := CheckLayoutIntegrity(webJSON, 768, 1024, []string{"#a", "#b"}, nil)
+	if err != nil {
+		t.Fatalf("CheckLayoutIntegrity failed: %v", err)
+	}
+	if result.IgnoredCount != 2 {
+		t.Errorf("Expected IgnoredCount=2, got %d", result.IgnoredCount)
+	}
+	want := []string{"web:#a", "web:#b"}
+	if !stringSlicesEqual(result.IgnoredNodes, want) {
+		t.Errorf("Expected IgnoredNodes=%v, got %v", want, result.IgnoredNodes)
+	}
+}

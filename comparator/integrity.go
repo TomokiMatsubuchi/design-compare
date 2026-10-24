@@ -46,6 +46,7 @@ type LayoutIntegrityResult struct {
 	Issues                 []LayoutIssue `json:"issues,omitempty"`
 	Details                []string      `json:"details"`
 	IgnoredCount           int           `json:"ignored_count"`
+	IgnoredNodes           []string      `json:"ignored_nodes,omitempty"`
 	UnmatchedIgnores       []string      `json:"unmatched_ignores,omitempty"`
 	UnmatchedIgnoreRegions []string      `json:"unmatched_ignore_regions,omitempty"`
 }
@@ -93,7 +94,10 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	// parent_overflow を無言でスキップする（layout_tree の親インデックスと同方針）。
 	allWebNodes := wNodes
 
+	// ignore_nodes / ignore_region で除外した識別子は layout_tree と同じく
+	// IgnoredNodes に web:<selector> として入れる（件数は IgnoredCount と一致）。
 	var ignoredCount int
+	var ignoredNodes []string
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
 		ignoreMap := make(map[string]bool)
@@ -118,6 +122,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		for _, wn := range wNodes {
 			if isNodeValueIgnored(wn.Selector, ignoreMap, wildcardPrefixes) {
 				ignoredCount++
+				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
 			}
 			filtered = append(filtered, wn)
@@ -148,6 +153,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		for _, wn := range wNodes {
 			if boundingBoxCenterInRegions(wn.X, wn.Y, wn.W, wn.H, ignoreRegions, regionHits) {
 				ignoredCount++
+				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
 			}
 			filtered = append(filtered, wn)
@@ -172,6 +178,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		ViewportWidth:          viewportW,
 		ViewportHeight:         viewportH,
 		IgnoredCount:           ignoredCount,
+		IgnoredNodes:           ignoredNodes,
 		UnmatchedIgnores:       unmatchedIgnores,
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 	}
