@@ -38,8 +38,5 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Build design-compare binary
-        run: go build -o design-compare .
-
-      - name: Extension TypeScript tests
-        run: npm run test:ext
+      - name: Extension tests
+        run: npm test

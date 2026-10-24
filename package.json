@@ -24,7 +24,9 @@
     "skills": ["./skills"]
   },
   "scripts": {
-    "test:ext": "node --test extensions/design-compare/mcp-client.test.ts"
+    "test": "go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts",
+    "test:ext": "node --test extensions/design-compare/mcp-client.test.ts",
+    "test:go": "go test -v ./..."
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
