@@ -2162,6 +2162,100 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatalf("unmatched_ignore_regions=%v", got)
 			}
 		})
+
+		// Issue #425: max_details で details を切り詰める（issue_count / issues は全件）
+		t.Run("MaxDetails", func(t *testing.T) {
+			manyOverflow := `[
+				{"selector":"#a","x":0,"y":0,"w":900,"h":50},
+				{"selector":"#b","x":0,"y":60,"w":900,"h":50},
+				{"selector":"#c","x":0,"y":120,"w":900,"h":50}
+			]`
+
+			reqAll := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": manyOverflow,
+					},
+				},
+			}
+			resAll, err := compareDesignHandler(context.Background(), reqAll)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultAll map[string]interface{}
+			json.Unmarshal([]byte(resAll.Content[0].(mcp.TextContent).Text), &resultAll)
+			detailsAll, ok := resultAll["details"].([]interface{})
+			if !ok {
+				t.Fatalf("Expected details array, got %v", resultAll["details"])
+			}
+			// summary + 3 viewport_overflow_x
+			if len(detailsAll) != 4 {
+				t.Fatalf("Expected 4 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
+			}
+			if resultAll["issue_count"] != float64(3) {
+				t.Fatalf("issue_count=%v", resultAll["issue_count"])
+			}
+
+			reqZero := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":        "layout_integrity",
+						"web_layout":  manyOverflow,
+						"max_details": 0.0,
+					},
+				},
+			}
+			resZero, err := compareDesignHandler(context.Background(), reqZero)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultZero map[string]interface{}
+			json.Unmarshal([]byte(resZero.Content[0].(mcp.TextContent).Text), &resultZero)
+			detailsZero, _ := resultZero["details"].([]interface{})
+			if len(detailsZero) != 4 {
+				t.Fatalf("Expected 4 details when max_details=0, got %d: %v", len(detailsZero), detailsZero)
+			}
+
+			reqCap := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":        "layout_integrity",
+						"web_layout":  manyOverflow,
+						"max_details": 2.0,
+					},
+				},
+			}
+			resCap, err := compareDesignHandler(context.Background(), reqCap)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultCap map[string]interface{}
+			json.Unmarshal([]byte(resCap.Content[0].(mcp.TextContent).Text), &resultCap)
+			detailsCap, ok := resultCap["details"].([]interface{})
+			if !ok {
+				t.Fatalf("Expected details array, got %v", resultCap["details"])
+			}
+			if len(detailsCap) != 3 {
+				t.Fatalf("Expected 2 kept details + omit line, got %d: %v", len(detailsCap), detailsCap)
+			}
+			summary, _ := detailsCap[0].(string)
+			if !strings.Contains(summary, "Found 3 layout issues") {
+				t.Errorf("Expected summary line first, got %v", detailsCap[0])
+			}
+			omit, _ := detailsCap[len(detailsCap)-1].(string)
+			if omit != "... and 2 more details omitted (max_details=2)" {
+				t.Errorf("Expected omit line, got %q", omit)
+			}
+			// 機械可読フィールドは全件のまま
+			if resultCap["issue_count"] != float64(3) {
+				t.Errorf("issue_count should remain full, got %v", resultCap["issue_count"])
+			}
+			issues, _ := resultCap["issues"].([]interface{})
+			if len(issues) != 3 {
+				t.Errorf("issues should remain full, got %d", len(issues))
+			}
+		})
 	})
 
 	// =================================================================
@@ -4653,7 +4747,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"layout_integrity", "generate_diff", false, true, ""},
 			{"layout_integrity", "diff_image_content", true, true, ""},
 			{"layout_integrity", "count_extra_web", true, true, ""},
-			{"layout_integrity", "max_details", 2.0, true, ""},
+			{"layout_integrity", "max_details", 2.0, false, ""},
 			{"layout_integrity", "ignore_nodes", "#page", false, ""},
 			{"layout_integrity", "ignore_region", "0,0,10,10", false, ""},
 			{"layout_integrity", "viewport_width", 768.0, false, ""},
