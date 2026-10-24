@@ -427,3 +427,29 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 	})
 }
+
+// TestLayoutIntegrity_UTF8BOMStripped verifies that a leading UTF-8 BOM (U+FEFF)
+// on the Web layout JSON is stripped before Unmarshal, matching layout_tree.
+func TestLayoutIntegrity_UTF8BOMStripped(t *testing.T) {
+	webJSON := `[{"selector":"#page","x":0,"y":0,"w":768,"h":200}]`
+
+	t.Run("without_bom", func(t *testing.T) {
+		result, err := CheckLayoutIntegrity(webJSON, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatalf("CheckLayoutIntegrity failed: %v", err)
+		}
+		if result.Status != "success" || result.IssueCount != 0 {
+			t.Errorf("Expected success with 0 issues, got status=%s issues=%d", result.Status, result.IssueCount)
+		}
+	})
+
+	t.Run("with_bom", func(t *testing.T) {
+		result, err := CheckLayoutIntegrity("\uFEFF"+webJSON, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatalf("CheckLayoutIntegrity failed with BOM-prefixed JSON: %v", err)
+		}
+		if result.Status != "success" || result.IssueCount != 0 {
+			t.Errorf("Expected success with 0 issues, got status=%s issues=%d", result.Status, result.IssueCount)
+		}
+	})
+}

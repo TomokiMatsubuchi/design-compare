@@ -68,6 +68,9 @@ func ViewportSizeForPreset(preset string) (w, h float64, err error) {
 // CheckLayoutIntegrity は Web DOM の Bounding Box だけを見て、指定 CSS ビューポート
 // での横はみ出しと親ボックスからの逸脱を検出する（Figma 不要）。
 func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreList []string, ignoreRegions []Region) (*LayoutIntegrityResult, error) {
+	// layout_tree と同様、PowerShell 等が付ける UTF-8 BOM をパース前に除去する。
+	webJSON = strings.TrimPrefix(webJSON, "\uFEFF")
+
 	var wNodes []WebNode
 	if err := json.Unmarshal([]byte(webJSON), &wNodes); err != nil {
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
