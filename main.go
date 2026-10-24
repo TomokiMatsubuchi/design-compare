@@ -1142,6 +1142,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if integrityResult.IssueCount > 0 {
 			responseMap["issues"] = integrityResult.Issues
 		}
+		// layout_tree と同様、除外した識別子は非空時のみ返す (Issue #431)。
+		if len(integrityResult.IgnoredNodes) > 0 {
+			responseMap["ignored_nodes"] = integrityResult.IgnoredNodes
+		}
 		if len(integrityResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = integrityResult.UnmatchedIgnores
 		}
