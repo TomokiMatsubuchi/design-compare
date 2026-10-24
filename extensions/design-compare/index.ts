@@ -28,9 +28,12 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
     cwd: repoDir,
     timeout: BUILD_TIMEOUT_MS,
   });
-  if (build.code !== 0) {
+  if (build.code !== 0 || build.killed) {
+    const reason = build.killed
+      ? `go build timed out after ${BUILD_TIMEOUT_MS}ms (killed)`
+      : `go build exited ${build.code}`;
     console.warn(
-      `[design-compare] could not build ${binaryPath} (go build exited ${build.code}) — extension disabled\n${build.stderr.trim()}`,
+      `[design-compare] could not build ${binaryPath} (${reason}) — extension disabled\n${build.stderr.trim()}`,
     );
     return;
   }
