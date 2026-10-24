@@ -86,7 +86,7 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	viewportHeight := fs.Float64("viewport-height", 0, "CSS viewport height for layout_integrity (maps to viewport_height)")
 	ignoreNodes := fs.String("ignore-nodes", "", "Comma-separated node ids/names/selectors to exclude (maps to ignore_nodes)")
 	countExtraWeb := fs.Bool("count-extra-web", false, "Count unmatched Web nodes in layout_tree match rate (maps to count_extra_web)")
-	maxDetails := fs.Int("max-details", 0, "Max details lines for layout_tree; 0 = unlimited (maps to max_details)")
+	maxDetails := fs.Int("max-details", 0, "Max details lines for layout_tree and layout_integrity; 0 = unlimited (maps to max_details)")
 	diffOnMismatch := fs.Bool("diff-on-mismatch", false, "Only generate diff image on mismatch in perceptual/strict (maps to diff_on_mismatch)")
 
 	if err := fs.Parse(args); err != nil {

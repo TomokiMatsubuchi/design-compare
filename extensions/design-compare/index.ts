@@ -138,7 +138,8 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
       ),
       max_details: Type.Optional(
         Type.Number({
-          description: "Maximum layout_tree details lines to return; default 0 means unlimited",
+          description:
+            "Maximum details lines for layout_tree and layout_integrity; default 0 means unlimited",
         }),
       ),
       threshold: Type.Optional(
