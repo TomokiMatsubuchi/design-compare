@@ -1041,6 +1041,48 @@ func TestLayoutTree_NegativeWidthHeightIsError(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_RejectsObjectRoot verifies that a JSON object root is rejected
+// with a user-facing message (no Go internal type names from encoding/json).
+func TestLayoutTree_RejectsObjectRoot(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+	validFigma := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100}]`
+	validWeb := `[{"selector":"A","x":0,"y":0,"w":100,"h":100}]`
+	want := "must be a JSON array of node objects (a JSON object is not accepted)"
+
+	for name, objJSON := range map[string]string{
+		"empty": `{}`,
+		"nodes": `{"nodes":[]}`,
+	} {
+		t.Run("figma_"+name, func(t *testing.T) {
+			_, err := CompareLayoutTrees(objJSON, validWeb, tolerance, passRate, nil, false, nil)
+			if err == nil {
+				t.Fatal("expected error for object-root Figma layout")
+			}
+			got := err.Error()
+			if !strings.Contains(got, "Figma layout "+want) {
+				t.Errorf("got %q", got)
+			}
+			if strings.Contains(got, "[]json.RawMessage") || strings.Contains(got, "cannot unmarshal") {
+				t.Errorf("must not expose Go types: %q", got)
+			}
+		})
+		t.Run("web_"+name, func(t *testing.T) {
+			_, err := CompareLayoutTrees(validFigma, objJSON, tolerance, passRate, nil, false, nil)
+			if err == nil {
+				t.Fatal("expected error for object-root Web layout")
+			}
+			got := err.Error()
+			if !strings.Contains(got, "Web layout "+want) {
+				t.Errorf("got %q", got)
+			}
+			if strings.Contains(got, "[]json.RawMessage") || strings.Contains(got, "cannot unmarshal") {
+				t.Errorf("must not expose Go types: %q", got)
+			}
+		})
+	}
+}
+
 // TestLayoutTree_NullArrayElementIsError verifies that a JSON null inside
 // figma_layout / web_layout is rejected as a parse error instead of becoming
 // a zero-value node (empty id/selector, w/h=0) that silently skews match rate.

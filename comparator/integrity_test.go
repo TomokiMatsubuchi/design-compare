@@ -243,6 +243,19 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 	})
 
+	t.Run("object_root_rejected", func(t *testing.T) {
+		want := "Web layout must be a JSON array of node objects (a JSON object is not accepted)"
+		for _, objJSON := range []string{`{}`, `{"nodes":[]}`} {
+			_, err := CheckLayoutIntegrity(objJSON, 768, 1024, nil, nil)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("json=%s got %v", objJSON, err)
+			}
+			if strings.Contains(err.Error(), "[]comparator.WebNode") || strings.Contains(err.Error(), "cannot unmarshal") {
+				t.Fatalf("must not expose Go types: %v", err)
+			}
+		}
+	})
+
 	t.Run("viewport_zero_error", func(t *testing.T) {
 		web := `[{"selector":"#a","x":0,"y":0,"w":10,"h":10}]`
 		cases := [][2]float64{{0, 1024}, {768, 0}, {-1, 1024}, {768, -1}}

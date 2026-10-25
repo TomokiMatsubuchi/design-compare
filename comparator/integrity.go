@@ -71,8 +71,12 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	// layout_tree と同様、PowerShell 等が付ける UTF-8 BOM をパース前に除去する。
 	webJSON = strings.TrimPrefix(webJSON, "\uFEFF")
 
+	data := []byte(webJSON)
+	if err := errIfLayoutRootObject(data, "Web layout"); err != nil {
+		return nil, err
+	}
 	var wNodes []WebNode
-	if err := json.Unmarshal([]byte(webJSON), &wNodes); err != nil {
+	if err := json.Unmarshal(data, &wNodes); err != nil {
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
 	}
 	if viewportW <= 0 || viewportH <= 0 {

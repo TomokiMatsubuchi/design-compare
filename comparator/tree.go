@@ -530,9 +530,30 @@ func LimitLayoutTreeDetails(details []string, maxDetails int) []string {
 var requiredFigmaLayoutKeys = []string{"id", "name", "x", "y", "w", "h"}
 var requiredWebLayoutKeys = []string{"selector", "x", "y", "w", "h"}
 
+// errIfLayoutRootObject は JSON ルートがオブジェクトのとき、Go 内部型名を
+// 露出させない利用者向けエラーを返す。構文不正や配列以外の型は呼び出し元に任せる。
+func errIfLayoutRootObject(data []byte, what string) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil
+	}
+	var probe any
+	if err := json.Unmarshal(trimmed, &probe); err != nil {
+		return nil
+	}
+	if _, ok := probe.(map[string]any); ok {
+		return fmt.Errorf("%s must be a JSON array of node objects (a JSON object is not accepted)", what)
+	}
+	return nil
+}
+
 func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
+	data := []byte(figmaJSON)
+	if err := errIfLayoutRootObject(data, "Figma layout"); err != nil {
+		return nil, err
+	}
 	var raws []json.RawMessage
-	if err := json.Unmarshal([]byte(figmaJSON), &raws); err != nil {
+	if err := json.Unmarshal(data, &raws); err != nil {
 		return nil, fmt.Errorf("failed to parse Figma layout JSON: %w", err)
 	}
 	nodes := make([]FigmaNode, len(raws))
@@ -557,8 +578,12 @@ func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
 }
 
 func parseWebLayoutNodes(webJSON string) ([]WebNode, error) {
+	data := []byte(webJSON)
+	if err := errIfLayoutRootObject(data, "Web layout"); err != nil {
+		return nil, err
+	}
 	var raws []json.RawMessage
-	if err := json.Unmarshal([]byte(webJSON), &raws); err != nil {
+	if err := json.Unmarshal(data, &raws); err != nil {
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
 	}
 	nodes := make([]WebNode, len(raws))

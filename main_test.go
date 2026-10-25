@@ -1681,6 +1681,64 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array") {
 			t.Errorf("got %q", gotBad)
 		}
+
+		// ネイティブ JSON オブジェクトは受け付けない（配列のみ）。
+		// Go 内部型名（[]json.RawMessage 等）をエラーに出さない。
+		wantObjErr := "must be a JSON array of node objects (a JSON object is not accepted)"
+		for name, obj := range map[string]any{
+			"empty":  map[string]any{},
+			"nodes":  map[string]any{"nodes": []any{}},
+		} {
+			t.Run("RejectNativeObject_"+name, func(t *testing.T) {
+				reqObj := mcp.CallToolRequest{
+					Params: mcp.CallToolParams{
+						Arguments: map[string]any{
+							"mode":         "layout_tree",
+							"figma_layout": obj,
+							"web_layout":   webString,
+						},
+					},
+				}
+				resObj, err := compareDesignHandler(context.Background(), reqObj)
+				if err != nil {
+					t.Fatalf("handler failed: %v", err)
+				}
+				if !resObj.IsError {
+					t.Fatal("expected IsError when figma_layout is a JSON object")
+				}
+				got := resObj.Content[0].(mcp.TextContent).Text
+				if !strings.Contains(got, "figma_layout "+wantObjErr) {
+					t.Errorf("got %q, want substring %q", got, "figma_layout "+wantObjErr)
+				}
+				if strings.Contains(got, "[]json.RawMessage") || strings.Contains(got, "cannot unmarshal") {
+					t.Errorf("error must not expose Go internal types: %q", got)
+				}
+
+				reqWebObj := mcp.CallToolRequest{
+					Params: mcp.CallToolParams{
+						Arguments: map[string]any{
+							"mode":         "layout_tree",
+							"figma_layout": figmaNative,
+							"web_layout":   obj,
+						},
+					},
+				}
+				resWebObj, err := compareDesignHandler(context.Background(), reqWebObj)
+				if err != nil {
+					t.Fatalf("handler failed: %v", err)
+				}
+				if !resWebObj.IsError {
+					t.Fatal("expected IsError when web_layout is a JSON object")
+				}
+				gotWeb := resWebObj.Content[0].(mcp.TextContent).Text
+				if !strings.Contains(gotWeb, "web_layout "+wantObjErr) {
+					t.Errorf("got %q, want substring %q", gotWeb, "web_layout "+wantObjErr)
+				}
+				if strings.Contains(gotWeb, "[]json.RawMessage") || strings.Contains(gotWeb, "cannot unmarshal") {
+					t.Errorf("error must not expose Go internal types: %q", gotWeb)
+				}
+			})
+		}
 	})
 
 	// =================================================================
@@ -2042,6 +2100,38 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			gotBad := resBadType.Content[0].(mcp.TextContent).Text
 			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array") {
 				t.Errorf("got %q", gotBad)
+			}
+
+			// ネイティブ JSON オブジェクトは受け付けない（配列のみ）。
+			wantObjErr := "web_layout must be a JSON array of node objects (a JSON object is not accepted)"
+			for name, obj := range map[string]any{
+				"empty": map[string]any{},
+				"nodes": map[string]any{"nodes": []any{}},
+			} {
+				t.Run("RejectNativeObject_"+name, func(t *testing.T) {
+					reqObj := mcp.CallToolRequest{
+						Params: mcp.CallToolParams{
+							Arguments: map[string]any{
+								"mode":       "layout_integrity",
+								"web_layout": obj,
+							},
+						},
+					}
+					resObj, err := compareDesignHandler(context.Background(), reqObj)
+					if err != nil {
+						t.Fatalf("handler failed: %v", err)
+					}
+					if !resObj.IsError {
+						t.Fatal("expected IsError when web_layout is a JSON object")
+					}
+					got := resObj.Content[0].(mcp.TextContent).Text
+					if !strings.Contains(got, wantObjErr) {
+						t.Errorf("got %q, want substring %q", got, wantObjErr)
+					}
+					if strings.Contains(got, "[]comparator.WebNode") || strings.Contains(got, "cannot unmarshal") {
+						t.Errorf("error must not expose Go internal types: %q", got)
+					}
+				})
 			}
 		})
 
