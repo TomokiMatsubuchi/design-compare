@@ -14,6 +14,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -5488,7 +5489,15 @@ func TestTypedArgHelpers(t *testing.T) {
 			{"threshold", ""},
 			{"threshold", "abc"},
 			{"threshold", nil},
+			{"threshold", "NaN"},
+			{"threshold", "Inf"},
+			{"threshold", "Infinity"},
+			{"threshold", math.NaN()},
+			{"threshold", math.Inf(1)},
+			{"threshold", math.Inf(-1)},
 			{"max_diff_pixels", "abc"},
+			{"max_diff_pixels", math.NaN()},
+			{"max_diff_pixels", math.Inf(1)},
 			{"generate_diff", "abc"},
 			{"count_extra_web", ""},
 		}
@@ -5689,8 +5698,33 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			want: "argument 'min_match' must be a number",
 		},
 		{
+			name: "min_match NaN",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "min_match": "NaN"},
+			want: "argument 'min_match' must be a number",
+		},
+		{
+			name: "threshold Inf",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "threshold": "Inf"},
+			want: "argument 'threshold' must be a number",
+		},
+		{
+			name: "viewport_width NaN",
+			args: map[string]any{"mode": "layout_integrity", "web_layout": web, "viewport_width": "NaN"},
+			want: "argument 'viewport_width' must be a number",
+		},
+		{
+			name: "viewport_height Inf",
+			args: map[string]any{"mode": "layout_integrity", "web_layout": web, "viewport_height": "Inf"},
+			want: "argument 'viewport_height' must be a number",
+		},
+		{
 			name: "max_diff_pixels abc",
 			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": "abc"},
+			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			name: "max_diff_pixels NaN float",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": math.NaN()},
 			want: "argument 'max_diff_pixels' must be an integer",
 		},
 		{

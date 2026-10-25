@@ -430,11 +430,17 @@ func floatArg(request mcp.CallToolRequest, key string, def float64) (float64, er
 	}
 	switch v := val.(type) {
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			break
+		}
 		return v, nil
 	case int:
 		return float64(v), nil
 	case string:
 		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				break
+			}
 			return f, nil
 		}
 	}
@@ -452,6 +458,9 @@ func intArg(request mcp.CallToolRequest, key string, def int) (int, error) {
 	case int:
 		return v, nil
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			break
+		}
 		return int(v), nil
 	case string:
 		if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
