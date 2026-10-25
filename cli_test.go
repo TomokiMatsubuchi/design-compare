@@ -61,6 +61,21 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		t.Errorf("generate_diff=%v", got["generate_diff"])
 	}
 
+	gotBase64, err := parseCLIArgs([]string{
+		"--mode", "perceptual",
+		"--image-a-base64", "YWFh",
+		"--image-b-base64", "YmJi",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseCLIArgs base64: %v", err)
+	}
+	if gotBase64["image_a_base64"] != "YWFh" {
+		t.Errorf("image_a_base64=%v", gotBase64["image_a_base64"])
+	}
+	if gotBase64["image_b_base64"] != "YmJi" {
+		t.Errorf("image_b_base64=%v", gotBase64["image_b_base64"])
+	}
+
 	figmaInline := `[{"id":"1","name":"card","x":0,"y":0,"w":400,"h":300}]`
 	webInline := `[{"selector":"#card","x":0,"y":0,"w":400,"h":300}]`
 	gotLayout, err := parseCLIArgs([]string{
@@ -95,8 +110,8 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	}
 	for _, key := range []string{
 		"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa",
-		"ignore_region", "generate_diff", "figma_layout", "web_layout",
-		"figma_layout_path", "web_layout_path",
+		"ignore_region", "generate_diff", "image_a_base64", "image_b_base64",
+		"figma_layout", "web_layout", "figma_layout_path", "web_layout_path",
 		"viewport_preset", "viewport_width", "viewport_height", "ignore_nodes",
 		"count_extra_web", "max_details", "diff_on_mismatch",
 	} {
@@ -202,6 +217,31 @@ func TestRunCLIStrictMatchAndMismatch(t *testing.T) {
 	}
 	if result["status"] != "mismatch" {
 		t.Errorf("status=%v", result["status"])
+	}
+}
+
+func TestRunCLIStrictBase64Match(t *testing.T) {
+	imgA := generateSolidImage(8, 8, color.White)
+	imgB := generateSolidImage(8, 8, color.White)
+	b64A := encodePNGBase64(t, imgA)
+	b64B := encodePNGBase64(t, imgB)
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "strict",
+		"--image-a-base64", b64A,
+		"--image-b-base64", b64B,
+		"--generate-diff=false",
+	}, &stdout, &stderr)
+	if code != exitSuccess {
+		t.Fatalf("base64 match exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "success" || result["mode"] != "strict" {
+		t.Errorf("unexpected result: %v", result)
 	}
 }
 
