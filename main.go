@@ -1142,6 +1142,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if integrityResult.IssueCount > 0 {
 			responseMap["issues"] = integrityResult.Issues
 		}
+		// ignore_nodes / ignore_region で実際に除外した Web セレクタ（過剰一致の検証用）。
+		// layout_tree と同様、非空時のみ返す (Issue #444)。
+		if len(integrityResult.IgnoredNodes) > 0 {
+			responseMap["ignored_nodes"] = integrityResult.IgnoredNodes
+		}
+		// ignore_nodes のうちどのノードにも一致しなかったエントリ（スペルミス等）。
+		// ignored_nodes（実際に除外した実体）と役割を分けて返す。
 		if len(integrityResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = integrityResult.UnmatchedIgnores
 		}

@@ -166,6 +166,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" || res.IgnoredCount != 1 {
 			t.Fatalf("got %#v", res)
 		}
+		if len(res.IgnoredNodes) != 1 || res.IgnoredNodes[0] != "web:#wide" {
+			t.Fatalf("IgnoredNodes=%v, want [web:#wide]", res.IgnoredNodes)
+		}
 	})
 
 	t.Run("ignored_parent_still_resolves_for_child_overflow", func(t *testing.T) {
@@ -201,6 +204,32 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if len(res.UnmatchedIgnores) != 1 || res.UnmatchedIgnores[0] != "#missing" {
 			t.Fatalf("unmatched=%v", res.UnmatchedIgnores)
 		}
+		if len(res.IgnoredNodes) != 1 || res.IgnoredNodes[0] != "web:.ad-banner" {
+			t.Fatalf("IgnoredNodes=%v, want [web:.ad-banner]", res.IgnoredNodes)
+		}
+	})
+
+	t.Run("ignore_nodes_wildcard_lists_all_matches", func(t *testing.T) {
+		// ワイルドカードで複数除外されたとき、件数だけでなく実体が並ぶこと (Issue #444)。
+		web := `[
+			{"selector":"#a0","x":0,"y":0,"w":900,"h":50},
+			{"selector":"#a1","x":0,"y":60,"w":900,"h":50},
+			{"selector":"#ok","x":0,"y":120,"w":100,"h":50}
+		]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#a*"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IgnoredCount != 2 {
+			t.Fatalf("got %#v", res)
+		}
+		want := []string{"web:#a0", "web:#a1"}
+		if !stringSlicesEqual(res.IgnoredNodes, want) {
+			t.Fatalf("IgnoredNodes=%v, want %v", res.IgnoredNodes, want)
+		}
+		if len(res.UnmatchedIgnores) != 0 {
+			t.Fatalf("unmatched=%v", res.UnmatchedIgnores)
+		}
 	})
 
 	t.Run("ignore_region_by_center", func(t *testing.T) {
@@ -212,6 +241,20 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if res.Status != "success" || res.IgnoredCount != 1 {
 			t.Fatalf("got %#v", res)
+		}
+		if len(res.IgnoredNodes) != 1 || res.IgnoredNodes[0] != "web:#wide" {
+			t.Fatalf("IgnoredNodes=%v, want [web:#wide]", res.IgnoredNodes)
+		}
+	})
+
+	t.Run("no_ignores_omits_ignored_nodes", func(t *testing.T) {
+		web := `[{"selector":"#page","x":0,"y":0,"w":100,"h":50}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IgnoredCount != 0 || len(res.IgnoredNodes) != 0 {
+			t.Fatalf("expected empty IgnoredNodes, got count=%d nodes=%v", res.IgnoredCount, res.IgnoredNodes)
 		}
 	})
 
@@ -233,6 +276,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if res.Status != "skipped" {
 			t.Fatalf("got %#v", res)
+		}
+		if len(res.IgnoredNodes) != 1 || res.IgnoredNodes[0] != "web:#wide" {
+			t.Fatalf("IgnoredNodes=%v, want [web:#wide]", res.IgnoredNodes)
 		}
 	})
 

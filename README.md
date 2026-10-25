@@ -51,7 +51,7 @@ Figma 比較は「あるキャンバス幅での再現」しか見ないため�
 - **`viewport_overflow_x`:** `x < 0` または `x+w > viewport_width`（1px の丸めは許容）。ビューポート高さ超えはページスクロールとして扱い、失敗にしません。
 - **`parent_overflow`:** 子ボックスが親ボックスからいずれかの辺で 1px 超えてはみ出す。親が JSON に無い場合はこの検査をスキップします。
 - **合否:** 崩れ 0 件 → `success` / 1 件以上 → `mismatch` / 検査対象がすべて除外 → `skipped`。Web ノードが 1 件もない、または全ノードで `w`/`h` が 0 以下（`width`/`height` 等のキー名ミス疑い）の場合も `mismatch` です。`match_rate` は返しません。
-- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`unmatched_ignores` / `unmatched_ignore_regions` は該当時のみ。
+- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`ignored_nodes`（実際に除外した `web:<selector>`）と `unmatched_ignores`（どのノードにも一致しなかった `ignore_nodes` パターン）/ `unmatched_ignore_regions` は該当時のみ。件数の `ignored_count` だけではワイルドカードの広がりすぎを見逃すため、除外実体は `ignored_nodes`、打ち間違いは `unmatched_ignores` で確認する。
 
 横向きを検査するときは、ブラウザを **1024×768 にリサイズしたあと** の DOM 座標を渡してください。縦向きで撮った座標に横向きの幅を当てても意味がありません。
 
@@ -241,7 +241,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 ### `layout_integrity`
 
-§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`unmatched_ignores` / `unmatched_ignore_regions` は該当時のみ。
+§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`ignored_nodes`（実際に除外した `web:<selector>`、非空時のみ。件数は `ignored_count` と一致）/ `unmatched_ignores`（一致しなかった `ignore_nodes` パターン）/ `unmatched_ignore_regions` は該当時のみ。
 
 ---
 

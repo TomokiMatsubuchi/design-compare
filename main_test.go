@@ -2163,6 +2163,56 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
+		// Issue #444: ignored_nodes は非空時のみ返し、空なら省略する。
+		t.Run("IgnoredNodes_PresentOnlyWhenNonEmpty", func(t *testing.T) {
+			reqNone := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": inBounds,
+					},
+				},
+			}
+			resNone, err := compareDesignHandler(context.Background(), reqNone)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultNone map[string]interface{}
+			json.Unmarshal([]byte(resNone.Content[0].(mcp.TextContent).Text), &resultNone)
+			if resultNone["ignored_count"] != float64(0) {
+				t.Errorf("ignored_count=%v", resultNone["ignored_count"])
+			}
+			if _, ok := resultNone["ignored_nodes"]; ok {
+				t.Errorf("Expected no ignored_nodes when empty, got %v", resultNone["ignored_nodes"])
+			}
+
+			reqIgnore := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_integrity",
+						"web_layout":   overflow,
+						"ignore_nodes": "#wide",
+					},
+				},
+			}
+			resIgnore, err := compareDesignHandler(context.Background(), reqIgnore)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultIgnore map[string]interface{}
+			json.Unmarshal([]byte(resIgnore.Content[0].(mcp.TextContent).Text), &resultIgnore)
+			if resultIgnore["status"] != "skipped" {
+				t.Fatalf("status=%v (expected skipped after ignoring sole overflow node)", resultIgnore["status"])
+			}
+			if resultIgnore["ignored_count"] != float64(1) {
+				t.Errorf("ignored_count=%v", resultIgnore["ignored_count"])
+			}
+			ignoredNodes, ok := resultIgnore["ignored_nodes"].([]interface{})
+			if !ok || len(ignoredNodes) != 1 || ignoredNodes[0] != "web:#wide" {
+				t.Errorf("Expected ignored_nodes=[web:#wide], got %v", resultIgnore["ignored_nodes"])
+			}
+		})
+
 		// Issue #425: max_details で details を切り詰める（issue_count / issues は全件）
 		t.Run("MaxDetails", func(t *testing.T) {
 			manyOverflow := `[
