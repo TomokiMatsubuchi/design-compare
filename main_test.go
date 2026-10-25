@@ -1948,6 +1948,35 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
+		t.Run("UnresolvedParentRefs", func(t *testing.T) {
+			// parent が入力に無いとき status は success のまま unresolved_parent_refs を返す (Issue #435)。
+			orphan := `[{"selector":"#orphan","x":0,"y":0,"w":100,"h":50,"parent":"#gone"}]`
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": orphan,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("status=%v", result["status"])
+			}
+			refs, ok := result["unresolved_parent_refs"].([]interface{})
+			if !ok || len(refs) != 1 || refs[0] != "Web: '#gone'" {
+				t.Fatalf("unresolved_parent_refs=%v", result["unresolved_parent_refs"])
+			}
+			if _, ok := result["parent_overflow_skipped_zero_geom"]; ok {
+				t.Fatalf("expected no parent_overflow_skipped_zero_geom, got %v", result["parent_overflow_skipped_zero_geom"])
+			}
+		})
+
 		t.Run("ViewportWidthZero", func(t *testing.T) {
 			req := mcp.CallToolRequest{
 				Params: mcp.CallToolParams{

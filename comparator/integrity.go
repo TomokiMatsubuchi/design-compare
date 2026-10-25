@@ -48,6 +48,13 @@ type LayoutIntegrityResult struct {
 	IgnoredCount           int           `json:"ignored_count"`
 	UnmatchedIgnores       []string      `json:"unmatched_ignores,omitempty"`
 	UnmatchedIgnoreRegions []string      `json:"unmatched_ignore_regions,omitempty"`
+	// UnresolvedParentRefs は parent が空でないのに入力内のどの selector にも
+	// 一致しない参照（タイポ等）。layout_tree と同じ Web: '...' 書式。
+	// status は変えず、parent_overflow を検査していないことの可視化に使う。
+	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
+	// ParentOverflowSkippedZeroGeom は親ノードは入力にあるが w/h が 0 以下のため
+	// parent_overflow をスキップした checkable 子の件数。
+	ParentOverflowSkippedZeroGeom int `json:"parent_overflow_skipped_zero_geom,omitempty"`
 }
 
 // ViewportSizeForPreset は既知プリセットの CSS px サイズを返す。
@@ -194,8 +201,12 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		return result, nil
 	}
 
+	// 親解決用: 非ゼロ幾何のノードのみ（parent_overflow に使える座標）。
 	bySelector := make(map[string]*WebNode, len(allWebNodes))
+	// 入力全体の selector 有無（ゼロ幾何含む）。欠落 vs ゼロ幾何スキップの区別用。
+	presentSelectors := make(map[string]bool, len(allWebNodes))
 	for i := range allWebNodes {
+		presentSelectors[allWebNodes[i].Selector] = true
 		if allWebNodes[i].W <= 0 || allWebNodes[i].H <= 0 {
 			continue
 		}
@@ -205,20 +216,46 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	var issues []LayoutIssue
+	var unresolvedParentRefs []string
+	unresolvedSeen := make(map[string]bool)
+	var skippedUnresolved, skippedZeroGeom int
 	for _, wn := range checkable {
 		if issue, ok := viewportOverflowX(wn, viewportW); ok {
 			issues = append(issues, issue)
 		}
-		if issue, ok := parentOverflow(wn, bySelector); ok {
-			issues = append(issues, issue)
+		if wn.Parent == "" {
+			continue
+		}
+		if bySelector[wn.Parent] != nil {
+			if issue, ok := parentOverflow(wn, bySelector); ok {
+				issues = append(issues, issue)
+			}
+			continue
+		}
+		// 親が解決できない: 入力欠落は unresolved_parent_refs、ゼロ幾何は件数のみ。
+		if presentSelectors[wn.Parent] {
+			skippedZeroGeom++
+			continue
+		}
+		skippedUnresolved++
+		label := fmt.Sprintf("Web: '%s'", wn.Parent)
+		if !unresolvedSeen[label] {
+			unresolvedSeen[label] = true
+			unresolvedParentRefs = append(unresolvedParentRefs, label)
 		}
 	}
 
 	result.CheckedNodes = len(checkable)
 	result.IssueCount = len(issues)
 	result.Issues = issues
+	result.UnresolvedParentRefs = unresolvedParentRefs
+	result.ParentOverflowSkippedZeroGeom = skippedZeroGeom
 	summary := fmt.Sprintf("Checked %d nodes at viewport %.0fx%.0f CSS px%s. Found %d layout issues.",
 		len(checkable), viewportW, viewportH, viewportPresetNote(viewportW, viewportH), len(issues))
+	if skippedUnresolved > 0 || skippedZeroGeom > 0 {
+		summary += fmt.Sprintf(" Skipped parent_overflow for %d child node(s) (%d unresolved parent ref(s), %d zero-geometry parent(s)).",
+			skippedUnresolved+skippedZeroGeom, len(unresolvedParentRefs), skippedZeroGeom)
+	}
 	details := []string{summary}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)

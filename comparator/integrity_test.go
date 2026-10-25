@@ -152,8 +152,56 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Status != "success" {
+		if res.Status != "success" || res.IssueCount != 0 {
 			t.Fatalf("got %#v", res)
+		}
+		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#gone'" {
+			t.Fatalf("unresolved_parent_refs=%v", res.UnresolvedParentRefs)
+		}
+		if res.ParentOverflowSkippedZeroGeom != 0 {
+			t.Fatalf("expected no zero-geom skips, got %d", res.ParentOverflowSkippedZeroGeom)
+		}
+		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "Skipped parent_overflow") || !strings.Contains(res.Details[0], "1 unresolved parent ref") {
+			t.Fatalf("details should mention skipped parent_overflow, got %v", res.Details)
+		}
+	})
+
+	t.Run("zero_geometry_parent_skips_parent_check", func(t *testing.T) {
+		// 親は入力にあるが w/h=0 のため parent_overflow 不可。status は success のまま件数で可視化。
+		web := `[{"selector":"#card","x":0,"y":0,"w":0,"h":0},{"selector":"#child","x":0,"y":0,"w":100,"h":50,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IssueCount != 0 || res.CheckedNodes != 1 {
+			t.Fatalf("got %#v", res)
+		}
+		if len(res.UnresolvedParentRefs) != 0 {
+			t.Fatalf("zero-geometry parent should not be unresolved_parent_refs, got %v", res.UnresolvedParentRefs)
+		}
+		if res.ParentOverflowSkippedZeroGeom != 1 {
+			t.Fatalf("parent_overflow_skipped_zero_geom=%d", res.ParentOverflowSkippedZeroGeom)
+		}
+		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "1 zero-geometry parent") {
+			t.Fatalf("details should mention zero-geometry skip, got %v", res.Details)
+		}
+	})
+
+	t.Run("ignored_parent_with_zero_geometry_reports_skip", func(t *testing.T) {
+		// 除外かつゼロ幾何の親: 親検査はスキップされ、ゼロ幾何スキップとして見える。
+		web := `[{"selector":"#card","x":0,"y":0,"w":0,"h":0},{"selector":"#child","x":10,"y":10,"w":80,"h":40,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#card"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IgnoredCount != 1 {
+			t.Fatalf("got %#v", res)
+		}
+		if res.ParentOverflowSkippedZeroGeom != 1 {
+			t.Fatalf("parent_overflow_skipped_zero_geom=%d", res.ParentOverflowSkippedZeroGeom)
+		}
+		if len(res.UnresolvedParentRefs) != 0 {
+			t.Fatalf("unexpected unresolved_parent_refs=%v", res.UnresolvedParentRefs)
 		}
 	})
 
@@ -186,6 +234,10 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("ignored parent must still resolve for child parent_overflow: %#v", res.Issues)
+		}
+		if len(res.UnresolvedParentRefs) != 0 || res.ParentOverflowSkippedZeroGeom != 0 {
+			t.Fatalf("valid ignored parent must not count as skip: unresolved=%v zero=%d",
+				res.UnresolvedParentRefs, res.ParentOverflowSkippedZeroGeom)
 		}
 	})
 
