@@ -247,6 +247,7 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 | `diff_image` | string | ○ | pixelmatch 差分画像の base64 data URI。生成しない場合は空文字列。 |
 | `image_size` | string | ○ | 両画像共通のピクセル寸法。 |
 | `effective_threshold` | number | ○ | 判定に使った色差許容（未指定時は既定 0.1）。 |
+| `include_aa` | boolean | ○ | 判定に使った AA 境界の扱い（未指定時は既定 false。`diff_pixels` が AA 除外後か含むかを示す）。 |
 | `ignored_regions` | number | ○ | パースできた `ignore_region` の件数。 |
 | `warnings` | string[] | 条件付き | 両画像が単色ベタ塗りで差分 0 のとき（空洞比較）、および `min_match` のみ指定し `max_diff_pixels` を省略したうえで既定 0 が判定を支配して `mismatch` になったとき（既定 0 が判定を支配する旨。合格時は付けない）。 |
 | `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |

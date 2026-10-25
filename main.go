@@ -1063,8 +1063,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			detailLines = append(detailLines, "Match-rate condition passed, but max_diff_pixels defaults to 0 and only allows 0 differing pixels. Explicitly set max_diff_pixels to tolerate a small number of differences.")
 		}
 
-		// 実効パラメータ (threshold / max_diff_pixels) を応答に含め、どの閾値で判定されたかを
-		// 検証可能にする (layout_tree の effective_threshold / pass_rate と同じ方針)。
+		// 実効パラメータ (threshold / max_diff_pixels / include_aa) を応答に含め、
+		// どの閾値・AA 扱いで判定されたかを検証可能にする
+		// (layout_tree の effective_threshold / pass_rate と同じ方針)。
 		responseMap = map[string]interface{}{
 			"status":              status,
 			"mode":                "strict",
@@ -1075,6 +1076,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"image_size":          imageSize,
 			"effective_threshold": threshold,
 			"max_diff_pixels":     maxDiffPixels,
+			"include_aa":          includeAA,
 			"details":             detailLines,
 			"diff_image":          diffImage,
 			"ignored_regions":     len(ignoreRegions),

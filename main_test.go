@@ -3869,6 +3869,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := result["max_diff_pixels"]; got != float64(0) {
 			t.Errorf("Expected max_diff_pixels=0 (default), got %v", got)
 		}
+		// include_aa も未指定時の既定 false を常に echo する (Issue #438)
+		if got := result["include_aa"]; got != false {
+			t.Errorf("Expected include_aa=false (default), got %v", got)
+		}
 		if result["image_size"] != "200x200" {
 			t.Errorf("Expected image_size=200x200, got %v", result["image_size"])
 		}
@@ -4567,6 +4571,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if trueDiff <= omittedDiff {
 			t.Errorf("include_aa=true should increase diff_pixels (omitted=%v, true=%v)", omittedDiff, trueDiff)
+		}
+		// 実効 include_aa を応答へ echo する (Issue #438)
+		if got := omitted["include_aa"]; got != false {
+			t.Errorf("Expected include_aa=false when omitted, got %v", got)
+		}
+		if got := withFalse["include_aa"]; got != false {
+			t.Errorf("Expected include_aa=false when explicitly false, got %v", got)
+		}
+		if got := withTrue["include_aa"]; got != true {
+			t.Errorf("Expected include_aa=true when explicitly true, got %v", got)
 		}
 	})
 
