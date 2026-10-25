@@ -49,9 +49,9 @@ Figma 比較は「あるキャンバス幅での再現」しか見ないため�
 - **既定ビューポート:** 768×1024 CSS px（`viewport_preset` 未指定 = `ipad_portrait`）。
 - **横向き:** `viewport_preset=ipad_landscape`（1024×768）。任意サイズは `viewport_width` / `viewport_height`（0 より大きい値。指定時はプリセットを上書き）。
 - **`viewport_overflow_x`:** `x < 0` または `x+w > viewport_width`（1px の丸めは許容）。ビューポート高さ超えはページスクロールとして扱い、失敗にしません。
-- **`parent_overflow`:** 子ボックスが親ボックスからいずれかの辺で 1px 超えてはみ出す。親が JSON に無い場合はこの検査をスキップします。
-- **合否:** 崩れ 0 件 → `success` / 1 件以上 → `mismatch` / 検査対象がすべて除外 → `skipped`。Web ノードが 1 件もない、または全ノードで `w`/`h` が 0 以下（`width`/`height` 等のキー名ミス疑い）の場合も `mismatch` です。`match_rate` は返しません。
-- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`unmatched_ignores` / `unmatched_ignore_regions` は該当時のみ。
+- **`parent_overflow`:** 子ボックスが親ボックスからいずれかの辺で 1px 超えてはみ出す。親が JSON に無い場合（または親の `w`/`h` が 0 以下で解決できない場合）はこの検査をスキップします。スキップ有無は応答の `parent_checked_nodes`（解決できて包含検査した件数。常時返す）で確認でき、0 なら `parent_overflow` は未適用です。解決できない `parent` は `unresolved_parent_refs`（例: `Web: '#card-typo'`）に入り、`details` にも未適用の注記が付きます（合否は変えません）。
+- **合否:** 崩れ 0 件 → `success` / 1 件以上 → `mismatch` / 検査対象がすべて除外 → `skipped`。Web ノードが 1 件もない、または全ノードで `w`/`h` が 0 以下（`width`/`height` 等のキー名ミス疑い）の場合も `mismatch` です。`match_rate` は返しません。`success` でも `parent_checked_nodes=0` のときは親はみ出しを検証していないため、DOM キャプチャに正しい `parent` を含めて再実行してください。
+- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `parent_checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。
 
 横向きを検査するときは、ブラウザを **1024×768 にリサイズしたあと** の DOM 座標を渡してください。縦向きで撮った座標に横向きの幅を当てても意味がありません。
 
@@ -241,7 +241,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 ### `layout_integrity`
 
-§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`unmatched_ignores` / `unmatched_ignore_regions` は該当時のみ。
+§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `parent_checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。`parent_checked_nodes` は常時返し、0 なら `parent_overflow` 未適用（`details` に注記）。
 
 ---
 

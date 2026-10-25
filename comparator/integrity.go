@@ -42,12 +42,14 @@ type LayoutIntegrityResult struct {
 	ViewportWidth          float64       `json:"viewport_width"`
 	ViewportHeight         float64       `json:"viewport_height"`
 	CheckedNodes           int           `json:"checked_nodes"`
+	ParentCheckedNodes     int           `json:"parent_checked_nodes"` // parent を解決して包含検査した件数（0 なら parent_overflow 未適用）
 	IssueCount             int           `json:"issue_count"`
 	Issues                 []LayoutIssue `json:"issues,omitempty"`
 	Details                []string      `json:"details"`
 	IgnoredCount           int           `json:"ignored_count"`
 	UnmatchedIgnores       []string      `json:"unmatched_ignores,omitempty"`
 	UnmatchedIgnoreRegions []string      `json:"unmatched_ignore_regions,omitempty"`
+	UnresolvedParentRefs   []string      `json:"unresolved_parent_refs,omitempty"` // 解決できない parent（layout_tree と同種の誤用検出）
 }
 
 // ViewportSizeForPreset は既知プリセットの CSS px サイズを返す。
@@ -205,9 +207,25 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	var issues []LayoutIssue
+	var parentChecked int
+	var unresolvedParentRefs []string
+	seenUnresolved := make(map[string]bool)
 	for _, wn := range checkable {
 		if issue, ok := viewportOverflowX(wn, viewportW); ok {
 			issues = append(issues, issue)
+		}
+		// parent 解決の診断は合否を変えず、無言スキップを呼び出し側が誤認しないようにする
+		// (layout_tree の unresolved_parent_refs / absolute_mode_pairs と同種。Issue #440)。
+		if wn.Parent != "" {
+			if bySelector[wn.Parent] == nil {
+				label := fmt.Sprintf("Web: '%s'", wn.Parent)
+				if !seenUnresolved[label] {
+					seenUnresolved[label] = true
+					unresolvedParentRefs = append(unresolvedParentRefs, label)
+				}
+			} else {
+				parentChecked++
+			}
 		}
 		if issue, ok := parentOverflow(wn, bySelector); ok {
 			issues = append(issues, issue)
@@ -215,11 +233,18 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	result.CheckedNodes = len(checkable)
+	result.ParentCheckedNodes = parentChecked
+	result.UnresolvedParentRefs = unresolvedParentRefs
 	result.IssueCount = len(issues)
 	result.Issues = issues
 	summary := fmt.Sprintf("Checked %d nodes at viewport %.0fx%.0f CSS px%s. Found %d layout issues.",
 		len(checkable), viewportW, viewportH, viewportPresetNote(viewportW, viewportH), len(issues))
 	details := []string{summary}
+	// parent_checked_nodes=0 は親はみ出し検査が一度も走っていない合図。
+	// status は変えず details に注記し、success を「親検査込みの合格」と誤認させない。
+	if parentChecked == 0 {
+		details = append(details, "parent_overflow was not applied because no usable parent references were resolved (parent_checked_nodes=0)")
+	}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)
 	}

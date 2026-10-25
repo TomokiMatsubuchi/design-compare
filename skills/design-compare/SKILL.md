@@ -65,7 +65,8 @@ A pixel-perfect match against Figma desktop/mobile frames does **NOT** prove tha
 1. **Portrait (default):** resize the browser to **768×1024 CSS px**, recapture **DOM bounding boxes only** (not Figma), then call `compare_design` with `mode: "layout_integrity"` and `web_layout` (or `web_layout_path`) from that capture.
 2. **Landscape:** resize to **1024×768 CSS px**, recapture DOM boxes at that size, then call again with `viewport_preset: "ipad_landscape"` (or `viewport_width: 1024` and `viewport_height: 768`). Do **not** reuse portrait coordinates for the landscape check.
 3. Treat `viewport_overflow_x` and `parent_overflow` as failures. Vertical overflow of the viewport is expected page scroll and is not a failure.
-4. Fix overflow / parent overflow, then re-run **both** orientations until each returns `status: success`. `mismatch` or `skipped` leaves verification incomplete.
+4. **Confirm parent checks ran:** each response includes `parent_checked_nodes` (how many nodes had a resolvable `parent` and ran containment). If it is `0`, `parent_overflow` was **not** applied — do **not** treat `status: success` as proof that parent overflow passed. Recapture with correct `parent` selectors (matching another node's `selector` in the same JSON). Non-empty `unresolved_parent_refs` (e.g. `Web: '#card-typo'`) means a `parent` value did not resolve; fix the typo or missing parent node before claiming success.
+5. Fix overflow / parent overflow, then re-run **both** orientations until each returns `status: success` **and** `parent_checked_nodes > 0` (when the DOM has parent/child structure to verify). `mismatch` or `skipped` leaves verification incomplete.
 
 ### Step 6: Analyze Results and Fix Code
 - Check the output `status` and, for Figma-compare modes, `match_rate`.
