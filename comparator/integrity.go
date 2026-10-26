@@ -48,6 +48,9 @@ type LayoutIntegrityResult struct {
 	IgnoredCount           int           `json:"ignored_count"`
 	UnmatchedIgnores       []string      `json:"unmatched_ignores,omitempty"`
 	UnmatchedIgnoreRegions []string      `json:"unmatched_ignore_regions,omitempty"`
+	// UnresolvedParentRefs は parent が空でないのに入力内の selector に解決できない参照。
+	// 親ボックス検査は従来どおりスキップし、status は変えない（layout_tree と同種の誤用検出）。
+	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
 }
 
 // ViewportSizeForPreset は既知プリセットの CSS px サイズを返す。
@@ -168,12 +171,19 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		checkable = append(checkable, wn)
 	}
 
+	// 親参照の解決可否は ignore 除外前の全ノードで判定する。
+	// 除外された親を「解決不能」と誤報せず、タイポ等だけを layout_tree と同じ
+	// unresolved_parent_refs（Web: '...'）で通知する。status は変えない。
+	allBySelector := indexWebNodesBySelector(allWebNodes)
+	unresolvedParentRefs := collectUnresolvedParentRefs(nil, allWebNodes, nil, allBySelector)
+
 	result := &LayoutIntegrityResult{
 		ViewportWidth:          viewportW,
 		ViewportHeight:         viewportH,
 		IgnoredCount:           ignoredCount,
 		UnmatchedIgnores:       unmatchedIgnores,
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
+		UnresolvedParentRefs:   unresolvedParentRefs,
 	}
 
 	if len(checkable) == 0 {
@@ -194,6 +204,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		return result, nil
 	}
 
+	// parent_overflow 用インデックスは w/h>0 のノードのみ（幾何のない親では検査不可）。
 	bySelector := make(map[string]*WebNode, len(allWebNodes))
 	for i := range allWebNodes {
 		if allWebNodes[i].W <= 0 || allWebNodes[i].H <= 0 {

@@ -1150,6 +1150,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(integrityResult.UnmatchedIgnoreRegions) > 0 {
 			responseMap["unmatched_ignore_regions"] = integrityResult.UnmatchedIgnoreRegions
 		}
+		// parent が空でないのに selector に解決できない参照（タイポ等）。
+		// 親ボックス検査は従来どおりスキップし、status は非破壊 (Issue #449)。
+		if len(integrityResult.UnresolvedParentRefs) > 0 {
+			responseMap["unresolved_parent_refs"] = integrityResult.UnresolvedParentRefs
+		}
 
 	default:
 		// 有効モードを列挙し、タイポ時にREADME等を見ずに1回のリトライで自己修復できるようにする

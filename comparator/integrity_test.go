@@ -155,6 +155,25 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" {
 			t.Fatalf("got %#v", res)
 		}
+		// 親ボックス検査はスキップしたまま、解決できない parent を誤用検出として返す。
+		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#gone'" {
+			t.Fatalf("unresolved_parent_refs=%v, want [Web: '#gone']", res.UnresolvedParentRefs)
+		}
+	})
+
+	t.Run("ignored_parent_not_reported_as_unresolved", func(t *testing.T) {
+		// 除外された親はインデックスに残るため、解決不能として誤報しない。
+		web := `[{"selector":"#card","x":0,"y":0,"w":400,"h":200},{"selector":"#child","x":10,"y":10,"w":50,"h":50,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#card"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IgnoredCount != 1 {
+			t.Fatalf("got %#v", res)
+		}
+		if len(res.UnresolvedParentRefs) != 0 {
+			t.Fatalf("ignored parent must not be unresolved, got %v", res.UnresolvedParentRefs)
+		}
 	})
 
 	t.Run("ignore_nodes_excludes_overflow", func(t *testing.T) {
