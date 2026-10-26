@@ -2607,6 +2607,31 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Errorf("Expected no out_of_bounds_regions for in-bounds ignore_region, got %v", resultRegion["out_of_bounds_regions"])
 		}
 
+		// JSON 配列でも文字列と同じ除外になる (Issue #447)
+		reqRegionArr := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "perceptual",
+					"image_path_a":  pathE,
+					"image_path_b":  pathF,
+					"ignore_region": []any{"0,0,100,100"},
+				},
+			},
+		}
+		resRegionArr, err := compareDesignHandler(context.Background(), reqRegionArr)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resRegionArr.IsError {
+			t.Fatalf("Expected success with ignore_region array, got %v", resRegionArr.Content[0].(mcp.TextContent).Text)
+		}
+		var resultRegionArr map[string]interface{}
+		json.Unmarshal([]byte(resRegionArr.Content[0].(mcp.TextContent).Text), &resultRegionArr)
+		if resultRegionArr["status"] != resultRegion["status"] || resultRegionArr["ignored_regions"] != resultRegion["ignored_regions"] {
+			t.Errorf("Expected ignore_region array to match string (status=%v ignored_regions=%v), got status=%v ignored_regions=%v",
+				resultRegion["status"], resultRegion["ignored_regions"], resultRegionArr["status"], resultRegionArr["ignored_regions"])
+		}
+
 		// 空セグメントはパース時にスキップされ、有効領域数だけ ignored_regions に入る
 		reqEmptySeg := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -5413,6 +5438,9 @@ func TestTypedArgHelpers(t *testing.T) {
 		if v, err := stringArg(req, "ignore_region", ""); err != nil || v != "" {
 			t.Errorf("stringArg missing: got %v, %v", v, err)
 		}
+		if v, err := ignoreRegionArg(req); err != nil || v != "" {
+			t.Errorf("ignoreRegionArg missing: got %v, %v", v, err)
+		}
 		if v, err := ignoreNodesArg(req); err != nil || v != nil {
 			t.Errorf("ignoreNodesArg missing: got %v, %v", v, err)
 		}
@@ -5436,16 +5464,16 @@ func TestTypedArgHelpers(t *testing.T) {
 	})
 
 	t.Run("stringArg accepts string and rejects non-string", func(t *testing.T) {
-		reqOK := reqWithArgs(map[string]any{"ignore_region": "0,0,10,10"})
-		if v, err := stringArg(reqOK, "ignore_region", ""); err != nil || v != "0,0,10,10" {
+		reqOK := reqWithArgs(map[string]any{"image_path_a": "/tmp/a.png"})
+		if v, err := stringArg(reqOK, "image_path_a", ""); err != nil || v != "/tmp/a.png" {
 			t.Errorf("stringArg string: got %v, %v", v, err)
 		}
-		for _, val := range []any{123, []any{"0,0,10,10"}, nil, true} {
-			req := reqWithArgs(map[string]any{"ignore_region": val})
-			if _, err := stringArg(req, "ignore_region", ""); err == nil {
-				t.Errorf("expected error for ignore_region=%#v", val)
-			} else if !strings.Contains(err.Error(), "argument 'ignore_region' must be a string") {
-				t.Errorf("unexpected error for ignore_region=%#v: %v", val, err)
+		for _, val := range []any{123, []any{"x"}, nil, true} {
+			req := reqWithArgs(map[string]any{"image_path_a": val})
+			if _, err := stringArg(req, "image_path_a", ""); err == nil {
+				t.Errorf("expected error for image_path_a=%#v", val)
+			} else if !strings.Contains(err.Error(), "argument 'image_path_a' must be a string") {
+				t.Errorf("unexpected error for image_path_a=%#v: %v", val, err)
 			}
 		}
 	})
@@ -5480,6 +5508,36 @@ func TestTypedArgHelpers(t *testing.T) {
 		}
 	})
 
+	t.Run("ignoreRegionArg accepts string and string array", func(t *testing.T) {
+		reqStr := reqWithArgs(map[string]any{"ignore_region": "0,0,10,10;20,20,5,5"})
+		got, err := ignoreRegionArg(reqStr)
+		if err != nil {
+			t.Fatalf("string: %v", err)
+		}
+		if got != "0,0,10,10;20,20,5,5" {
+			t.Errorf("string: got %q", got)
+		}
+		reqArr := reqWithArgs(map[string]any{"ignore_region": []any{"0,0,10,10", "20,20,5,5"}})
+		gotArr, err := ignoreRegionArg(reqArr)
+		if err != nil {
+			t.Fatalf("array: %v", err)
+		}
+		if gotArr != "0,0,10,10;20,20,5,5" {
+			t.Errorf("array: got %q", gotArr)
+		}
+	})
+
+	t.Run("ignoreRegionArg rejects non-string / non-string-array", func(t *testing.T) {
+		for _, val := range []any{123, nil, true, map[string]any{"a": 1}, []any{"0,0,10,10", 1}} {
+			req := reqWithArgs(map[string]any{"ignore_region": val})
+			if _, err := ignoreRegionArg(req); err == nil {
+				t.Errorf("expected error for ignore_region=%#v", val)
+			} else if !strings.Contains(err.Error(), "argument 'ignore_region' must be a string or a JSON array of strings") {
+				t.Errorf("unexpected error for ignore_region=%#v: %v", val, err)
+			}
+		}
+	})
+
 	t.Run("unconvertible values error", func(t *testing.T) {
 		cases := []struct {
 			key string
@@ -5510,8 +5568,8 @@ func TestTypedArgHelpers(t *testing.T) {
 	})
 }
 
-// TestIgnoreNodesArrayAndTypedErrors は Issue #420: ignore_nodes の JSON 配列受け付けと、
-// ignore_nodes / ignore_region への非文字列が明示エラーになることを検証する。
+// TestIgnoreNodesArrayAndTypedErrors は Issue #420 / #447: ignore_nodes / ignore_region の
+// JSON 配列受け付けと、非文字列・非配列が明示エラーになることを検証する。
 func TestIgnoreNodesArrayAndTypedErrors(t *testing.T) {
 	figmaLayout := `[
 		{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
@@ -5604,7 +5662,7 @@ func TestIgnoreNodesArrayAndTypedErrors(t *testing.T) {
 			t.Fatal("expected IsError for numeric ignore_region")
 		}
 		got := res.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(got, "argument 'ignore_region' must be a string") {
+		if !strings.Contains(got, "argument 'ignore_region' must be a string or a JSON array of strings") {
 			t.Errorf("got %q", got)
 		}
 	})
@@ -5631,6 +5689,29 @@ func TestIgnoreNodesArrayAndTypedErrors(t *testing.T) {
 		}
 		if got := result["ignored_count"]; got != float64(2) {
 			t.Errorf("Expected ignored_count=2 for nav region, got %v", got)
+		}
+	})
+
+	t.Run("ignore_region JSON array excludes like semicolon string", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":          "layout_tree",
+			"figma_layout":  figmaLayout,
+			"web_layout":    webLayoutIncorrect,
+			"ignore_region": []any{"380,40,30,20", "780,40,30,20"},
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success with ignore_region array, got %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected success after ignore_region array, got status=%v rate=%v", result["status"], result["match_rate"])
+		}
+		if got := result["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 for nav region array, got %v", got)
 		}
 	})
 
