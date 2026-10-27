@@ -158,10 +158,15 @@ func newCompareDesignTool() mcp.Tool {
 // readLocalFile は path のローカルファイルを読む。os.Stat でサイズを確認し、
 // MaxInputFileBytes を超える場合は読み込まずエラーにする (Issue #489)。
 // 寸法検査より前にメモリを食い尽くす巨大ファイルやスパースファイルを防ぐ。
+// FD やデバイスなど通常ファイル以外は終端が無く読み込みが終わらないため拒否する
+// (Issue #450)。
 func readLocalFile(path, param string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", param, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file (got mode %s)", param, info.Mode())
 	}
 	if info.Size() > comparator.MaxInputFileBytes {
 		return nil, fmt.Errorf("%s is too large (%d bytes; limit %d bytes)", param, info.Size(), comparator.MaxInputFileBytes)
@@ -185,6 +190,7 @@ func readLocalFile(path, param string) ([]byte, error) {
 // path / base64 のどちらでも、返却前に PNG/GIF ヘッダ寸法を検査する
 // (CheckHeaderDimensions)。巨大 IHDR 宣言の PNG が image.Decode 到達前に弾かれる。
 // エラーには入力パラメータ名を label として渡し、A/B どちらの入力かを文面に残す。
+// パス入力は readLocalFile で通常ファイルかつ MaxInputFileBytes 以内に制限する。
 func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
 	switch {
 	case pathValue != "" && base64Value != "":
@@ -280,6 +286,7 @@ func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 
 // resolveLayoutInput returns the layout JSON from either an inline JSON string or
 // a local file path (exactly one must be provided, mirroring resolveImageInput).
+// パス入力は readLocalFile で通常ファイルかつ MaxInputFileBytes 以内に制限する。
 func resolveLayoutInput(inlineValue, pathValue, inlineParam, pathParam string) (string, error) {
 	switch {
 	case inlineValue != "" && pathValue != "":

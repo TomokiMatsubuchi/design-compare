@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"design-compare/comparator"
@@ -5708,6 +5709,35 @@ func TestResolveImageInput_FileSizeLimit(t *testing.T) {
 	if got := err.Error(); got != wantLayout {
 		t.Errorf("layout error: got %q want %q", got, wantLayout)
 	}
+}
+
+// TestResolveImageInput_RejectsNonRegularPaths は FIFO やデバイスのように終端が
+// 無いパスを読み込み前に拒否し、resolveImageInput / resolveLayoutInput が
+// ハングしないことを検証する (Issue #450)。
+func TestResolveImageInput_RejectsNonRegularPaths(t *testing.T) {
+	t.Run("device_path", func(t *testing.T) {
+		_, err := resolveImageInput("/dev/null", "", "image_path_a", "image_a_base64")
+		if err == nil {
+			t.Fatal("expected /dev/null to be rejected as a non-regular file")
+		}
+		if !strings.Contains(err.Error(), "image_path_a must be a regular file") {
+			t.Errorf("error should name the parameter and the regular-file requirement, got %q", err.Error())
+		}
+	})
+
+	t.Run("fifo_path", func(t *testing.T) {
+		fifoPath := filepath.Join(t.TempDir(), "pipe")
+		if err := syscall.Mkfifo(fifoPath, 0o644); err != nil {
+			t.Fatalf("mkfifo: %v", err)
+		}
+		_, err := resolveLayoutInput("", fifoPath, "web_layout", "web_layout_path")
+		if err == nil {
+			t.Fatal("expected FIFO to be rejected as a non-regular file")
+		}
+		if !strings.Contains(err.Error(), "web_layout_path must be a regular file") {
+			t.Errorf("error should name the parameter and the regular-file requirement, got %q", err.Error())
+		}
+	})
 }
 
 func reqWithArgs(args map[string]any) mcp.CallToolRequest {
