@@ -61,6 +61,21 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		t.Errorf("generate_diff=%v", got["generate_diff"])
 	}
 
+	gotBase64, err := parseCLIArgs([]string{
+		"--mode", "strict",
+		"--image-a-base64", "aaa=",
+		"--image-b-base64", "bbb=",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseCLIArgs base64: %v", err)
+	}
+	if gotBase64["image_a_base64"] != "aaa=" {
+		t.Errorf("image_a_base64=%v", gotBase64["image_a_base64"])
+	}
+	if gotBase64["image_b_base64"] != "bbb=" {
+		t.Errorf("image_b_base64=%v", gotBase64["image_b_base64"])
+	}
+
 	figmaInline := `[{"id":"1","name":"card","x":0,"y":0,"w":400,"h":300}]`
 	webInline := `[{"selector":"#card","x":0,"y":0,"w":400,"h":300}]`
 	gotLayout, err := parseCLIArgs([]string{
@@ -147,8 +162,8 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	}
 	for _, key := range []string{
 		"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa",
-		"ignore_region", "generate_diff", "figma_layout", "web_layout",
-		"figma_layout_path", "web_layout_path",
+		"ignore_region", "generate_diff", "image_a_base64", "image_b_base64",
+		"figma_layout", "web_layout", "figma_layout_path", "web_layout_path",
 		"viewport_preset", "viewport_width", "viewport_height", "ignore_nodes",
 		"count_extra_web", "max_details", "diff_on_mismatch",
 	} {
