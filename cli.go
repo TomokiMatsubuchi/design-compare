@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -91,6 +92,9 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	if rest := fs.Args(); len(rest) > 0 {
+		return nil, fmt.Errorf("unexpected argument(s): %s (boolean flags need the --flag=value form; every value must follow its flag)", strings.Join(rest, " "))
 	}
 
 	toolArgs := make(map[string]any)
