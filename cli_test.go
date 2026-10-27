@@ -87,6 +87,58 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 	}
 }
 
+func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
+	var stderr bytes.Buffer
+	_, err := parseCLIArgs([]string{
+		"--mode", "strict",
+		"--image-a", "a.png",
+		"--image-b", "b.png",
+		"--generate-diff", "false",
+		"--max-diff-pixels", "100",
+	}, &stderr)
+	if err == nil {
+		t.Fatal("expected error for space-separated boolean value")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "unexpected argument(s): false") {
+		t.Errorf("error should mention unexpected false, got %q", msg)
+	}
+	if !strings.Contains(msg, "--flag=value") {
+		t.Errorf("error should hint --flag=value form, got %q", msg)
+	}
+
+	_, err = parseCLIArgs([]string{
+		"--mode", "strict",
+		"--image-a", "a.png",
+		"--image-b", "b.png",
+		"--include-aa", "false",
+		"--ignore-region", "0,0,100,50",
+	}, &stderr)
+	if err == nil {
+		t.Fatal("expected error for space-separated --include-aa value")
+	}
+	if !strings.Contains(err.Error(), "unexpected argument(s): false") {
+		t.Errorf("error should mention unexpected false, got %q", err.Error())
+	}
+
+	got, err := parseCLIArgs([]string{
+		"--mode", "strict",
+		"--image-a", "a.png",
+		"--image-b", "b.png",
+		"--generate-diff=false",
+		"--max-diff-pixels", "100",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("equals form must succeed: %v", err)
+	}
+	if got["generate_diff"] != false {
+		t.Errorf("generate_diff=%v", got["generate_diff"])
+	}
+	if got["max_diff_pixels"] != 100 {
+		t.Errorf("max_diff_pixels=%v", got["max_diff_pixels"])
+	}
+}
+
 func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	var stderr bytes.Buffer
 	got, err := parseCLIArgs([]string{"--mode", "perceptual", "--image-a", "a.png", "--image-b", "b.png"}, &stderr)
