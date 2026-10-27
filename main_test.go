@@ -1681,6 +1681,34 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array") {
 			t.Errorf("got %q", gotBad)
 		}
+
+		// 比較側は JSON 配列しか受け付けないため、ネイティブ object は明示エラーにする
+		// (Marshal して後段の cannot unmarshal object に落とさない)。
+		reqObject := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode": "layout_tree",
+					"figma_layout": map[string]any{
+						"nodes": figmaNative,
+					},
+					"web_layout": webString,
+				},
+			},
+		}
+		resObject, err := compareDesignHandler(context.Background(), reqObject)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resObject.IsError {
+			t.Fatal("expected IsError when figma_layout is a JSON object")
+		}
+		gotObject := resObject.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotObject, "figma_layout must be a JSON array of node objects (a JSON object is not supported); pass the nodes as an array") {
+			t.Errorf("got %q", gotObject)
+		}
+		if strings.Contains(gotObject, "cannot unmarshal") {
+			t.Errorf("expected explicit object rejection, not Go unmarshal error: %q", gotObject)
+		}
 	})
 
 	// =================================================================
