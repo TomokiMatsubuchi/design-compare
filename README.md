@@ -238,6 +238,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `warnings` | string[] | 条件付き | 両画像が単色ベタ塗りで差分 0 のとき（空洞比較）、および `min_match` のみ指定し `max_diff_pixels` を省略したとき（既定 0 が判定を支配する旨）。 |
 | `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |
 | `diff_regions` | object[] | 非空時のみ | 赤い差分ピクセルの bounding box（`generate_diff` が true のとき）。 |
+| `max_diff_pixels` | number | ○ | 判定に使った許容差分ピクセル数（省略時は既定 0）。 |
 
 ### `layout_integrity`
 
