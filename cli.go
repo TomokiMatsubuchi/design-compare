@@ -79,6 +79,8 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")
 	imageA := fs.String("image-a", "", "Path to reference image A (maps to image_path_a)")
 	imageB := fs.String("image-b", "", "Path to target image B (maps to image_path_b)")
+	imageABase64 := fs.String("image-a-base64", "", "Base64 reference image A (maps to image_a_base64; mutually exclusive with --image-a)")
+	imageBBase64 := fs.String("image-b-base64", "", "Base64 target image B (maps to image_b_base64; mutually exclusive with --image-b)")
 	figmaLayout := fs.String("figma-layout", "", "Inline Figma layout JSON (maps to figma_layout; mutually exclusive with --figma-layout-file)")
 	webLayout := fs.String("web-layout", "", "Inline Web layout JSON (maps to web_layout; mutually exclusive with --web-layout-file)")
 	figmaFile := fs.String("figma-layout-file", "", "Path to Figma layout JSON (maps to figma_layout_path)")
@@ -114,6 +116,10 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 			toolArgs["image_path_a"] = *imageA
 		case "image-b":
 			toolArgs["image_path_b"] = *imageB
+		case "image-a-base64":
+			toolArgs["image_a_base64"] = *imageABase64
+		case "image-b-base64":
+			toolArgs["image_b_base64"] = *imageBBase64
 		case "figma-layout":
 			toolArgs["figma_layout"] = *figmaLayout
 		case "web-layout":

@@ -26,6 +26,8 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		"--mode", "strict",
 		"--image-a", "a.png",
 		"--image-b", "b.png",
+		"--image-a-base64", "aaa",
+		"--image-b-base64", "bbb",
 		"--threshold", "0.2",
 		"--min-match", "99",
 		"--max-diff-pixels", "3",
@@ -41,6 +43,9 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 	}
 	if got["image_path_a"] != "a.png" || got["image_path_b"] != "b.png" {
 		t.Errorf("image paths: %v", got)
+	}
+	if got["image_a_base64"] != "aaa" || got["image_b_base64"] != "bbb" {
+		t.Errorf("image base64: %v", got)
 	}
 	if got["threshold"] != 0.2 {
 		t.Errorf("threshold=%v", got["threshold"])
@@ -147,7 +152,8 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	}
 	for _, key := range []string{
 		"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa",
-		"ignore_region", "generate_diff", "figma_layout", "web_layout",
+		"ignore_region", "generate_diff", "image_a_base64", "image_b_base64",
+		"figma_layout", "web_layout",
 		"figma_layout_path", "web_layout_path",
 		"viewport_preset", "viewport_width", "viewport_height", "ignore_nodes",
 		"count_extra_web", "max_details", "diff_on_mismatch",
