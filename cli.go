@@ -36,6 +36,8 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		if err == flag.ErrHelp {
 			return exitSuccess
 		}
+		// parseCLIArgs は flag の自動出力を Discard しているため、ここが
+		// パース／検証エラー本文の唯一の stderr 出力点になる。
 		fmt.Fprintln(stderr, err)
 		return exitError
 	}
@@ -61,11 +63,17 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 
 func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	fs := flag.NewFlagSet("design-compare", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	// flag は ContinueOnError でも解析失敗時にエラー行を Output へ書く。
+	// runCLIWithIO でも同じ行を出すと二重になるため Discard し、エラー本文は
+	// 呼び出し元に一本化する。Usage だけは利用者向けに stderr へ出す。
+	fs.SetOutput(io.Discard)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
 		fmt.Fprintf(stderr, "       design-compare          (no args: start stdio MCP server)\n\n")
+		prev := fs.Output()
+		fs.SetOutput(stderr)
 		fs.PrintDefaults()
+		fs.SetOutput(prev)
 	}
 
 	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")

@@ -304,6 +304,21 @@ func TestRunCLIErrorExit(t *testing.T) {
 	}
 }
 
+func TestRunCLIUnknownFlagOnce(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{"--bogus"}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on parse error, got %s", stdout.String())
+	}
+	msg := "flag provided but not defined"
+	if n := strings.Count(stderr.String(), msg); n != 1 {
+		t.Errorf("stderr must mention %q exactly once, got %d in %q", msg, n, stderr.String())
+	}
+}
+
 func TestExitCodeFromResultJSON(t *testing.T) {
 	if got := exitCodeFromResultJSON(`{"status":"success"}`); got != exitSuccess {
 		t.Errorf("success -> %d", got)
