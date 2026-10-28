@@ -5,6 +5,7 @@
 // finishes too quickly to trigger.
 
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 /** One MCP tools/call content block (text and/or image). */
 export interface McpContent {
@@ -115,6 +116,10 @@ export function callCompareDesign(options: CallOptions): Promise<McpCallResult> 
     let settled = false;
     let stdout = "";
     let stderr = "";
+    // Decode across chunk boundaries so multi-byte UTF-8 (e.g. Japanese
+    // node names) is not corrupted into U+FFFD by Buffer.toString().
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
 
     const finish = (error: Error | undefined, value?: McpCallResult): void => {
       if (settled) return;
@@ -133,11 +138,11 @@ export function callCompareDesign(options: CallOptions): Promise<McpCallResult> 
 
     // Logs go to stderr, so they never corrupt the stdout JSON-RPC stream.
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr += stderrDecoder.write(chunk);
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdout += stdoutDecoder.write(chunk);
       let newlineIndex = stdout.indexOf("\n");
       while (newlineIndex !== -1) {
         const line = stdout.slice(0, newlineIndex).trim();
