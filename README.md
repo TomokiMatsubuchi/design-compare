@@ -75,7 +75,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 `compare_design` ツールの全パラメータを以下に示します。`mode`（必須）には `layout_tree` / `perceptual` / `strict` / `layout_integrity` のいずれかを指定します（各モードの詳細は「1. 4つの検証モード (`mode`)」を参照）。なお `strict` では比較前に両画像のピクセル寸法（縦横の画素数）が完全に一致している必要があり、異なる場合は `image size mismatch` エラーになります（同一ビューポート・DPR で撮り直すか `perceptual` モードを使用）。
 
-**注意:** モードごとに意味やスケールが異なるパラメータ（特に `threshold`）があります。また、当該モードでは効果を持たないパラメータ（例: `layout_tree` への `min_match`、`perceptual` への `pass_rate`）を指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラーが返ります。パラメータと有効モードの対応表は「9. 破壊的変更」を参照してください。
+**注意:** モードごとに意味やスケールが異なるパラメータ（特に `threshold`）があります。また、当該モードでは効果を持たないパラメータ（例: `layout_tree` への `min_match`、`perceptual` への `pass_rate`）を指定すると、比較を実行せずに `parameter 'X' is not supported in mode 'Y'` のツール実行エラーが返ります。パラメータと有効モードの対応表は「9. 破壊的変更」を参照してください。表の型が `string` のパラメータに数値・真偽値・配列・オブジェクト・`null` など string 以外を渡すと、空文字へ黙って落とさず `argument 'X' must be a string` のツール実行エラーになります（`number` / `boolean` も変換不能なら同様にエラー）。`ignore_nodes` のみカンマ区切り文字列に加え、文字列要素の JSON 配列も受け付けます（それ以外の型は `argument 'ignore_nodes' must be a string or a JSON array of strings`）。
 
 ### 入力データ
 
@@ -104,7 +104,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
 | `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
 | `include_aa` | boolean | `strict` | true / false | false | `true` の場合、アンチエイリアス境界ピクセルも差分として数える（pixelmatch の IncludeAntiAlias）。既定 `false` は現行どおり AA 境界を差分カウントから除外する。 |
-| `ignore_nodes` | string | `layout_tree` / `layout_integrity` | — | 空 | 比較から除外する識別子のカンマ区切りリスト。`layout_tree` では Figma Node ID / Node Name / Web Selector、`layout_integrity` では Web Selector。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。全ノードが除外されて比較ペアがなくなった場合は比較を実施せず、status は `skipped`（比較未実施）になる。 |
+| `ignore_nodes` | string / string[] | `layout_tree` / `layout_integrity` | — | 空 | 比較から除外する識別子。カンマ区切り文字列、または文字列要素の JSON 配列（例: `["nav", "#footer"]`）。`layout_tree` では Figma Node ID / Node Name / Web Selector、`layout_integrity` では Web Selector。末尾が `*` のエントリはプレフィックス一致（例: `.ad-*` は `.ad-banner` に一致）として扱われ、命名規則に従うグループを列挙なしで除外できる。どのノードにも一致しなかった除外エントリは `unmatched_ignores` として応答される（プレフィックスエントリは一致ノードが1つも無い場合のみ報告）。全ノードが除外されて比較ペアがなくなった場合は比較を実施せず、status は `skipped`（比較未実施）になる。string / string[] 以外はエラー。 |
 | `ignore_region` | string | 全モード | — | 空 | 除外する矩形領域。`x,y,w,h`（px 単位、`x,y >= 0`・`w,h > 0`）をセミコロン区切りで列挙（例: `10,20,100,50;200,300,80,60`）。各値は小数可で、格納時に整数へ丸められる。`perceptual` / `strict` では比較前に両画像を白でマスクし、パースできた領域数は応答の `ignored_regions` に常に含まれる。画像と全く交差しない領域は `out_of_bounds_regions` として応答される。`perceptual` で両画像のサイズが異なる場合、同じ `x,y,w,h` は各画像自身のピクセル座標として適用されるため別の領域をマスクし得る（範囲内なら `out_of_bounds_regions` は出ない）。`details` に注記し、`warnings` にも同じ注意を付ける。`layout_tree` / `layout_integrity` では BoundingBox の中心点が領域内にあるノードを除外し（`layout_tree` では両側から、`layout_integrity` では Web ノードを）、除外数は `ignored_count` に加算される（全件除外時は `skipped`）。どのノード中心とも重ならない領域は `unmatched_ignore_regions` として応答される。`layout_tree` では Figma 側・Web 側に同一の領域座標が適用される（Figma キャンバスにオフセットがある場合は要座標合わせ）。 |
 | `viewport_preset` | string | `layout_integrity` | `ipad_portrait` / `ipad_landscape` | 未指定時は縦向き相当 | iPad 既定サイズ。`ipad_portrait` = 768×1024、`ipad_landscape` = 1024×768。 |
 | `viewport_width` | number | `layout_integrity` | 0 より大 | 768 | CSS ピクセルのビューポート幅。指定時は `viewport_preset` の幅を上書きする。 |
