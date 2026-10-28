@@ -5575,6 +5575,8 @@ func TestTypedArgHelpers(t *testing.T) {
 			{"threshold", ""},
 			{"threshold", "abc"},
 			{"threshold", nil},
+			{"threshold", "NaN"},
+			{"threshold", "Inf"},
 			{"max_diff_pixels", "abc"},
 			{"generate_diff", "abc"},
 			{"count_extra_web", ""},
