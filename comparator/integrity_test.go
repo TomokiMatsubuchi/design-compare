@@ -187,6 +187,26 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if !found {
 			t.Fatalf("ignored parent must still resolve for child parent_overflow: %#v", res.Issues)
 		}
+		if len(res.UnresolvedParentRefs) != 0 {
+			t.Fatalf("ignored parent must not be reported as unresolved: %v", res.UnresolvedParentRefs)
+		}
+	})
+
+	t.Run("unresolved_parent_reported_status_unchanged", func(t *testing.T) {
+		web := `[{"selector":"#child","x":0,"y":0,"w":100,"h":100,"parent":"#missing"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" {
+			t.Fatalf("unresolved parent must not change status, got %#v", res)
+		}
+		if res.IssueCount != 0 {
+			t.Fatalf("expected no layout issues, got %#v", res)
+		}
+		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#missing'" {
+			t.Fatalf("expected unresolved_parent_refs=[Web: '#missing'], got %v", res.UnresolvedParentRefs)
+		}
 	})
 
 	t.Run("ignore_nodes_wildcard_and_unmatched", func(t *testing.T) {
