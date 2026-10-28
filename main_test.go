@@ -1976,6 +1976,65 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
+		// Issue #460: 解決できない parent は status を変えず unresolved_parent_refs で通知する。
+		t.Run("UnresolvedParentRefs", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": `[{"selector":"#child","x":0,"y":0,"w":100,"h":100,"parent":"#missing"}]`,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("status must stay success, got %#v", result)
+			}
+			if result["issue_count"] != float64(0) {
+				t.Errorf("issue_count=%v", result["issue_count"])
+			}
+			refs, ok := result["unresolved_parent_refs"].([]interface{})
+			if !ok || len(refs) != 1 || refs[0] != "Web: '#missing'" {
+				t.Errorf("Expected unresolved_parent_refs=[Web: '#missing'], got %v", result["unresolved_parent_refs"])
+			}
+		})
+
+		// Issue #460: ignore_nodes で除外した親は unresolved にしない（索引は除外前の元リスト）。
+		t.Run("IgnoredParentNotUnresolved", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_integrity",
+						"web_layout":   `[{"selector":"#card","x":0,"y":0,"w":400,"h":200},{"selector":"#child","x":10,"y":10,"w":100,"h":50,"parent":"#card"}]`,
+						"ignore_nodes": "#card",
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("got %#v", result)
+			}
+			if _, ok := result["unresolved_parent_refs"]; ok {
+				t.Errorf("ignored parent must not appear in unresolved_parent_refs: %v", result["unresolved_parent_refs"])
+			}
+		})
+
 		t.Run("ViewportWidthZero", func(t *testing.T) {
 			req := mcp.CallToolRequest{
 				Params: mcp.CallToolParams{
