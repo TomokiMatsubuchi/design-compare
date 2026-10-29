@@ -2243,15 +2243,39 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
-		// width/height など w/h 以外のキー名で幾何が全て 0 の場合、「データが空」ではなく
-		// 幾何欠落として区別されたメッセージが details に流れることを確認する。
-		t.Run("ZeroGeometry_DistinctDetail", func(t *testing.T) {
+		// キー名ミスは無言のゼロ幾何ではなく入力エラーにする（Issue #481）。
+		t.Run("WrongGeometryKeys_InputError", func(t *testing.T) {
 			wrongKeys := `[{"selector":"#a","x":0,"y":0,"width":100,"height":50}]`
 			req := mcp.CallToolRequest{
 				Params: mcp.CallToolParams{
 					Arguments: map[string]any{
 						"mode":       "layout_integrity",
 						"web_layout": wrongKeys,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatal("expected IsError for mistyped width/height keys")
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "missing required field 'w'") {
+				t.Fatalf("error text=%q", got)
+			}
+		})
+
+		// 必須キーは揃っているが幾何が全て 0 の場合、「データが空」ではなく
+		// 幾何欠落として区別されたメッセージが details に流れることを確認する。
+		t.Run("ZeroGeometry_DistinctDetail", func(t *testing.T) {
+			zeroGeom := `[{"selector":"#a","x":0,"y":0,"w":0,"h":0}]`
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": zeroGeom,
 					},
 				},
 			}
