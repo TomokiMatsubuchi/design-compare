@@ -58,6 +58,10 @@ func newDesignCompareMCPServer() *server.MCPServer {
 // newCompareDesignTool は compare_design のツール定義を返す。
 // ローカル入力を読んで比較結果 JSON を返す読み取り専用ツールのため、
 // mcp-go のデフォルト（destructive=true 等）ではなく read-only 系ヒントを明示する。
+//
+// パラメータ説明は Pi 拡張スキーマ (extensions/design-compare/index.ts) にも
+// 重複している。Pi 経由の呼び出しではモデルは Go 側の mcp.Description を読めない
+// ため、ヒントを追加・変更したら両方を揃えること。
 func newCompareDesignTool() mcp.Tool {
 	// compare_design ツール定義 (4つの決定論的検証モードをサポート。LLM等の非決定性AIは不使用)
 	return mcp.NewTool("compare_design",
