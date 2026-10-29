@@ -370,6 +370,31 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 	})
 
+	t.Run("partial_ignore_remaining_zero_geometry_is_mismatch", func(t *testing.T) {
+		// ignore で一部だけ除外し、残りがすべて幾何 0 のとき「全件除外」の
+		// skipped と誤報せず、ゼロ幾何の mismatch にする（Issue #475）。
+		web := `[{"selector":"#a","x":0,"y":0,"w":0,"h":0},{"selector":"#b","x":0,"y":0,"w":10,"h":10}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#b"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" {
+			t.Fatalf("expected mismatch for remaining zero-geometry node, got %#v", res)
+		}
+		if res.IgnoredCount != 1 || res.CheckedNodes != 0 {
+			t.Fatalf("ignored_count=1 checked_nodes=0 expected, got %#v", res)
+		}
+		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "no Web nodes have non-zero geometry") {
+			t.Fatalf("details should report zero geometry, got %v", res.Details)
+		}
+		if strings.Contains(res.Details[0], "All Web nodes were excluded") {
+			t.Errorf("must not report all-excluded when a zero-geometry node remains: %q", res.Details[0])
+		}
+		if !strings.Contains(res.Details[0], "1 node was ignored by ignore_nodes / ignore_region") {
+			t.Errorf("details should note concurrent ignore count, got %q", res.Details[0])
+		}
+	})
+
 	t.Run("summary_viewport_preset_note", func(t *testing.T) {
 		web := `[{"selector":"#page","x":0,"y":0,"w":768,"h":200}]`
 
