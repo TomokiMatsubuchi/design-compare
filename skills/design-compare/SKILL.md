@@ -22,14 +22,22 @@ Ensure the following MCP servers are configured:
 
 When asked to verify how well a web page implementation matches a Figma design, execute the following multi-mcp workflow:
 
+**Working directory for artifacts:** Create one unique directory per verification run (e.g. `/tmp/design-compare-<unique-suffix>/` where `<unique-suffix>` is a timestamp, PID, or random id). Save every capture under that directory and reuse the **same filenames** across Steps 1–3. Do **not** write fixed names under `/tmp/` itself — `compare_design` may run in parallel, and reusing `/tmp/figma.png` (etc.) can mix captures across calls or orientations.
+
+Example layout for one run (`RUN=/tmp/design-compare-<unique-suffix>`):
+- `$RUN/figma.png` — Figma node image
+- `$RUN/web.png` — Web screenshot
+- `$RUN/web-portrait.json` — DOM boxes at iPad portrait (Step 5)
+- `$RUN/web-landscape.json` — DOM boxes at iPad landscape (Step 5)
+
 ### Step 1: Gather Figma Design Data
 Use the **Figma MCP server** to fetch:
-- Node image: Save to a local path (e.g. `/tmp/figma_design.png`).
+- Node image: Save to `$RUN/figma.png` (e.g. `/tmp/design-compare-20261029-a1b2/figma.png`).
 - Node metadata: Extract the layout bounding boxes and structural details.
 
 ### Step 2: Gather Web Implementation Data
 Use your browser automation MCP tools (chrome-devtools-mcp or playwright-cli):
-- Capture page screenshot: Save to a local path (e.g. `/tmp/web_actual.png`).
+- Capture page screenshot: Save to `$RUN/web.png` (e.g. `/tmp/design-compare-20261029-a1b2/web.png`).
 - Extract DOM bounding boxes into a **WebNode** JSON array for `web_layout` / `web_layout_path`.
 
 **WebNode schema** (same JSON for `layout_tree` and `layout_integrity`):
@@ -78,10 +86,10 @@ Call the `compare_design` tool from **design-compare** using the appropriate mod
     *   Parameters: `mode: "layout_tree"`, `figma_layout: "[...]"`, `web_layout: "[...]"`
 *   **Mode: `perceptual` (Recommended for visual template verification)**
     *   Use when comparing images, but you want to ignore minor sub-pixel rendering quirks, text content differences, or anti-aliasing details. It scales down and checks macro-layout blocks.
-    *   Parameters: `mode: "perceptual"`, `image_path_a: "/tmp/figma.png"`, `image_path_b: "/tmp/web.png"`
+    *   Parameters: `mode: "perceptual"`, `image_path_a: "/tmp/design-compare-<unique-suffix>/figma.png"`, `image_path_b: "/tmp/design-compare-<unique-suffix>/web.png"`
 *   **Mode: `strict` (Recommended for visual regression / detail verification)**
     *   Use when checking exact visual styles (color matches, border widths, exact layouts) using Pixelmatch.
-    *   Parameters: `mode: "strict"`, `image_path_a: "/tmp/figma.png"`, `image_path_b: "/tmp/web.png"`
+    *   Parameters: `mode: "strict"`, `image_path_a: "/tmp/design-compare-<unique-suffix>/figma.png"`, `image_path_b: "/tmp/design-compare-<unique-suffix>/web.png"`
 
 ### Step 4: Verify Interaction States (Scroll & Button Interactions)
 Static rendering alone is not enough. You **MUST** also confirm that the UI/UX does not break (no layout collapse, overlap, clipping, or overflow) after user interactions such as scrolling and pressing buttons.
@@ -100,10 +108,12 @@ If any interaction state fails the threshold, fix the CSS/HTML (e.g. overflow ha
 
 A pixel-perfect match against Figma desktop/mobile frames does **NOT** prove that the layout survives tablet widths. You **MUST** additionally verify layout integrity at **both** iPad orientations:
 
-1. **Portrait (default):** resize the browser to **768×1024 CSS px**, recapture **DOM bounding boxes only** (not Figma), then call `compare_design` with `mode: "layout_integrity"` and `web_layout` (or `web_layout_path`) from that capture.
-2. **Landscape:** resize to **1024×768 CSS px**, recapture DOM boxes at that size, then call again with `viewport_preset: "ipad_landscape"` (or `viewport_width: 1024` and `viewport_height: 768`). Do **not** reuse portrait coordinates for the landscape check.
+Use **separate files** per orientation under the same `$RUN` directory (never overwrite one capture with the other — portrait and landscape checks may run in parallel):
+
+1. **Portrait (default):** resize the browser to **768×1024 CSS px**, recapture **DOM bounding boxes only** (not Figma) into `$RUN/web-portrait.json`, then call `compare_design` with `mode: "layout_integrity"` and `web_layout_path: "/tmp/design-compare-<unique-suffix>/web-portrait.json"` (or inline `web_layout` from that capture).
+2. **Landscape:** resize to **1024×768 CSS px**, recapture DOM boxes into `$RUN/web-landscape.json`, then call again with `viewport_preset: "ipad_landscape"` (or `viewport_width: 1024` and `viewport_height: 768`) and `web_layout_path: "/tmp/design-compare-<unique-suffix>/web-landscape.json"`. Do **not** reuse portrait coordinates or the portrait file for the landscape check.
 3. Treat `viewport_overflow_x` and `parent_overflow` as failures. Vertical overflow of the viewport is expected page scroll and is not a failure.
-4. Fix overflow / parent overflow, then re-run **both** orientations until each returns `status: success`. `mismatch` or `skipped` leaves verification incomplete.
+4. Fix overflow / parent overflow, then re-run **both** orientations (each with its own file) until each returns `status: success`. `mismatch` or `skipped` leaves verification incomplete.
 
 ### Step 6: Analyze Results and Fix Code
 - Check the output `status` and, for Figma-compare modes, `match_rate`.

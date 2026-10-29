@@ -362,14 +362,17 @@ pi remove npm:design-compare   # アンインストール
 > 「Figmaのこのデザイン（Figma URL）と、ローカルの http://localhost:3000/dashboard を比較して。テンプレート（配置）が同じかどうかを検証したい」
 
 ### AIの自律的な処理フロー:
+実行ごとに一意な作業ディレクトリ（例: `/tmp/design-compare-<一意な接尾辞>/`）を作り、成果物はそこにだけ保存する。`/tmp` 直下の固定名は使わない（並列呼び出しや縦横の取り直しでキャプチャが混ざるのを防ぐ）。
+
 1. **デザインデータの取得:**
-   AIが `figma` MCPを使ってデザイン画像やレイアウト座標（JSON）を取得。
+   AIが `figma` MCPを使ってデザイン画像やレイアウト座標（JSON）を取得し、例として `$RUN/figma.png` に保存する。
 2. **実装データの取得:**
-   AIが `chrome-devtools` MCP等を使ってWebページを自動操作（必要なら自動ログイン）し、実装された要素のスクショやDOM座標（JSON）を取得。
+   AIが `chrome-devtools` MCP等を使ってWebページを自動操作（必要なら自動ログイン）し、実装された要素のスクショやDOM座標（JSON）を取得し、例として `$RUN/web.png` に保存する。
 3. **比較の実行:**
    AIが本ツールの `compare_design` を呼び出して比較を実行。
    * 例: `compare_design(mode="layout_tree", figma_layout="...", web_layout="...", pass_rate=95.0)`
-   * 加えて、ブラウザを iPad 縦向き 768×1024 と横向き 1024×768 にリサイズして DOM を取り直し、`mode="layout_integrity"`（横向きは `viewport_preset="ipad_landscape"`）で崩れを検査する。
+   * 画像比較の例: `compare_design(mode="perceptual", image_path_a="$RUN/figma.png", image_path_b="$RUN/web.png")`（`strict` も同じパス）
+   * 加えて、ブラウザを iPad 縦向き 768×1024 と横向き 1024×768 にリサイズして DOM を取り直し、向きごとに別名で保存する（例: `$RUN/web-portrait.json` / `$RUN/web-landscape.json`）。`mode="layout_integrity"` をそれぞれ別ファイルで呼び出す（横向きは `viewport_preset="ipad_landscape"`）。縦向きの座標やファイルを横向き検査に使い回さない。
 4. **結果の分析とコード修正:**
    AIが一致率や差分を分析し、レイアウトがズレているCSSやHTMLを自動で修正・再検証します。
 
