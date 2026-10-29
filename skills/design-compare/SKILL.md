@@ -115,6 +115,8 @@ Use **separate files** per orientation under the same `$RUN` directory (never ov
 3. Treat `viewport_overflow_x` and `parent_overflow` as failures. Vertical overflow of the viewport is expected page scroll and is not a failure.
 4. Fix overflow / parent overflow, then re-run **both** orientations (each with its own file) until each returns `status: success`. `mismatch` or `skipped` leaves verification incomplete.
 
+Intentional horizontal scroll regions (carousels, `overflow-x: auto` tables, marquees, and similar) still fire `viewport_overflow_x` on their children when a child's box extends past the viewport width, even if the scroll container itself fits inside the viewport. Do **not** treat that as a CSS bug to "fix" — exclude those children with `ignore_nodes` (e.g. `.carousel-*`) or `ignore_region`, and confirm the exclusion matched via `unmatched_ignores` / `unmatched_ignore_regions` (empty when every ignore took effect).
+
 ### Step 6: Analyze Results and Fix Code
 - Check the output `status` and, for Figma-compare modes, `match_rate`.
 - In `layout_tree` mode, missing required keys (`id`/`name`/`selector`/`x`/`y`/`w`/`h`) or empty identifiers are input errors. If `zero_geometry_warning` is present despite valid keys, most nodes have explicit `w`/`h` of 0 — do not treat a 100% match as valid until the geometry is corrected.
