@@ -187,19 +187,25 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	if len(checkable) == 0 {
+		// 幾何 0 のノードが残っている場合は、ignore 件数があっても「全件除外」と
+		// 誤報しない（layout_tree の #238 と同方針）。キー名ミス (width/height 等)
+		// や非表示要素の計測が主因なので、ゼロ幾何の mismatch を先に返す。
+		if len(wNodes) > 0 {
+			result.Status = "mismatch"
+			detail := fmt.Sprintf("no Web nodes have non-zero geometry (%d nodes parsed); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}", len(wNodes))
+			if ignoredCount > 0 {
+				detail += fmt.Sprintf(" (and %s by ignore_nodes / ignore_region)", ignoredNodesWerePhrase(ignoredCount))
+			}
+			result.Details = []string{detail}
+			return result, nil
+		}
+		// ignore で全ノードが除外され検査対象が無くなった場合のみ skipped。
 		if ignoredCount > 0 {
 			result.Status = "skipped"
 			result.Details = []string{fmt.Sprintf("All Web nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", ignoredCount)}
 			return result, nil
 		}
 		result.Status = "mismatch"
-		if len(wNodes) > 0 {
-			// ノードは存在するが幾何 (w/h) が全て 0 以下。layout_tree の
-			// zero_geometry_warning と同様、キー名の揺れ (width/height 等) を
-			// 疑えるよう「データは空ではなく幾何が欠落」を区別して通知する。
-			result.Details = []string{fmt.Sprintf("no Web nodes have non-zero geometry (%d nodes parsed); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}", len(wNodes))}
-			return result, nil
-		}
 		result.Details = []string{"Web layout node data is empty"}
 		return result, nil
 	}
