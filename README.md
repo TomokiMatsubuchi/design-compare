@@ -143,8 +143,10 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | フィールド | 型 | 必須 | 説明 |
 | :--- | :--- | :--- | :--- |
 | `selector` | string | ○ | 要素識別子（CSS セレクタ等）。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。 |
-| `x` / `y` / `w` / `h` | number | ○ | 要素の BoundingBox（ページ上の絶対座標とサイズ）。 |
+| `x` / `y` / `w` / `h` | number | ○ | 要素の BoundingBox（**絶対 CSS px**。ドキュメント／ページ共通の座標空間。キー名は `w` / `h` であり `width` / `height` ではない）。 |
 | `parent` | string | — | 親要素の `selector`。省略時は親なしとして扱われる。入力内のどの `selector` にも一致しない場合は絶対座標比較へフォールバックし、応答に `unresolved_parent_refs` が付く。 |
+
+DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `window.scrollY` で絶対 CSS px にするコピペ用スニペット、親相対オフセットを `x` / `y` に入れない注意、`layout_integrity` でも同じ WebNode JSON を使うこと）は [`skills/design-compare/SKILL.md`](skills/design-compare/SKILL.md) の **Step 2** を参照してください。
 
 最小例 — `figma_layout`（`figma_layout_path` で指定するファイルも同じ形式）:
 
