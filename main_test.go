@@ -14,6 +14,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -5603,8 +5604,6 @@ func TestTypedArgHelpers(t *testing.T) {
 			{"threshold", ""},
 			{"threshold", "abc"},
 			{"threshold", nil},
-			{"threshold", "NaN"},
-			{"threshold", "Inf"},
 			{"max_diff_pixels", "abc"},
 			{"generate_diff", "abc"},
 			{"count_extra_web", ""},
@@ -5622,6 +5621,45 @@ func TestTypedArgHelpers(t *testing.T) {
 			}
 			if err == nil {
 				t.Errorf("expected error for %s=%#v", tc.key, tc.val)
+			}
+		}
+	})
+
+	t.Run("non-finite numbers error as finite", func(t *testing.T) {
+		cases := []struct {
+			key string
+			val any
+		}{
+			{"threshold", "NaN"},
+			{"threshold", "Inf"},
+			{"threshold", "+Inf"},
+			{"threshold", "-Inf"},
+			{"threshold", math.NaN()},
+			{"threshold", math.Inf(1)},
+			{"threshold", math.Inf(-1)},
+			{"min_match", "NaN"},
+			{"viewport_width", "Inf"},
+			{"max_diff_pixels", "NaN"},
+			{"max_diff_pixels", "Inf"},
+			{"max_diff_pixels", math.NaN()},
+			{"max_diff_pixels", math.Inf(1)},
+		}
+		for _, tc := range cases {
+			req := reqWithArgs(map[string]any{tc.key: tc.val})
+			var err error
+			switch tc.key {
+			case "threshold", "min_match", "viewport_width":
+				_, err = floatArg(req, tc.key, 0)
+			case "max_diff_pixels":
+				_, err = intArg(req, tc.key, 0)
+			}
+			if err == nil {
+				t.Errorf("expected error for %s=%v", tc.key, tc.val)
+				continue
+			}
+			want := fmt.Sprintf("argument '%s' must be a finite number", tc.key)
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s=%v: got %q, want containing %q", tc.key, tc.val, err.Error(), want)
 			}
 		}
 	})
@@ -5809,6 +5847,26 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			name: "max_diff_pixels abc",
 			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": "abc"},
 			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			name: "threshold NaN",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "threshold": "NaN"},
+			want: "argument 'threshold' must be a finite number",
+		},
+		{
+			name: "threshold Inf",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "threshold": "Inf"},
+			want: "argument 'threshold' must be a finite number",
+		},
+		{
+			name: "min_match NaN",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "min_match": "NaN"},
+			want: "argument 'min_match' must be a finite number",
+		},
+		{
+			name: "max_diff_pixels Inf",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": "Inf"},
+			want: "argument 'max_diff_pixels' must be a finite number",
 		},
 		{
 			name: "count_extra_web abc",
