@@ -30,7 +30,45 @@ Use the **Figma MCP server** to fetch:
 ### Step 2: Gather Web Implementation Data
 Use your browser automation MCP tools (chrome-devtools-mcp or playwright-cli):
 - Capture page screenshot: Save to a local path (e.g. `/tmp/web_actual.png`).
-- Extract DOM bounding boxes: Retrieve selectors, relative coordinate hierarchies, widths, and heights in a JSON format.
+- Extract DOM bounding boxes into a **WebNode** JSON array for `web_layout` / `web_layout_path`.
+
+**WebNode schema** (same JSON for `layout_tree` and `layout_integrity`):
+
+| Field | Required | Meaning |
+| :--- | :--- | :--- |
+| `selector` | yes | Element id used for matching and as the target of `parent` |
+| `x` / `y` / `w` / `h` | yes | Bounding box in **absolute CSS px** (document / page coordinates shared by every node) |
+| `parent` | no | Parent node's `selector` string (not a DOM parentNode walk result unless that string matches an entry's `selector`) |
+
+Keys are `w` / `h` — **not** `width` / `height`. Coordinates must live in one shared absolute space; do **not** pass parent-relative offsets as `x` / `y` (the comparator derives parent ratios itself via `getWebRelativeCoords`). Do not mix scrolled and unscrolled samples in the same array.
+
+**Copy-paste extraction snippet** (run in the page; add `window.scrollX` / `window.scrollY` to `getBoundingClientRect()`):
+
+```javascript
+// nodes: [{ selector: '.frame' }, { selector: '.card', parent: '.frame' }, ...]
+function extractWebLayout(nodes) {
+  return nodes.map(({ selector, parent }) => {
+    const el = document.querySelector(selector);
+    if (!el) throw new Error(`missing: ${selector}`);
+    const r = el.getBoundingClientRect();
+    const node = {
+      selector,
+      x: r.left + window.scrollX,
+      y: r.top + window.scrollY,
+      w: r.width,
+      h: r.height,
+    };
+    if (parent) node.parent = parent;
+    return node;
+  });
+}
+JSON.stringify(extractWebLayout([
+  { selector: '.frame' },
+  { selector: '.card', parent: '.frame' },
+]));
+```
+
+Pass the resulting array as `web_layout` (or write it to a file and use `web_layout_path`). Reuse the same shape for Step 5 `layout_integrity` (recapture after resizing the viewport).
 
 ### Step 3: Run the Comparison
 Call the `compare_design` tool from **design-compare** using the appropriate mode:
