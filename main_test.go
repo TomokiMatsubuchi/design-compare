@@ -4243,7 +4243,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// min_match のみ指定し max_diff_pixels を省略すると既定 0 が判定を支配する。
-	// status / match_rate は変えず、warnings で呼び出し側に気付かせる (Issue #206)
+	// mismatch かつ一致率が min_match 以上のときだけ warnings を付ける (Issue #206 / #476)。
+	// 差分 0 で合格した呼び出しには付けない。
 	t.Run("StrictMode_MinMatch_DefaultMaxDiffPixels_Warning", func(t *testing.T) {
 		const wantWarning = "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)"
 
@@ -4269,6 +4270,33 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		gotWarnings, ok := resultWarn["warnings"].([]interface{})
 		if !ok || len(gotWarnings) != 1 || gotWarnings[0] != wantWarning {
 			t.Errorf("Expected warnings=[%q], got %v", wantWarning, resultWarn["warnings"])
+		}
+
+		// 同一画像に min_match だけ指定して合格したときは warnings を付けない
+		reqPass := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "strict",
+					"image_path_a": pathA,
+					"image_path_b": pathA,
+					"min_match":    50.0,
+				},
+			},
+		}
+		resPass, err := compareDesignHandler(context.Background(), reqPass)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultPass map[string]interface{}
+		json.Unmarshal([]byte(resPass.Content[0].(mcp.TextContent).Text), &resultPass)
+		if resultPass["status"] != "success" {
+			t.Fatalf("Expected success for identical images with min_match only, got status=%v", resultPass["status"])
+		}
+		if resultPass["diff_pixels"] != float64(0) {
+			t.Fatalf("Expected diff_pixels=0 for identical images, got %v", resultPass["diff_pixels"])
+		}
+		if _, ok := resultPass["warnings"]; ok {
+			t.Errorf("Expected no warnings on success with min_match only, got %v", resultPass["warnings"])
 		}
 
 		reqBoth := mcp.CallToolRequest{

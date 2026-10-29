@@ -1032,12 +1032,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			responseMap["min_match"] = minMatchRate
 		}
 		// min_match だけ指定して max_diff_pixels を省略すると既定 0 が判定を支配し、
-		// 差分が 1px でも mismatch になる。status / match_rate は変えず、
-		// perceptual の一様画像 warnings と同様に応答へ通知する (Issue #206)。
+		// 差分が 1px でも mismatch になる。details ヒントと同じ条件
+		// (mismatch かつ一致率は min_match 以上) のときだけ warnings へ載せる
+		// (Issue #206 / #476)。合格時 (diff 0 など) には付けない。
 		// 両画像が単色ベタ塗りで diff_pixels=0 の空洞比較も同じフィールドへ載せる
 		// (Issue #227)。非空時のみ含めるのは perceptual と同じ。
 		var respWarnings []string
-		if hasMinMatch && !hasMaxDiffPixels {
+		if hasMinMatch && !hasMaxDiffPixels && status == "mismatch" && comparator.RoundMatchRateDisplay(matchRate) >= minMatchRate {
 			respWarnings = append(respWarnings, "max_diff_pixels defaults to 0; any differing pixel causes mismatch regardless of min_match (set max_diff_pixels to allow some differences)")
 		}
 		respWarnings = append(respWarnings, warnings...)

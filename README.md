@@ -110,7 +110,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `threshold` | number | `perceptual` | 1.0–100.0 | 98.0 | 後方互換のため `min_match`（一致率%）のエイリアスとして受け付ける。1.0 未満は strict モードの 0.0–1.0 スケールとの混同を防ぐためエラーになる。`min_match` との同時指定もエラー。**`min_match` の使用を推奨。** |
 | `threshold` | number | `strict` | 0.0–1.0 | 0.1 | 色差の許容度（pixelmatch の color diff tolerance）。 |
 | `min_match` | number | `perceptual` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。実効値（`threshold` エイリアス解決後を含む）は応答の `min_match` として常に返される。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
-| `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。`max_diff_pixels` を省略したまま指定すると既定 0 が判定を支配するため、status / match_rate は変えず応答へ `warnings` を付ける。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
+| `min_match` | number | `strict` | 0.0–100.0 | なし | 合格に必要な最低一致率（%）。未指定なら判定に使わず `max_diff_pixels` のみで判定する。指定時は `max_diff_pixels` と併用され、どちらか一方でも超過すると `mismatch`。`max_diff_pixels` を省略したまま指定し、既定 0 が判定を支配して `mismatch` になったときだけ（一致率は `min_match` 以上なのに差分ピクセルで落ちた場合）、status / match_rate は変えず応答へ `warnings` を付ける。合格時（差分 0 など）には付けない。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
 | `pass_rate` | number | `layout_tree` | 0.0–100.0 | 98.0 | 合格に必要な最低一致率（%）。判定は表示桁（小数第2位）に丸めた一致率に対して行う。 |
 | `max_diff_pixels` | number | `strict` | 0 以上 | 0 | 許容される差分ピクセル数の上限。デフォルトの 0 は「1px でも差分があれば `mismatch`」を意味する。 |
 | `include_aa` | boolean | `strict` | true / false | false | `true` の場合、アンチエイリアス境界ピクセルも差分として数える（pixelmatch の IncludeAntiAlias）。既定 `false` は現行どおり AA 境界を差分カウントから除外する。 |
@@ -245,7 +245,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `image_size` | string | ○ | 両画像共通のピクセル寸法。 |
 | `effective_threshold` | number | ○ | 判定に使った色差許容（未指定時は既定 0.1）。 |
 | `ignored_regions` | number | ○ | パースできた `ignore_region` の件数。 |
-| `warnings` | string[] | 条件付き | 両画像が単色ベタ塗りで差分 0 のとき（空洞比較）、および `min_match` のみ指定し `max_diff_pixels` を省略したとき（既定 0 が判定を支配する旨）。 |
+| `warnings` | string[] | 条件付き | 両画像が単色ベタ塗りで差分 0 のとき（空洞比較）、および `min_match` のみ指定し `max_diff_pixels` を省略したうえで既定 0 が判定を支配して `mismatch` になったとき（既定 0 が判定を支配する旨。合格時は付けない）。 |
 | `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |
 | `diff_regions` | object[] | 非空時のみ | 赤い差分ピクセルの bounding box（`generate_diff` が true のとき）。 |
 | `max_diff_pixels` | number | ○ | 判定に使った許容差分ピクセル数（省略時は既定 0）。 |
