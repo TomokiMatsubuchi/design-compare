@@ -3,6 +3,11 @@
 //
 // The Go binary stays the single source of truth for comparison behavior. The
 // extension only owns the Pi tool schema and stdio JSON-RPC transport.
+//
+// Parameter `description` strings below must stay aligned with Go's
+// compare_design tool in main.go (newCompareDesignTool / mcp.Description).
+// Pi models only see this schema — keep self-repair hints (ignore_nodes '*',
+// base64 data URIs, ignore_region feedback fields, viewport > 0) in sync.
 
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -72,13 +77,13 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
       image_a_base64: Type.Optional(
         Type.String({
           description:
-            "Raw base64-encoded reference image A for perceptual/strict; mutually exclusive with image_path_a",
+            "Base64-encoded reference image A for perceptual/strict; mutually exclusive with image_path_a. Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI ('data:<mime>;base64,...') as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace in the base64 payload is ignored; standard base64 alphabet only; padding ('=') may be omitted",
         }),
       ),
       image_b_base64: Type.Optional(
         Type.String({
           description:
-            "Raw base64-encoded target image B for perceptual/strict; mutually exclusive with image_path_b",
+            "Base64-encoded target image B for perceptual/strict; mutually exclusive with image_path_b. Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI ('data:<mime>;base64,...') as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace in the base64 payload is ignored; standard base64 alphabet only; padding ('=') may be omitted",
         }),
       ),
       figma_layout: Type.Optional(
@@ -111,24 +116,26 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
       ),
       viewport_width: Type.Optional(
         Type.Number({
-          description: "CSS pixel viewport width for layout_integrity; overrides viewport_preset width",
+          description:
+            "CSS pixel viewport width for layout_integrity only (default 768, iPad portrait); passing it in another mode is rejected. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset width",
         }),
       ),
       viewport_height: Type.Optional(
         Type.Number({
-          description: "CSS pixel viewport height for layout_integrity; overrides viewport_preset height",
+          description:
+            "CSS pixel viewport height for layout_integrity only (default 1024, iPad portrait); passing it in another mode is rejected. Must be greater than 0. Combined with viewport_preset, an explicit value overrides the preset height",
         }),
       ),
       ignore_nodes: Type.Optional(
         Type.String({
           description:
-            "Comma-separated Figma node IDs/names or Web selectors to ignore in layout_tree and layout_integrity",
+            "Comma-separated Figma node IDs/names or Web selectors to ignore (layout_tree and layout_integrity). A JSON array of strings is also accepted. In layout_integrity only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner'); a prefix that matches no node is reported in unmatched_ignores. For perceptual/strict use ignore_region instead",
         }),
       ),
       ignore_region: Type.Optional(
         Type.String({
           description:
-            "Semicolon-separated x,y,w,h pixel regions to mask or exclude, e.g. '10,20,100,50;200,300,80,60'",
+            "Semicolon-separated x,y,w,h pixel regions (e.g. '10,20,100,50;200,300,80,60'). In perceptual/strict (where ignore_nodes is unsupported), both images are white-masked in these regions before comparison; parsed count is ignored_regions; regions that miss the image entirely are reported in out_of_bounds_regions. In layout_tree and layout_integrity, nodes whose bounding-box center lies inside a region are excluded (counted in ignored_count); regions that contain no node center are reported in unmatched_ignore_regions. Useful to exclude dynamic content (dates, ads, banners)",
         }),
       ),
       count_extra_web: Type.Optional(
