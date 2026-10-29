@@ -427,7 +427,7 @@ func validateModeParams(args map[string]any, mode string) error {
 }
 
 // floatArg は数値引数を読む。キー未指定なら def を返す。キーがあるのに
-// 数値へ変換できない値 ("" / "abc" / null / NaN / Inf 等) は mcp-go の GetFloat のように
+// 数値へ変換できない値 ("" / "abc" / null 等) は mcp-go の GetFloat のように
 // デフォルトへ落とさずエラーにする。文字列の "98" 等は従来通り受け付ける。
 // NaN / Inf は parseIgnoreRegions と同様に拒否し、後段の JSON マーシャル失敗を防ぐ。
 func floatArg(request mcp.CallToolRequest, key string, def float64) (float64, error) {
@@ -452,12 +452,13 @@ func floatArg(request mcp.CallToolRequest, key string, def float64) (float64, er
 		return 0, fmt.Errorf("argument '%s' must be a number", key)
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, fmt.Errorf("argument '%s' must be a number", key)
+		return 0, fmt.Errorf("argument '%s' must be a finite number", key)
 	}
 	return f, nil
 }
 
 // intArg は整数引数を読む。キー未指定なら def、変換不能ならエラー。
+// float64 の NaN / Inf も floatArg と同様に拒否する。
 func intArg(request mcp.CallToolRequest, key string, def int) (int, error) {
 	args := request.GetArguments()
 	val, ok := args[key]
@@ -468,9 +469,16 @@ func intArg(request mcp.CallToolRequest, key string, def int) (int, error) {
 	case int:
 		return v, nil
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, fmt.Errorf("argument '%s' must be a finite number", key)
+		}
 		return int(v), nil
 	case string:
-		if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+		s := strings.TrimSpace(v)
+		if f, err := strconv.ParseFloat(s, 64); err == nil && (math.IsNaN(f) || math.IsInf(f, 0)) {
+			return 0, fmt.Errorf("argument '%s' must be a finite number", key)
+		}
+		if i, err := strconv.Atoi(s); err == nil {
 			return i, nil
 		}
 	}
