@@ -23,12 +23,20 @@ env:
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # 発火元を「main への push から成功した CI」と「main 上の手動実行」に限定する。
+    # PR 由来の CI 完了（フォークを含む）で第三者コードを checkout・実行させないための条件。
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          # workflow_run は CI が検証した head_sha、workflow_dispatch は常に main を対象にする。
+          ref: ${{ github.event.workflow_run.head_sha || 'main' }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -41,6 +49,14 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --tags --force --quiet
+          git fetch --quiet origin main
+          # CI 完了からここまでの間に main が進むと、detached HEAD からの push は non-fast-forward で失敗する。
+          # 公開だけ成立してタグが付かない事故を避けるため、分岐を検出したら何もせず終了する。
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HEAD $(git rev-parse --short HEAD) is behind origin/main; skipping this run. The CI run for the latest main commit releases these changes."
+            exit 0
+          fi
           last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
           if [ -n "$last_tag" ]; then
             base=$last_tag
@@ -93,19 +109,34 @@ jobs:
           echo "current=$current (npm: $published)"
           echo "version=$next" >> "$GITHUB_OUTPUT"
           npm version "$next" --no-git-tag-version --allow-same-version >/dev/null
-          # plugin.yaml は package.json と同じ版番号を持つため揃える。
+          # 版番号を持つファイルは package.json だけではないため、すべて同じ値に揃える。
           sed -i "s/^version: .*/version: $next/" plugin.yaml
+          node -e '
+            const fs = require("node:fs");
+            const version = process.argv[1];
+            const write = (file, mutate) => {
+              const json = JSON.parse(fs.readFileSync(file, "utf8"));
+              mutate(json);
+              fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+            };
+            write(".codex-plugin/plugin.json", (json) => { json.version = version; });
+            // marketplace の最上位 version は形式の版なので触らず、配布プラグインの版だけ更新する。
+            for (const file of [".claude-plugin/marketplace.json", ".codex-plugin/marketplace.json", ".agents/plugins/marketplace.json"]) {
+              write(file, (json) => { json.plugins[0].version = version; });
+            }
+          ' "$next"
           echo "Next release version: $next"
 
       - name: Publish to npm
         if: steps.version.outputs.version != ''
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           # 先に公開し、成功したときだけタグを付ける（レジストリとタグのずれを避ける）。
           npm publish
-          echo "Published design-compare@${{ steps.version.outputs.version }}"
+          echo "Published design-compare@${VERSION}"
 
       - name: Tag and commit the release
         if: steps.version.outputs.version != ''
@@ -115,8 +146,13 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json plugin.yaml
+          git add package.json plugin.yaml .codex-plugin/plugin.json \
+            .claude-plugin/marketplace.json .codex-plugin/marketplace.json \
+            .agents/plugins/marketplace.json
           git commit -m "chore: release v${VERSION} [skip ci]"
+          # 版の計算からここまでの間に main が進んでいても push できるように追従する。
+          # タグは rebase 後のコミットに付けるため、追従してからタグを打つ。
+          git pull --rebase origin main
           git tag "v${VERSION}"
           git push origin HEAD:main
           git push origin "v${VERSION}"
