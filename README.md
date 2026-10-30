@@ -51,7 +51,7 @@ Figma 比較は「あるキャンバス幅での再現」しか見ないため�
 - **`viewport_overflow_x`:** `x < 0` または `x+w > viewport_width`（1px の丸めは許容）。ビューポート高さ超えはページスクロールとして扱い、失敗にしません。
 - **`parent_overflow`:** 子ボックスが親ボックスからいずれかの辺で 1px 超えてはみ出す。親が JSON に無い場合はこの検査をスキップし、解決できない `parent` は `status` を変えず `unresolved_parent_refs`（例: `Web: '#missing'`）として応答します（`layout_tree` と同じラベル形式。`ignore_nodes` で除外した親は誤検知しません）。
 - **合否:** 崩れ 0 件 → `success` / 1 件以上 → `mismatch` / 検査対象がすべて除外 → `skipped`。Web ノードが 1 件もない、または全ノードで `w`/`h` が 0 以下（`width`/`height` 等のキー名ミス疑い）の場合も `mismatch` です。`match_rate` は返しません。
-- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。
+- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`ignored_nodes`（`web:<selector>`。件数は `ignored_count` と一致）/ `unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。
 
 横向きを検査するときは、ブラウザを **1024×768 にリサイズしたあと** の DOM 座標を渡してください。縦向きで撮った座標に横向きの幅を当てても意味がありません。
 
@@ -207,7 +207,7 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 | `matched_nodes` | number | ○ | 一致したノード対数。 |
 | `total_nodes` | number | ○ | 分母（比較ペア数。`count_extra_web=true` なら余分な Web ノードも含む）。 |
 | `ignored_count` | number | ○ | `ignore_nodes` / `ignore_region` で除外したノード数。 |
-| `ignored_nodes` | string[] | 非空時のみ | 除外したノードの識別子（例: `figma:1:23`, `web:#date-banner`）。件数は `ignored_count` と一致する。 |
+| `ignored_nodes` | string[] | 非空時のみ | 除外したノードの識別子（例: `figma:1:23`, `web:#date-banner`）。件数は `ignored_count` と一致する。`layout_integrity` でも同フィールドを `web:<selector>` 形式で返す（件数は `ignored_count` と一致）。 |
 | `effective_threshold` | number | ○ | 判定に使った BoundingBox 許容差（未指定時は既定 0.15）。 |
 | `pass_rate` | number | ○ | 合格に使った最低一致率 %（未指定時は既定 98.0）。 |
 | `count_extra_web` | boolean | ○ | 余分な Web ノードを一致率の分母に加算したか（未指定時は既定 `false`）。 |
@@ -254,7 +254,7 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 
 ### `layout_integrity`
 
-§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。
+§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`ignored_nodes`（`web:<selector>`。件数は `ignored_count` と一致）/ `unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。
 
 ---
 
