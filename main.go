@@ -114,7 +114,7 @@ func newCompareDesignTool() mcp.Tool {
 			mcp.Description("Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). A JSON array of strings (e.g. [\"#ad-banner\",\".cookie\"]) is also accepted and joined the same way; non-string, non-array values are rejected. In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'."),
 		),
 		mcp.WithString("ignore_region",
-			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image (a note is added to 'details', and 'warnings' notes that the same region may mask different areas). In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. In layout_tree the same region coordinates are applied to both Figma and Web (align coordinates when the Figma canvas is offset). Useful to exclude dynamic content (dates, ads, banners) that always differs."),
+			mcp.Description("Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). A JSON array of region strings (e.g. [\"10,20,100,50\",\"200,300,80,60\"]) is also accepted; non-string, non-array values are rejected. In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image (a note is added to 'details', and 'warnings' notes that the same region may mask different areas). In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. In layout_tree the same region coordinates are applied to both Figma and Web (align coordinates when the Figma canvas is offset). Useful to exclude dynamic content (dates, ads, banners) that always differs."),
 		),
 		mcp.WithBoolean("count_extra_web",
 			mcp.Description("For 'layout_tree' mode: when true, Web nodes that did not match any Figma node (extra implementation elements) are counted in the match rate denominator, lowering the match rate. Default false (extra elements are always reported in the 'extra_web_count' / 'extra_web_nodes' response fields and in 'details', regardless of this flag)."),
@@ -524,48 +524,72 @@ func stringArg(request mcp.CallToolRequest, key string, def string) (string, err
 	return s, nil
 }
 
-// splitIgnoreNodes はカンマ区切りの除外指定をトリム済みリストにする。
-func splitIgnoreNodes(s string) []string {
+// splitSeparated は sep 区切り文字列をトリム済みリストにする（空要素は落とす）。
+func splitSeparated(s, sep string) []string {
 	if s == "" {
 		return nil
 	}
-	var ignoreList []string
-	for _, part := range strings.Split(s, ",") {
+	var out []string
+	for _, part := range strings.Split(s, sep) {
 		trimmed := strings.TrimSpace(part)
 		if trimmed != "" {
-			ignoreList = append(ignoreList, trimmed)
+			out = append(out, trimmed)
 		}
 	}
-	return ignoreList
+	return out
 }
 
-// ignoreNodesArg は ignore_nodes を読む。カンマ区切り文字列、または文字列要素の
-// JSON 配列を受け付け、同じ除外リスト経路へ載せる。未指定は nil。
-// 文字列・文字列配列以外（数値・オブジェクト等）は明示エラー (Issue #420)。
-func ignoreNodesArg(request mcp.CallToolRequest) ([]string, error) {
+// joinedStringListArg は区切り文字列、または文字列配列を sep 結合した正規化文字列にする。
+// キー未指定は ""。文字列はそのまま、[]any / []string は sep で結合する。
+// 数値・真偽・オブジェクト・null・非文字列要素の配列は明示エラー
+// (GetString のように黙って空へ落とさない。Issue #420 / #487)。
+func joinedStringListArg(request mcp.CallToolRequest, key, sep string) (string, error) {
 	args := request.GetArguments()
-	val, ok := args["ignore_nodes"]
+	val, ok := args[key]
 	if !ok {
-		return nil, nil
+		return "", nil
 	}
-	var joined string
 	switch v := val.(type) {
 	case string:
-		joined = v
+		return v, nil
+	case []string:
+		return strings.Join(v, sep), nil
 	case []any:
 		parts := make([]string, 0, len(v))
 		for _, elem := range v {
 			s, ok := elem.(string)
 			if !ok {
-				return nil, fmt.Errorf("argument 'ignore_nodes' must be a string or a JSON array of strings")
+				return "", fmt.Errorf("argument '%s' must be a string or a JSON array of strings", key)
 			}
 			parts = append(parts, s)
 		}
-		joined = strings.Join(parts, ",")
+		return strings.Join(parts, sep), nil
 	default:
-		return nil, fmt.Errorf("argument 'ignore_nodes' must be a string or a JSON array of strings")
+		return "", fmt.Errorf("argument '%s' must be a string or a JSON array of strings", key)
 	}
-	return splitIgnoreNodes(joined), nil
+}
+
+// stringListArg は区切り文字列または文字列配列の引数を []string にする。
+// floatArg / intArg / boolArg と同じ位置づけ。キー未指定は nil。
+// 文字列は sep で分割、配列要素は sep 結合後に同じ分割経路へ載せる。
+func stringListArg(request mcp.CallToolRequest, key, sep string) ([]string, error) {
+	joined, err := joinedStringListArg(request, key, sep)
+	if err != nil {
+		return nil, err
+	}
+	return splitSeparated(joined, sep), nil
+}
+
+// ignoreNodesArg は ignore_nodes を読む（カンマ区切りまたは文字列配列）。
+func ignoreNodesArg(request mcp.CallToolRequest) ([]string, error) {
+	return stringListArg(request, "ignore_nodes", ",")
+}
+
+// ignoreRegionArg は ignore_region を parseIgnoreRegions 向け文字列にする。
+// セミコロン区切り文字列、または各要素が 'x,y,w,h' の文字列配列を受け付ける。
+// 文字列はそのまま返し、";;" 等の空セグメントだけの不正入力は後段で拒否する。
+func ignoreRegionArg(request mcp.CallToolRequest) (string, error) {
+	return joinedStringListArg(request, "ignore_region", ";")
 }
 
 // Handler: compare_design
@@ -658,7 +682,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
 		// layout_tree では BoundingBox の中心点が領域内にあるノードを両側から除外する。
-		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		ignoreRegionStr, err := ignoreRegionArg(request)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -799,7 +823,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		// 除外領域 (ignore_region) をパースする
-		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		ignoreRegionStr, err := ignoreRegionArg(request)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -971,7 +995,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 
 		// 除外領域 (ignore_region) をパースする
-		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		ignoreRegionStr, err := ignoreRegionArg(request)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -1128,7 +1152,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		ignoreRegionStr, err := stringArg(request, "ignore_region", "")
+		ignoreRegionStr, err := ignoreRegionArg(request)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

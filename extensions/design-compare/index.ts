@@ -135,7 +135,7 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
       ignore_region: Type.Optional(
         Type.String({
           description:
-            "Semicolon-separated x,y,w,h pixel regions (e.g. '10,20,100,50;200,300,80,60'). In perceptual/strict (where ignore_nodes is unsupported), both images are white-masked in these regions before comparison; parsed count is ignored_regions; regions that miss the image entirely are reported in out_of_bounds_regions. In layout_tree and layout_integrity, nodes whose bounding-box center lies inside a region are excluded (counted in ignored_count); regions that contain no node center are reported in unmatched_ignore_regions. Useful to exclude dynamic content (dates, ads, banners)",
+            "Semicolon-separated x,y,w,h pixel regions (e.g. '10,20,100,50;200,300,80,60'). A JSON array of region strings (e.g. [\"10,20,100,50\",\"200,300,80,60\"]) is also accepted; non-string, non-array values are rejected. In perceptual/strict (where ignore_nodes is unsupported), both images are white-masked in these regions before comparison; parsed count is ignored_regions; regions that miss the image entirely are reported in out_of_bounds_regions. In layout_tree and layout_integrity, nodes whose bounding-box center lies inside a region are excluded (counted in ignored_count); regions that contain no node center are reported in unmatched_ignore_regions. Useful to exclude dynamic content (dates, ads, banners)",
         }),
       ),
       count_extra_web: Type.Optional(
