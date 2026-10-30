@@ -38,20 +38,20 @@ type LayoutIssue struct {
 }
 
 type LayoutIntegrityResult struct {
-	Status                 string        `json:"status"` // success | mismatch | skipped
-	ViewportWidth          float64       `json:"viewport_width"`
-	ViewportHeight         float64       `json:"viewport_height"`
-	CheckedNodes           int           `json:"checked_nodes"`
-	IssueCount             int           `json:"issue_count"`
-	Issues                 []LayoutIssue `json:"issues,omitempty"`
-	Details                []string      `json:"details"`
-	IgnoredCount           int           `json:"ignored_count"`
+	Status         string        `json:"status"` // success | mismatch | skipped
+	ViewportWidth  float64       `json:"viewport_width"`
+	ViewportHeight float64       `json:"viewport_height"`
+	CheckedNodes   int           `json:"checked_nodes"`
+	IssueCount     int           `json:"issue_count"`
+	Issues         []LayoutIssue `json:"issues,omitempty"`
+	Details        []string      `json:"details"`
+	IgnoredCount   int           `json:"ignored_count"`
 	// IgnoredNodes は ignore_nodes / ignore_region で除外したノードの識別子
 	//（web:<selector>）。件数は IgnoredCount と一致する。プレフィックス除外の
 	// 過剰一致検証用（layout_tree と同方針）。
-	IgnoredNodes           []string      `json:"ignored_nodes,omitempty"`
-	UnmatchedIgnores       []string      `json:"unmatched_ignores,omitempty"`
-	UnmatchedIgnoreRegions []string      `json:"unmatched_ignore_regions,omitempty"`
+	IgnoredNodes           []string `json:"ignored_nodes,omitempty"`
+	UnmatchedIgnores       []string `json:"unmatched_ignores,omitempty"`
+	UnmatchedIgnoreRegions []string `json:"unmatched_ignore_regions,omitempty"`
 	// UnresolvedParentRefs は parent が空でないのに元リスト上のどの selector にも
 	// 一致しない参照。合否は変えず、layout_tree と同形式（Web: '…'）で通知する。
 	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
