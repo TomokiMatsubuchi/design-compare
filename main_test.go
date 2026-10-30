@@ -511,6 +511,50 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// Issue #488: layout_integrity でも除外ノード識別子を ignored_nodes で返す
+	//（プレフィックス除外の過剰一致を件数以外で検証できるようにする）。
+	t.Run("LayoutIntegrity_IgnoredNodes", func(t *testing.T) {
+		webLayout := `[
+			{"selector":"body","x":0,"y":0,"w":768,"h":100},
+			{"selector":"body > .ad","x":0,"y":100,"w":100,"h":50},
+			{"selector":"#ok","x":0,"y":200,"w":100,"h":50}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_integrity",
+					"web_layout":   webLayout,
+					"ignore_nodes": "body*",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Fatalf("status=%v details=%v", result["status"], result["details"])
+		}
+		if got := result["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 after ignoring 'body*', got %v", got)
+		}
+		ignoredNodes, ok := result["ignored_nodes"].([]interface{})
+		if !ok || len(ignoredNodes) != 2 {
+			t.Fatalf("Expected ignored_nodes length to match ignored_count=2, got %v", result["ignored_nodes"])
+		}
+		if ignoredNodes[0] != "web:body" || ignoredNodes[1] != "web:body > .ad" {
+			t.Errorf("Expected ignored_nodes=[web:body web:body > .ad], got %v", ignoredNodes)
+		}
+		if float64(len(ignoredNodes)) != result["ignored_count"] {
+			t.Errorf("ignored_nodes length %d != ignored_count %v", len(ignoredNodes), result["ignored_count"])
+		}
+	})
+
 	// D: pass_rate を下げて不一致ケースを成功に切り替えるテスト
 	t.Run("LayoutTree_PassRate", func(t *testing.T) {
 		figmaLayout := `[

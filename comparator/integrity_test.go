@@ -166,6 +166,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" || res.IgnoredCount != 1 {
 			t.Fatalf("got %#v", res)
 		}
+		if len(res.IgnoredNodes) != 1 || res.IgnoredNodes[0] != "web:#wide" {
+			t.Fatalf("IgnoredNodes=%v", res.IgnoredNodes)
+		}
 	})
 
 	t.Run("ignored_parent_still_resolves_for_child_overflow", func(t *testing.T) {
@@ -232,6 +235,50 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if res.Status != "success" || res.IgnoredCount != 1 {
 			t.Fatalf("got %#v", res)
+		}
+		if len(res.IgnoredNodes) != 1 || res.IgnoredNodes[0] != "web:#wide" {
+			t.Fatalf("IgnoredNodes=%v", res.IgnoredNodes)
+		}
+	})
+
+	// IgnoredNodes は ignore_nodes / ignore_region で除外した web:<selector> の一覧。
+	// 件数は IgnoredCount と一致し、プレフィックス除外の過剰一致検証に使う (Issue #488)。
+	t.Run("ignored_nodes_prefix_and_skipped", func(t *testing.T) {
+		web := `[
+			{"selector":"body","x":0,"y":0,"w":768,"h":100},
+			{"selector":"body > .ad","x":0,"y":100,"w":900,"h":50},
+			{"selector":"#ok","x":0,"y":200,"w":100,"h":50}
+		]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"body*"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IgnoredCount != 2 {
+			t.Fatalf("got %#v", res)
+		}
+		want := []string{"web:body", "web:body > .ad"}
+		if !stringSlicesEqual(res.IgnoredNodes, want) {
+			t.Fatalf("IgnoredNodes=%v want %v", res.IgnoredNodes, want)
+		}
+
+		allIgnored, err := CheckLayoutIntegrity(web, 768, 1024, []string{"body*", "#ok"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if allIgnored.Status != "skipped" || allIgnored.IgnoredCount != 3 {
+			t.Fatalf("got %#v", allIgnored)
+		}
+		wantAll := []string{"web:body", "web:body > .ad", "web:#ok"}
+		if !stringSlicesEqual(allIgnored.IgnoredNodes, wantAll) {
+			t.Fatalf("IgnoredNodes=%v want %v", allIgnored.IgnoredNodes, wantAll)
+		}
+
+		none, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if none.IgnoredCount != 0 || len(none.IgnoredNodes) != 0 {
+			t.Fatalf("expected empty IgnoredNodes, got %#v", none)
 		}
 	})
 

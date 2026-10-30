@@ -1164,6 +1164,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if preset != "" {
 			responseMap["viewport_preset"] = preset
 		}
+		// ignore_nodes / ignore_region で実際に除外したノード（過剰一致の検証用）。
+		// layout_tree と同様、非空時のみ返す。
+		if len(integrityResult.IgnoredNodes) > 0 {
+			responseMap["ignored_nodes"] = integrityResult.IgnoredNodes
+		}
 		if integrityResult.IssueCount > 0 {
 			responseMap["issues"] = integrityResult.Issues
 		}
