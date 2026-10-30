@@ -5570,11 +5570,14 @@ func TestTypedArgHelpers(t *testing.T) {
 		if v, err := boolArg(req, "generate_diff", true); err != nil || v != true {
 			t.Errorf("boolArg missing: got %v, %v", v, err)
 		}
-		if v, err := stringArg(req, "ignore_region", ""); err != nil || v != "" {
+		if v, err := stringArg(req, "viewport_preset", ""); err != nil || v != "" {
 			t.Errorf("stringArg missing: got %v, %v", v, err)
 		}
-		if v, err := ignoreNodesArg(req); err != nil || v != nil {
-			t.Errorf("ignoreNodesArg missing: got %v, %v", v, err)
+		if v, err := stringListArg(req, "ignore_nodes", ","); err != nil || v != nil {
+			t.Errorf("stringListArg missing: got %v, %v", v, err)
+		}
+		if v, err := ignoreRegionArg(req); err != nil || v != "" {
+			t.Errorf("ignoreRegionArg missing: got %v, %v", v, err)
 		}
 	})
 
@@ -5596,23 +5599,23 @@ func TestTypedArgHelpers(t *testing.T) {
 	})
 
 	t.Run("stringArg accepts string and rejects non-string", func(t *testing.T) {
-		reqOK := reqWithArgs(map[string]any{"ignore_region": "0,0,10,10"})
-		if v, err := stringArg(reqOK, "ignore_region", ""); err != nil || v != "0,0,10,10" {
+		reqOK := reqWithArgs(map[string]any{"viewport_preset": "ipad_landscape"})
+		if v, err := stringArg(reqOK, "viewport_preset", ""); err != nil || v != "ipad_landscape" {
 			t.Errorf("stringArg string: got %v, %v", v, err)
 		}
-		for _, val := range []any{123, []any{"0,0,10,10"}, nil, true} {
-			req := reqWithArgs(map[string]any{"ignore_region": val})
-			if _, err := stringArg(req, "ignore_region", ""); err == nil {
-				t.Errorf("expected error for ignore_region=%#v", val)
-			} else if !strings.Contains(err.Error(), "argument 'ignore_region' must be a string") {
-				t.Errorf("unexpected error for ignore_region=%#v: %v", val, err)
+		for _, val := range []any{123, []any{"ipad_landscape"}, nil, true} {
+			req := reqWithArgs(map[string]any{"viewport_preset": val})
+			if _, err := stringArg(req, "viewport_preset", ""); err == nil {
+				t.Errorf("expected error for viewport_preset=%#v", val)
+			} else if !strings.Contains(err.Error(), "argument 'viewport_preset' must be a string") {
+				t.Errorf("unexpected error for viewport_preset=%#v: %v", val, err)
 			}
 		}
 	})
 
-	t.Run("ignoreNodesArg accepts string and string array", func(t *testing.T) {
+	t.Run("stringListArg accepts string and string array", func(t *testing.T) {
 		reqStr := reqWithArgs(map[string]any{"ignore_nodes": "nav, .ad"})
-		got, err := ignoreNodesArg(reqStr)
+		got, err := stringListArg(reqStr, "ignore_nodes", ",")
 		if err != nil {
 			t.Fatalf("string: %v", err)
 		}
@@ -5620,22 +5623,54 @@ func TestTypedArgHelpers(t *testing.T) {
 			t.Errorf("string: got %v", got)
 		}
 		reqArr := reqWithArgs(map[string]any{"ignore_nodes": []any{"nav", ".ad"}})
-		gotArr, err := ignoreNodesArg(reqArr)
+		gotArr, err := stringListArg(reqArr, "ignore_nodes", ",")
 		if err != nil {
 			t.Fatalf("array: %v", err)
 		}
 		if len(gotArr) != 2 || gotArr[0] != "nav" || gotArr[1] != ".ad" {
 			t.Errorf("array: got %v", gotArr)
 		}
+		reqTyped := reqWithArgs(map[string]any{"ignore_nodes": []string{"nav", ".ad"}})
+		gotTyped, err := stringListArg(reqTyped, "ignore_nodes", ",")
+		if err != nil {
+			t.Fatalf("[]string: %v", err)
+		}
+		if len(gotTyped) != 2 || gotTyped[0] != "nav" || gotTyped[1] != ".ad" {
+			t.Errorf("[]string: got %v", gotTyped)
+		}
 	})
 
-	t.Run("ignoreNodesArg rejects non-string / non-string-array", func(t *testing.T) {
+	t.Run("stringListArg rejects non-string / non-string-array", func(t *testing.T) {
 		for _, val := range []any{123, nil, true, map[string]any{"a": 1}, []any{"nav", 1}} {
 			req := reqWithArgs(map[string]any{"ignore_nodes": val})
-			if _, err := ignoreNodesArg(req); err == nil {
+			if _, err := stringListArg(req, "ignore_nodes", ","); err == nil {
 				t.Errorf("expected error for ignore_nodes=%#v", val)
 			} else if !strings.Contains(err.Error(), "argument 'ignore_nodes' must be a string or a JSON array of strings") {
 				t.Errorf("unexpected error for ignore_nodes=%#v: %v", val, err)
+			}
+		}
+	})
+
+	t.Run("ignoreRegionArg accepts string and string array", func(t *testing.T) {
+		reqStr := reqWithArgs(map[string]any{"ignore_region": "0,0,10,10;20,20,5,5"})
+		got, err := ignoreRegionArg(reqStr)
+		if err != nil || got != "0,0,10,10;20,20,5,5" {
+			t.Errorf("string: got %q, %v", got, err)
+		}
+		reqArr := reqWithArgs(map[string]any{"ignore_region": []any{"0,0,10,10", "20,20,5,5"}})
+		gotArr, err := ignoreRegionArg(reqArr)
+		if err != nil || gotArr != "0,0,10,10;20,20,5,5" {
+			t.Errorf("array: got %q, %v", gotArr, err)
+		}
+	})
+
+	t.Run("ignoreRegionArg rejects non-string / non-string-array", func(t *testing.T) {
+		for _, val := range []any{123, nil, true, []any{"0,0,10,10", 1}} {
+			req := reqWithArgs(map[string]any{"ignore_region": val})
+			if _, err := ignoreRegionArg(req); err == nil {
+				t.Errorf("expected error for ignore_region=%#v", val)
+			} else if !strings.Contains(err.Error(), "argument 'ignore_region' must be a string or a JSON array of strings") {
+				t.Errorf("unexpected error for ignore_region=%#v: %v", val, err)
 			}
 		}
 	})
@@ -5709,8 +5744,8 @@ func TestTypedArgHelpers(t *testing.T) {
 	})
 }
 
-// TestIgnoreNodesArrayAndTypedErrors は Issue #420: ignore_nodes の JSON 配列受け付けと、
-// ignore_nodes / ignore_region への非文字列が明示エラーになることを検証する。
+// TestIgnoreNodesArrayAndTypedErrors は Issue #420 / #487: ignore_nodes / ignore_region の
+// JSON 配列受け付けと、非文字列・非文字列配列が明示エラーになることを検証する。
 func TestIgnoreNodesArrayAndTypedErrors(t *testing.T) {
 	figmaLayout := `[
 		{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
@@ -5803,7 +5838,7 @@ func TestIgnoreNodesArrayAndTypedErrors(t *testing.T) {
 			t.Fatal("expected IsError for numeric ignore_region")
 		}
 		got := res.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(got, "argument 'ignore_region' must be a string") {
+		if !strings.Contains(got, "argument 'ignore_region' must be a string or a JSON array of strings") {
 			t.Errorf("got %q", got)
 		}
 	})
@@ -5830,6 +5865,29 @@ func TestIgnoreNodesArrayAndTypedErrors(t *testing.T) {
 		}
 		if got := result["ignored_count"]; got != float64(2) {
 			t.Errorf("Expected ignored_count=2 for nav region, got %v", got)
+		}
+	})
+
+	t.Run("ignore_region JSON array excludes like semicolon string", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":          "layout_tree",
+			"figma_layout":  figmaLayout,
+			"web_layout":    webLayoutIncorrect,
+			"ignore_region": []any{"380,40,30,20", "780,40,30,20"},
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("Expected success with ignore_region array, got %v", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected success after ignore_region array, got status=%v rate=%v", result["status"], result["match_rate"])
+		}
+		if got := result["ignored_count"]; got != float64(2) {
+			t.Errorf("Expected ignored_count=2 for nav region via array, got %v", got)
 		}
 	})
 
