@@ -1,0 +1,129 @@
+name: Release
+
+# main に取り込まれた変更（コミット）が一定数たまったら npm へ自動リリースする。
+# 発火元は ci.yml の成功に限定し、公開前のテスト工程をここで重複させない。
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# リリース処理は同時に 1 本だけ走らせる（版の取り違えとタグの二重作成を防ぐ）。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # 前回リリース以降の変更がこの件数以上になったら公開する。
+  RELEASE_CHANGE_THRESHOLD: "10"
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Count changes since the last release
+        id: count
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -n "$last_tag" ]; then
+            base=$last_tag
+          else
+            base="the first commit"
+          fi
+          changes=$(git rev-list --count "${last_tag:+$last_tag..}HEAD")
+          echo "changes=$changes" >> "$GITHUB_OUTPUT"
+          echo "Changes since ${base}: $changes (threshold: ${RELEASE_CHANGE_THRESHOLD})"
+          if [ "$changes" -lt "$RELEASE_CHANGE_THRESHOLD" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Only $changes change(s) since ${base}; nothing to release yet (threshold: ${RELEASE_CHANGE_THRESHOLD})."
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check npm credentials
+        id: credentials
+        if: steps.count.outputs.should_release == 'true'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Repository secret NPM_TOKEN is not set, so the npm publish step is skipped. Add an npm automation token as NPM_TOKEN and re-run this workflow."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute the next version
+        id: version
+        if: steps.count.outputs.should_release == 'true' && steps.credentials.outputs.available == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # package.json と npm の最新公開版のうち大きい方を基準にパッチを上げる。
+          # 公開だけ成功してタグ付けに失敗した場合でも、公開済みの版を飛ばして進める。
+          current=$(node -p "require('./package.json').version")
+          published=$(npm view design-compare version 2>/dev/null || echo "0.0.0")
+          next=$(node -e '
+            const parse = (value) => value.split(".").map((part) => Number.parseInt(part, 10) || 0);
+            const [local, remote] = process.argv.slice(1).map(parse);
+            let index = 0;
+            while (index < 3 && local[index] === remote[index]) index++;
+            const base = index < 3 && local[index] > remote[index] ? local : remote;
+            base[2] += 1;
+            console.log(base.join("."));
+          ' "$current" "$published")
+          echo "current=$current (npm: $published)"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          npm version "$next" --no-git-tag-version --allow-same-version >/dev/null
+          # plugin.yaml は package.json と同じ版番号を持つため揃える。
+          sed -i "s/^version: .*/version: $next/" plugin.yaml
+          echo "Next release version: $next"
+
+      - name: Publish to npm
+        if: steps.version.outputs.version != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 先に公開し、成功したときだけタグを付ける（レジストリとタグのずれを避ける）。
+          npm publish
+          echo "Published design-compare@${{ steps.version.outputs.version }}"
+
+      - name: Tag and commit the release
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json plugin.yaml
+          git commit -m "chore: release v${VERSION} [skip ci]"
+          git tag "v${VERSION}"
+          git push origin HEAD:main
+          git push origin "v${VERSION}"
+
+      - name: Create the GitHub release
+        if: steps.version.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes

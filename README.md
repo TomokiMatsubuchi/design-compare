@@ -302,6 +302,15 @@ npm run test:ext
 # または: node --test extensions/design-compare/mcp-client.test.ts
 ```
 
+### npm への自動リリース
+`main` に取り込まれた変更が **10 件**たまるたびに、`.github/workflows/release.yml` が npm へ自動でリリースします。手動でのバージョン更新や `npm publish` は不要です。
+
+- **発火条件:** `ci.yml` が `main` で成功したとき（`workflow_dispatch` でも手動実行できます）。失敗したコミットはリリース対象になりません。
+- **件数の数え方:** 直近の `v*` タグ以降のコミット数。`v*` タグがまだ無いリポジトリでは初回コミット以降の全コミットを数えます。
+- **版番号:** `package.json` と npm の最新公開版のうち大きい方のパッチを 1 つ上げ、`plugin.yaml` の `version` も同じ値に揃えます。
+- **処理順:** 公開が成功してから `chore: release vX.Y.Z [skip ci]` を `main` にコミットし、`vX.Y.Z` タグと GitHub リリースを作成します（レジストリとタグのずれを避けるため）。
+- **必要な設定:** リポジトリシークレット `NPM_TOKEN`（npm の automation token）。未設定のときは公開だけをスキップし、実行ログに警告を出します。
+
 ---
 
 ## 5. 各種ツール（Codex / Claude）へのセットアップ手順
