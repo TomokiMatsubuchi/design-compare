@@ -1,4 +1,5 @@
-// Run with: node --test extensions/design-compare/mcp-client.test.ts
+// Run with: go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts
+// (realBinary cases need the design-compare binary in the repo root; npm test runs the same.)
 //
 // Covers the failure paths a real comparison finishes too quickly to exercise:
 // timeout, abort mid-flight, abort before start, and a server that exits
