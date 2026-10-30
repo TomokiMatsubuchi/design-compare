@@ -155,6 +155,24 @@ func newCompareDesignTool() mcp.Tool {
 	)
 }
 
+// readLocalFile は path のローカルファイルを読む。os.Stat でサイズを確認し、
+// MaxInputFileBytes を超える場合は読み込まずエラーにする (Issue #489)。
+// 寸法検査より前にメモリを食い尽くす巨大ファイルやスパースファイルを防ぐ。
+func readLocalFile(path, param string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", param, err)
+	}
+	if info.Size() > comparator.MaxInputFileBytes {
+		return nil, fmt.Errorf("%s is too large (%d bytes; limit %d bytes)", param, info.Size(), comparator.MaxInputFileBytes)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", param, err)
+	}
+	return data, nil
+}
+
 // resolveImageInput returns the raw bytes of a comparison image from either a
 // local file path or a base64-encoded string (exactly one must be provided).
 // For base64 input, a data URI prefix ("data:<mime>;base64,...") such as the one
@@ -200,9 +218,9 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 		}
 		return data, nil
 	case pathValue != "":
-		data, err := os.ReadFile(pathValue)
+		data, err := readLocalFile(pathValue, pathParam)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read %s: %w", pathParam, err)
+			return nil, err
 		}
 		if err := comparator.CheckHeaderDimensions(data, pathParam); err != nil {
 			return nil, err
@@ -265,9 +283,9 @@ func resolveLayoutInput(inlineValue, pathValue, inlineParam, pathParam string) (
 	case inlineValue != "":
 		return inlineValue, nil
 	case pathValue != "":
-		data, err := os.ReadFile(pathValue)
+		data, err := readLocalFile(pathValue, pathParam)
 		if err != nil {
-			return "", fmt.Errorf("failed to read %s: %w", pathParam, err)
+			return "", err
 		}
 		return string(data), nil
 	default:

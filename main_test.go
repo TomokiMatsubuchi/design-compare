@@ -5554,6 +5554,50 @@ func TestResolveImageInput_HeaderDimensions(t *testing.T) {
 	})
 }
 
+// TestResolveImageInput_FileSizeLimit は MaxInputFileBytes を超えるパス入力が
+// os.ReadFile 前に拒否されることを、スパースな巨大ファイルで検証する (Issue #489)。
+func TestResolveImageInput_FileSizeLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	bigPath := filepath.Join(tmpDir, "big.png")
+	const overLimit = comparator.MaxInputFileBytes + (88 << 20) // 600 MiB 相当のスパース
+	f, err := os.Create(bigPath)
+	if err != nil {
+		t.Fatalf("create sparse file: %v", err)
+	}
+	if err := f.Truncate(overLimit); err != nil {
+		f.Close()
+		t.Fatalf("truncate sparse file: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close sparse file: %v", err)
+	}
+	info, err := os.Stat(bigPath)
+	if err != nil {
+		t.Fatalf("stat sparse file: %v", err)
+	}
+	if info.Size() != overLimit {
+		t.Fatalf("sparse file size: got %d want %d", info.Size(), overLimit)
+	}
+
+	want := fmt.Sprintf("image_path_a is too large (%d bytes; limit %d bytes)", overLimit, comparator.MaxInputFileBytes)
+	_, err = resolveImageInput(bigPath, "", "image_path_a", "image_a_base64")
+	if err == nil {
+		t.Fatal("expected resolveImageInput to reject oversized path before read")
+	}
+	if got := err.Error(); got != want {
+		t.Errorf("error: got %q want %q", got, want)
+	}
+
+	_, err = resolveLayoutInput("", bigPath, "figma_layout", "figma_layout_path")
+	if err == nil {
+		t.Fatal("expected resolveLayoutInput to reject oversized path before read")
+	}
+	wantLayout := fmt.Sprintf("figma_layout_path is too large (%d bytes; limit %d bytes)", overLimit, comparator.MaxInputFileBytes)
+	if got := err.Error(); got != wantLayout {
+		t.Errorf("layout error: got %q want %q", got, wantLayout)
+	}
+}
+
 func reqWithArgs(args map[string]any) mcp.CallToolRequest {
 	return mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
 }
