@@ -478,8 +478,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		status = "mismatch"
 	}
 
-	// 構造化ディテール作成
-	summaryDetail := fmt.Sprintf("Matched %d out of %d layout nodes.", matchedCount, totalCompared)
+	// 構造化ディテール作成（合格ラインも併記し、details だけで合否理由が読めるようにする）
+	summaryDetail := fmt.Sprintf("Matched %d out of %d layout nodes (required pass rate: %.2f%%).", matchedCount, totalCompared, passRate)
 
 	details := []string{summaryDetail}
 	if absoluteModePairs > 0 {

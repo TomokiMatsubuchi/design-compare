@@ -1384,8 +1384,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("Expected 2 kept details + omit line, got %d: %v", len(detailsCap), detailsCap)
 		}
 		summary, _ := detailsCap[0].(string)
-		if !strings.Contains(summary, "Matched 3 out of 3") {
-			t.Errorf("Expected summary line first, got %v", detailsCap[0])
+		if !strings.Contains(summary, "Matched 3 out of 3 layout nodes (required pass rate: 98.00%)") {
+			t.Errorf("Expected summary line with pass rate first, got %v", detailsCap[0])
 		}
 		omit, _ := detailsCap[len(detailsCap)-1].(string)
 		if omit != "... and 3 more details omitted (max_details=2)" {
