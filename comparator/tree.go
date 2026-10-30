@@ -531,6 +531,11 @@ var requiredFigmaLayoutKeys = []string{"id", "name", "x", "y", "w", "h"}
 var requiredWebLayoutKeys = []string{"selector", "x", "y", "w", "h"}
 
 func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
+	// 単一オブジェクトは []json.RawMessage への Unmarshal で Go 内部型名を含む
+	// エラーになるため、入力ミスとして読める明示エラーに置き換える。
+	if IsJSONObjectPayload(figmaJSON) {
+		return nil, JSONArrayRequiredError("figma_layout")
+	}
 	var raws []json.RawMessage
 	if err := json.Unmarshal([]byte(figmaJSON), &raws); err != nil {
 		return nil, fmt.Errorf("failed to parse Figma layout JSON: %w", err)
@@ -557,6 +562,11 @@ func parseFigmaLayoutNodes(figmaJSON string) ([]FigmaNode, error) {
 }
 
 func parseWebLayoutNodes(webJSON string) ([]WebNode, error) {
+	// 単一オブジェクトは []json.RawMessage への Unmarshal で Go 内部型名を含む
+	// エラーになるため、入力ミスとして読める明示エラーに置き換える。
+	if IsJSONObjectPayload(webJSON) {
+		return nil, JSONArrayRequiredError("web_layout")
+	}
 	var raws []json.RawMessage
 	if err := json.Unmarshal([]byte(webJSON), &raws); err != nil {
 		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
@@ -597,6 +607,26 @@ func validateRequiredLayoutKeys(raw json.RawMessage, side string, index int, key
 
 func isJSONNull(raw json.RawMessage) bool {
 	return len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+// JSONArrayRequiredError は layout JSON に単一オブジェクトを渡されたときの
+// 利用者向けエラーを返す。配列で渡し直せることが伝わるよう文面を 1 か所に集約する。
+func JSONArrayRequiredError(key string) error {
+	return fmt.Errorf("%s must be a JSON array of node objects (a JSON object is not supported); pass the nodes as an array", key)
+}
+
+// IsJSONObjectPayload は UTF-8 BOM 除去後の JSON がオブジェクトとして
+// パースできるかを見る。layout JSON はノードオブジェクトの配列が必須で、
+// 単一オブジェクトは拒否する。構文エラーの '{' などは false のままにし、
+// 既存の parse エラー経路へ委ねる。
+func IsJSONObjectPayload(s string) bool {
+	s = strings.TrimPrefix(s, "\uFEFF")
+	s = strings.TrimSpace(s)
+	if len(s) == 0 || s[0] != '{' {
+		return false
+	}
+	var obj map[string]json.RawMessage
+	return json.Unmarshal([]byte(s), &obj) == nil
 }
 
 // zeroGeometryWarningIfMajority は Figma / Web のいずれかで、幅・高さがともに 0 の

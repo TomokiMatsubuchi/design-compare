@@ -89,10 +89,10 @@ func newCompareDesignTool() mcp.Tool {
 			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode. Standard base64 alphabet only; padding ('=') may be omitted"),
 		),
 		mcp.WithString("figma_layout",
-			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array is also accepted and marshaled to the same string form. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
+			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array is also accepted and marshaled to the same string form. A single JSON object is rejected — wrap it in an array. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
 		),
 		mcp.WithString("web_layout",
-			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). In layout_tree and layout_integrity, a native JSON array is also accepted and marshaled to the same string form. e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
+			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). In layout_tree and layout_integrity, a native JSON array is also accepted and marshaled to the same string form. A single JSON object is rejected — wrap it in an array. e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
 		),
 		mcp.WithString("figma_layout_path",
 			mcp.Description("Path to a JSON file containing the Figma node list metadata (alternative to figma_layout for 'layout_tree' mode; mutually exclusive with figma_layout). The file content is a JSON array like [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
@@ -248,8 +248,9 @@ func decodeImageErrorMessage(what string, err error) string {
 // inlineLayoutJSON は layout_tree / layout_integrity のインライン layout 引数を文字列にする。
 // MCP クライアントが JSON 配列を文字列化せず渡した場合は
 // Marshal して従来の文字列入力と同じ経路へ載せる。未指定は空文字。
-// JSON オブジェクトは比較側が配列しか受け付けないため明示エラー。
-// 文字列・配列以外（オブジェクト・数値・真偽・null 等）は明示エラー。
+// JSON オブジェクトはネイティブ値でも文字列でも比較側が配列しか受け付けないため
+// 明示エラーにする（下流の []json.RawMessage Unmarshal で Go 内部型名が漏れるのを防ぐ）。
+// 文字列・配列以外（数値・真偽・null 等）も明示エラー。
 func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 	if args == nil {
 		return "", nil
@@ -260,6 +261,9 @@ func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 	}
 	switch v := val.(type) {
 	case string:
+		if comparator.IsJSONObjectPayload(v) {
+			return "", comparator.JSONArrayRequiredError(key)
+		}
 		return v, nil
 	case []any:
 		b, err := json.Marshal(v)
@@ -268,7 +272,7 @@ func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 		}
 		return string(b), nil
 	case map[string]any:
-		return "", fmt.Errorf("%s must be a JSON array of node objects (a JSON object is not supported); pass the nodes as an array", key)
+		return "", comparator.JSONArrayRequiredError(key)
 	default:
 		return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array", key)
 	}

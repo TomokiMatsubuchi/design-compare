@@ -1757,6 +1757,80 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.12e. layout_tree モード: 単一 JSON オブジェクトは配列必須の明示エラー
+	// =================================================================
+	// ツール説明の "array/object" 表記に従ってオブジェクトを渡すと、かつては
+	// []json.RawMessage 向け Unmarshal の内部型名エラーになった。ネイティブ
+	// オブジェクト・オブジェクト文字列のどちらも「配列が必要」と分かる文言にする。
+	t.Run("LayoutTree_JSONObjectRejected", func(t *testing.T) {
+		webOK := `[{"selector":"#c","x":0,"y":0,"w":10,"h":10}]`
+		figmaOK := `[{"id":"1","name":"c","x":0,"y":0,"w":10,"h":10}]`
+
+		cases := []struct {
+			name string
+			args map[string]any
+			want string
+		}{
+			{
+				name: "native_figma_object",
+				args: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": map[string]any{"id": "1", "name": "c", "x": 0, "y": 0, "w": 10, "h": 10},
+					"web_layout":   webOK,
+				},
+				want: "figma_layout must be a JSON array of node objects",
+			},
+			{
+				name: "string_figma_object",
+				args: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": `{"id":"1","name":"c","x":0,"y":0,"w":10,"h":10}`,
+					"web_layout":   webOK,
+				},
+				want: "figma_layout must be a JSON array of node objects",
+			},
+			{
+				name: "native_web_object",
+				args: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaOK,
+					"web_layout":   map[string]any{"selector": "#c", "x": 0, "y": 0, "w": 10, "h": 10},
+				},
+				want: "web_layout must be a JSON array of node objects",
+			},
+			{
+				name: "string_web_object",
+				args: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaOK,
+					"web_layout":   `{"selector":"#c","x":0,"y":0,"w":10,"h":10}`,
+				},
+				want: "web_layout must be a JSON array of node objects",
+			},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				res, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{
+					Params: mcp.CallToolParams{Arguments: c.args},
+				})
+				if err != nil {
+					t.Fatalf("handler failed: %v", err)
+				}
+				if !res.IsError {
+					t.Fatal("expected IsError for single JSON object layout input")
+				}
+				got := res.Content[0].(mcp.TextContent).Text
+				if !strings.Contains(got, c.want) {
+					t.Errorf("got %q, want substring %q", got, c.want)
+				}
+				if strings.Contains(got, "[]json.RawMessage") {
+					t.Errorf("error should not expose Go internal type name: %q", got)
+				}
+			})
+		}
+	})
+
+	// =================================================================
 	// 2.13. layout_tree モード: ignore_region による領域除外
 	// =================================================================
 	// 画像モードと同じ ignore_region を layout_tree でも受け付ける。

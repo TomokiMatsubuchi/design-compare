@@ -79,6 +79,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 
 	// layout_tree と同じ必須キー検証を通し、width/height などキー名ミスを
 	// w/h=0 の collapsed 扱い（無言の未検査 → success）に落とさない。
+	// 単一 JSON オブジェクトは parseWebLayoutNodes が配列必須のエラーで弾く。
 	wNodes, err := parseWebLayoutNodes(webJSON)
 	if err != nil {
 		return nil, err
