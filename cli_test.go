@@ -105,7 +105,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		t.Fatal("expected error for space-separated boolean value")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "unexpected argument(s): false") {
+	if !strings.Contains(msg, "unexpected non-flag argument(s): false") {
 		t.Errorf("error should mention unexpected false, got %q", msg)
 	}
 	if !strings.Contains(msg, "--flag=value") {
@@ -122,7 +122,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for space-separated --include-aa value")
 	}
-	if !strings.Contains(err.Error(), "unexpected argument(s): false") {
+	if !strings.Contains(err.Error(), "unexpected non-flag argument(s): false") {
 		t.Errorf("error should mention unexpected false, got %q", err.Error())
 	}
 
@@ -215,8 +215,36 @@ func TestParseCLIArgsHelp(t *testing.T) {
 	if err != flag.ErrHelp {
 		t.Fatalf("expected flag.ErrHelp, got %v", err)
 	}
-	if !strings.Contains(stderr.String(), "Usage:") {
-		t.Errorf("help output missing Usage: %q", stderr.String())
+	help := stderr.String()
+	if !strings.Contains(help, "Usage:") {
+		t.Errorf("help output missing Usage: %q", help)
+	}
+	if !strings.Contains(help, "Positional arguments are not accepted") {
+		t.Errorf("help output missing positional-args hint: %q", help)
+	}
+}
+
+func TestParseCLIArgsRejectsPositionalArgs(t *testing.T) {
+	var stderr bytes.Buffer
+	_, err := parseCLIArgs([]string{
+		"a.png", "b.png",
+		"--mode", "strict",
+		"--image-a", "a.png",
+		"--image-b", "b.png",
+	}, &stderr)
+	if err == nil {
+		t.Fatal("expected error for leading positional arguments")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "unexpected non-flag argument(s):") {
+		t.Errorf("error missing unexpected-args prefix: %q", msg)
+	}
+	if !strings.Contains(msg, "a.png") || !strings.Contains(msg, "b.png") {
+		t.Errorf("error should list leftover args: %q", msg)
+	}
+	// Go flag stops at the first non-flag, so --mode and later stay in Args().
+	if !strings.Contains(msg, "--mode") {
+		t.Errorf("error should list unparsed flags after positionals: %q", msg)
 	}
 }
 

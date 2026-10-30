@@ -69,7 +69,8 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
-		fmt.Fprintf(stderr, "       design-compare          (no args: start stdio MCP server)\n\n")
+		fmt.Fprintf(stderr, "       design-compare          (no args: start stdio MCP server)\n")
+		fmt.Fprintf(stderr, "Positional arguments are not accepted; specify images with --image-a / --image-b.\n\n")
 		prev := fs.Output()
 		fs.SetOutput(stderr)
 		fs.PrintDefaults()
@@ -103,8 +104,8 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if rest := fs.Args(); len(rest) > 0 {
-		return nil, fmt.Errorf("unexpected argument(s): %s (boolean flags need the --flag=value form; every value must follow its flag)", strings.Join(rest, " "))
+	if fs.NArg() > 0 {
+		return nil, fmt.Errorf("unexpected non-flag argument(s): %s (positional arguments are not accepted; specify images with --image-a / --image-b; boolean flags need the --flag=value form)", strings.Join(fs.Args(), " "))
 	}
 
 	toolArgs := make(map[string]any)
