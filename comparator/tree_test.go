@@ -369,8 +369,8 @@ func TestLayoutTree_DetailsOrderPutsFailuresFirst(t *testing.T) {
 	if len(result.Details) < 2 {
 		t.Fatalf("Expected summary plus detail rows, got %v", result.Details)
 	}
-	if !strings.Contains(result.Details[0], "Matched 3 out of 4") {
-		t.Errorf("Expected summary first, got %q", result.Details[0])
+	if !strings.Contains(result.Details[0], "Matched 3 out of 4 layout nodes (required pass rate: 98.00%)") {
+		t.Errorf("Expected summary with pass rate first, got %q", result.Details[0])
 	}
 
 	firstMatchIdx := -1
@@ -1151,7 +1151,7 @@ func TestLayoutTree_UTF8BOMStripped(t *testing.T) {
 
 func TestLimitLayoutTreeDetails(t *testing.T) {
 	details := []string{
-		"Matched 3 out of 3 layout nodes.",
+		"Matched 3 out of 3 layout nodes (required pass rate: 98.00%).",
 		"Matched: 'header' ↔ '#header'",
 		"Matched: 'logo' ↔ '.logo'",
 		"Matched: 'nav' ↔ '.nav'",
