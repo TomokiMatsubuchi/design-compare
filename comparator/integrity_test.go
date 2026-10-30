@@ -396,9 +396,10 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 	})
 
 	t.Run("all_zero_geometry_mismatch_message", func(t *testing.T) {
-		// width/height など w/h 以外のキー名を使うと幾何が全て 0 になる。
+		// 必須キーは揃っているが幾何が全て 0（collapsed のみ）のときは、
 		// 「データが空」とは区別したメッセージで幾何欠落を通知する。
-		web := `[{"selector":"#a","x":0,"y":0,"width":100,"height":50}]`
+		// キー名ミス（width/height 等）は parseWebLayoutNodes で入力エラーになる。
+		web := `[{"selector":"#a","x":0,"y":0,"w":0,"h":0}]`
 		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -542,6 +543,60 @@ func TestLayoutIntegrity_UTF8BOMStripped(t *testing.T) {
 		}
 		if result.Status != "success" || result.IssueCount != 0 {
 			t.Errorf("Expected success with 0 issues, got status=%s issues=%d", result.Status, result.IssueCount)
+		}
+	})
+}
+
+// TestLayoutIntegrity_RequiredKeys rejects missing or mistyped geometry keys
+// instead of treating them as w/h=0 and silently skipping (false success).
+func TestLayoutIntegrity_RequiredKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		webJSON string
+		wantSub string
+	}{
+		{
+			name:    "width_height_keys_rejected",
+			webJSON: `[{"selector":"body","x":0,"y":0,"w":768,"h":1024},{"selector":"#card","x":900,"y":10,"width":300,"height":100}]`,
+			wantSub: "Web layout node at index 1 is missing required field 'w'",
+		},
+		{
+			name:    "missing_h",
+			webJSON: `[{"selector":"#card","x":0,"y":0,"w":100}]`,
+			wantSub: "Web layout node at index 0 is missing required field 'h'",
+		},
+		{
+			name:    "missing_selector_key",
+			webJSON: `[{"x":0,"y":0,"w":100,"h":50}]`,
+			wantSub: "Web layout node at index 0 is missing required field 'selector'",
+		},
+		{
+			name:    "empty_selector",
+			webJSON: `[{"selector":"","x":0,"y":0,"w":100,"h":50}]`,
+			wantSub: "Web layout node at index 0 has empty required field 'selector'",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := CheckLayoutIntegrity(tc.webJSON, 768, 1024, nil, nil)
+			if err == nil {
+				t.Fatal("expected input error for invalid layout node fields")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error %q should contain %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+
+	t.Run("correct_keys_still_detect_overflow", func(t *testing.T) {
+		web := `[{"selector":"body","x":0,"y":0,"w":768,"h":1024},{"selector":"#card","x":900,"y":10,"w":300,"h":100}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" || res.CheckedNodes != 2 || res.IssueCount < 1 {
+			t.Fatalf("expected mismatch with overflow, got %#v", res)
 		}
 	})
 }

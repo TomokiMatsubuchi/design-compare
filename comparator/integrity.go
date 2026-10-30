@@ -1,7 +1,6 @@
 package comparator
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -78,9 +77,11 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	// layout_tree と同様、PowerShell 等が付ける UTF-8 BOM をパース前に除去する。
 	webJSON = strings.TrimPrefix(webJSON, "\uFEFF")
 
-	var wNodes []WebNode
-	if err := json.Unmarshal([]byte(webJSON), &wNodes); err != nil {
-		return nil, fmt.Errorf("failed to parse Web layout JSON: %w", err)
+	// layout_tree と同じ必須キー検証を通し、width/height などキー名ミスを
+	// w/h=0 の collapsed 扱い（無言の未検査 → success）に落とさない。
+	wNodes, err := parseWebLayoutNodes(webJSON)
+	if err != nil {
+		return nil, err
 	}
 	if viewportW <= 0 || viewportH <= 0 {
 		return nil, fmt.Errorf("viewport_width and viewport_height must be greater than 0")
