@@ -306,6 +306,15 @@ npm test
 # または: go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts
 ```
 
+### npm への自動リリース
+`main` に取り込まれた変更が **10 件**たまるたびに、`.github/workflows/release.yml` が npm へ自動でリリースします。手動でのバージョン更新や `npm publish` は不要です。
+
+- **発火条件:** `main` への push から始まった `ci.yml` が成功したときだけです。PR の CI 完了やフォークリポジトリからの実行では起動しません。`workflow_dispatch` で手動実行する場合は `main` 上で起動してください（他のブランチを指定しても実行されません）。失敗したコミットはリリース対象になりません。
+- **件数の数え方:** 直近の `v*` タグ以降のコミット数。`v*` タグがまだ無いリポジトリでは初回コミット以降の全コミットを数えます。CI 完了からリリース処理までの間に `main` が進んでいた場合は公開せずスキップし、最新の `main` の CI 完了時に改めて判定します。
+- **版番号:** `package.json` と npm の最新公開版のうち大きい方のパッチを 1 つ上げ、`plugin.yaml`、`.codex-plugin/plugin.json`、各 `marketplace.json` の `plugins[].version` も同じ値に揃えます（marketplace 最上位の `version` は形式の版なので更新しません）。
+- **処理順:** 公開が成功してから `chore: release vX.Y.Z [skip ci]` を `main` にコミットし、`vX.Y.Z` タグと GitHub リリースを作成します（レジストリとタグのずれを避けるため）。
+- **必要な設定:** リポジトリシークレット `NPM_TOKEN`（npm の automation token）。未設定のときは公開だけをスキップし、実行ログに警告を出します。`main` に PR 必須のブランチ保護をかけている場合は、`github-actions[bot]` からの直接 push が拒否されるため、リリース用の bypass を許可するか保護の対象外にしてください。
+
 ---
 
 ## 5. 各種ツール（Codex / Claude）へのセットアップ手順
