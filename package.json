@@ -24,6 +24,7 @@
     "skills": ["./skills"]
   },
   "scripts": {
+    "test": "go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts",
     "test:ext": "node --test extensions/design-compare/mcp-client.test.ts"
   },
   "peerDependencies": {
