@@ -272,6 +272,8 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 go build -o design-compare
 ```
 
+コミット前に `gofmt -w .` で整形してください（CI でも `gofmt -l .` を検査します）。
+
 ### CLI ワンショット比較
 
 引数付きで起動すると MCP ハンドシェイクなしで `compare_design` を1回実行し、ツールと同じ応答 JSON を stdout に出して終了します（`0` = success / `2` = mismatch / `1` = エラー）。エラー（`1`）時のエラー本文は、stdout を JSON としてパースする呼び出し側を壊さないよう stderr に出ます。引数なし起動は従来どおり stdio MCP サーバーです。
