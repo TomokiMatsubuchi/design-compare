@@ -156,6 +156,62 @@ test("surfaces stderr when the server exits before replying", async () => {
   );
 });
 
+test("preserves Japanese UTF-8 when stdout chunks split mid-character", async () => {
+  // Stub writes one JSON-RPC reply in two flushes that cut inside a multi-byte
+  // sequence. Buffer.toString() would inject U+FFFD; StringDecoder must not.
+  const japanese = "ヒーローバナー";
+  const stubPath = join(workDir, "utf8-split-server.mjs");
+  writeFileSync(
+    stubPath,
+    `#!/usr/bin/env node
+import { stdin, stdout } from "node:process";
+stdin.resume();
+const japanese = ${JSON.stringify(japanese)};
+const payload = JSON.stringify({
+  status: "mismatch",
+  details: "Figmaノード「" + japanese + "」が一致しません",
+  mismatched_nodes: [{ name: japanese, web_selector: ".hero" }],
+});
+const line =
+  JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    result: { content: [{ type: "text", text: payload }] },
+  }) + "\\n";
+const buf = Buffer.from(line, "utf8");
+let splitAt = -1;
+for (let i = 1; i < buf.length; i++) {
+  if ((buf[i] & 0xc0) === 0x80) {
+    splitAt = i;
+    break;
+  }
+}
+if (splitAt < 0) throw new Error("no multi-byte sequence to split");
+stdout.write(buf.subarray(0, splitAt), () => {
+  setTimeout(() => stdout.write(buf.subarray(splitAt)), 30);
+});
+`,
+  );
+  chmodSync(stubPath, 0o755);
+
+  const result = await callCompareDesign({
+    binaryPath: stubPath,
+    args: { mode: "layout_tree" },
+    cwd: workDir,
+    timeoutMs: 10_000,
+  });
+
+  const text = (result.content ?? []).map((c) => c.text ?? "").join("");
+  assert.equal(text.includes("\uFFFD"), false, "must not contain replacement characters");
+  assert.match(text, new RegExp(japanese));
+  const parsed = JSON.parse(text) as {
+    details: string;
+    mismatched_nodes: { name: string }[];
+  };
+  assert.equal(parsed.mismatched_nodes[0]?.name, japanese);
+  assert.match(parsed.details, new RegExp(japanese));
+});
+
 // The Go comparator reads `w`/`h` (not width/height) and matches Figma nodes to
 // Web nodes by relative geometry, so a child under a shared root is needed for
 // the comparison to be meaningful.
