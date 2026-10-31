@@ -65,9 +65,18 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" || res.IssueCount != 0 || res.CheckedNodes != 1 {
 			t.Fatalf("got status=%s issues=%d checked=%d details=%v", res.Status, res.IssueCount, res.CheckedNodes, res.Details)
 		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0 (no parent refs)", res.ParentCheckedNodes)
+		}
+		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "parent_overflow was not applied") {
+			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
+		}
 		raw, _ := json.Marshal(res)
 		if strings.Contains(string(raw), `"issues"`) {
 			t.Errorf("issues should be omitempty when empty, got %s", raw)
+		}
+		if strings.Contains(string(raw), `"unresolved_parent_refs"`) {
+			t.Errorf("unresolved_parent_refs should be omitempty when empty, got %s", raw)
 		}
 	})
 
@@ -132,6 +141,12 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "mismatch" {
 			t.Fatalf("status=%s", res.Status)
 		}
+		if res.ParentCheckedNodes != 1 {
+			t.Errorf("parent_checked_nodes=%d, want 1", res.ParentCheckedNodes)
+		}
+		if len(res.UnresolvedParentRefs) != 0 {
+			t.Errorf("unresolved_parent_refs=%v", res.UnresolvedParentRefs)
+		}
 		found := false
 		for _, issue := range res.Issues {
 			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
@@ -155,6 +170,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" || res.IssueCount != 0 {
 			t.Fatalf("got %#v", res)
 		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
 		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#gone'" {
 			t.Fatalf("unresolved_parent_refs=%v", res.UnresolvedParentRefs)
 		}
@@ -163,6 +181,48 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "Skipped parent_overflow") || !strings.Contains(res.Details[0], "1 unresolved parent ref") {
 			t.Fatalf("details should mention skipped parent_overflow, got %v", res.Details)
+		}
+		if !strings.Contains(res.Details[0], "parent_overflow was not applied") {
+			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
+		}
+	})
+
+	t.Run("no_parent_refs_reports_parent_checked_zero", func(t *testing.T) {
+		// 親キーを持たないフラットな DOM。viewport 内で崩れが無くても parent_overflow は未適用。
+		web := `[{"selector":"#a","x":0,"y":0,"w":768,"h":100},{"selector":"#b","x":10,"y":10,"w":100,"h":50}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IssueCount != 0 || res.CheckedNodes != 2 {
+			t.Fatalf("got %#v", res)
+		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
+		if len(res.UnresolvedParentRefs) != 0 {
+			t.Errorf("unresolved_parent_refs=%v", res.UnresolvedParentRefs)
+		}
+		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "parent_checked_nodes=0") {
+			t.Errorf("expected the note on the summary line only, got %v", res.Details)
+		}
+	})
+
+	t.Run("parent_typo_unresolved_ref", func(t *testing.T) {
+		web := `[{"selector":"#card","x":0,"y":0,"w":400,"h":200},{"selector":"#child","x":0,"y":0,"w":500,"h":50,"parent":"#card-typo"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 親が解決できないため parent_overflow はスキップされ、viewport にも収まっていれば success。
+		if res.Status != "success" {
+			t.Fatalf("got %#v", res)
+		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
+		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#card-typo'" {
+			t.Errorf("unresolved_parent_refs=%v, want [Web: '#card-typo']", res.UnresolvedParentRefs)
 		}
 	})
 
@@ -176,6 +236,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" || res.IssueCount != 0 || res.CheckedNodes != 1 {
 			t.Fatalf("got %#v", res)
 		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
 		if len(res.UnresolvedParentRefs) != 0 {
 			t.Fatalf("zero-geometry parent should not be unresolved_parent_refs, got %v", res.UnresolvedParentRefs)
 		}
@@ -184,6 +247,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "1 zero-geometry parent") {
 			t.Fatalf("details should mention zero-geometry skip, got %v", res.Details)
+		}
+		if !strings.Contains(res.Details[0], "parent_checked_nodes=0") {
+			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
 		}
 	})
 
@@ -229,6 +295,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "mismatch" || res.IgnoredCount != 1 {
 			t.Fatalf("got %#v", res)
 		}
+		if res.ParentCheckedNodes != 1 {
+			t.Errorf("parent_checked_nodes=%d, want 1 (ignored parent still resolves)", res.ParentCheckedNodes)
+		}
 		found := false
 		for _, issue := range res.Issues {
 			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
@@ -255,6 +324,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if res.IssueCount != 0 {
 			t.Fatalf("expected no layout issues, got %#v", res)
+		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
 		}
 		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#missing'" {
 			t.Fatalf("expected unresolved_parent_refs=[Web: '#missing'], got %v", res.UnresolvedParentRefs)

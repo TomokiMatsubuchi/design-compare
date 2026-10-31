@@ -37,14 +37,18 @@ type LayoutIssue struct {
 }
 
 type LayoutIntegrityResult struct {
-	Status         string        `json:"status"` // success | mismatch | skipped
-	ViewportWidth  float64       `json:"viewport_width"`
-	ViewportHeight float64       `json:"viewport_height"`
-	CheckedNodes   int           `json:"checked_nodes"`
-	IssueCount     int           `json:"issue_count"`
-	Issues         []LayoutIssue `json:"issues,omitempty"`
-	Details        []string      `json:"details"`
-	IgnoredCount   int           `json:"ignored_count"`
+	Status         string  `json:"status"` // success | mismatch | skipped
+	ViewportWidth  float64 `json:"viewport_width"`
+	ViewportHeight float64 `json:"viewport_height"`
+	CheckedNodes   int     `json:"checked_nodes"`
+	// ParentCheckedNodes は parent を解決できて包含検査を適用したノード数。
+	// layout_tree の absolute_mode_pairs と同種の診断。常時返し、0 なら
+	// parent_overflow が一度も走っていない（無言スキップの誤認防止。Issue #440）。
+	ParentCheckedNodes int           `json:"parent_checked_nodes"`
+	IssueCount         int           `json:"issue_count"`
+	Issues             []LayoutIssue `json:"issues,omitempty"`
+	Details            []string      `json:"details"`
+	IgnoredCount       int           `json:"ignored_count"`
 	// IgnoredNodes は ignore_nodes / ignore_region で除外したノードの識別子
 	//（web:<selector>）。件数は IgnoredCount と一致する。プレフィックス除外の
 	// 過剰一致検証用（layout_tree と同方針）。
@@ -238,7 +242,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	var issues []LayoutIssue
-	var skippedUnresolved, skippedZeroGeom int
+	var parentChecked, skippedUnresolved, skippedZeroGeom int
 	for _, wn := range checkable {
 		if issue, ok := viewportOverflowX(wn, viewportW); ok {
 			issues = append(issues, issue)
@@ -247,6 +251,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 			continue
 		}
 		if bySelector[wn.Parent] != nil {
+			parentChecked++
 			if issue, ok := parentOverflow(wn, bySelector); ok {
 				issues = append(issues, issue)
 			}
@@ -261,6 +266,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	result.CheckedNodes = len(checkable)
+	result.ParentCheckedNodes = parentChecked
 	result.IssueCount = len(issues)
 	result.Issues = issues
 	result.ParentOverflowSkippedZeroGeom = skippedZeroGeom
@@ -269,6 +275,13 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	if skippedUnresolved > 0 || skippedZeroGeom > 0 {
 		summary += fmt.Sprintf(" Skipped parent_overflow for %d child node(s) (%d unresolved parent ref(s), %d zero-geometry parent(s)).",
 			skippedUnresolved+skippedZeroGeom, len(unresolvedParentRefs), skippedZeroGeom)
+	}
+	// parent_checked_nodes=0 は親はみ出し検査が一度も走っていない合図。
+	// status は変えず要約行に注記し、success を「親検査込みの合格」と誤認させない (Issue #440)。
+	// 独立した detail 行にすると max_details の切り詰めで issue の detail を押し出すため、
+	// 上の Skipped ... と同じく要約行へ連結する。
+	if parentChecked == 0 {
+		summary += " parent_overflow was not applied because no usable parent references were resolved (parent_checked_nodes=0)."
 	}
 	details := []string{summary}
 	for _, issue := range issues {
