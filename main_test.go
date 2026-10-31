@@ -6304,6 +6304,16 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			want: "argument 'max_diff_pixels' must be a finite number",
 		},
 		{
+			name: "pass_rate NaN",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "pass_rate": "NaN"},
+			want: "argument 'pass_rate' must be a finite number",
+		},
+		{
+			name: "viewport_width NaN",
+			args: map[string]any{"mode": "layout_integrity", "web_layout": `[{"selector":"#page","x":0,"y":0,"w":768,"h":200}]`, "viewport_width": "NaN"},
+			want: "argument 'viewport_width' must be a finite number",
+		},
+		{
 			name: "count_extra_web abc",
 			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "count_extra_web": "abc"},
 			want: "argument 'count_extra_web' must be a boolean",

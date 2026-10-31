@@ -1165,6 +1165,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			// NaN / Inf は floatArg で拒否済み。ここでは非正値のみを弾く。
 			if viewportW <= 0 {
 				return mcp.NewToolResultError("viewport_width must be greater than 0"), nil
 			}
@@ -1174,6 +1175,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			// NaN / Inf は floatArg で拒否済み。ここでは非正値のみを弾く。
 			if viewportH <= 0 {
 				return mcp.NewToolResultError("viewport_height must be greater than 0"), nil
 			}
