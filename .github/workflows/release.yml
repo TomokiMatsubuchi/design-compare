@@ -11,6 +11,9 @@ on:
 
 permissions:
   contents: write
+  # Trusted Publishing（OIDC）で npm に publish するための OIDC トークン発行を許可する。
+  # 長期トークン（NPM_TOKEN）は 2027 年 1 月に直接公開できなくなるため、シークレットを使わない。
+  id-token: write
 
 # リリース処理は同時に 1 本だけ走らせる（版の取り違えとタグの二重作成を防ぐ）。
 concurrency:
@@ -44,6 +47,13 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Upgrade npm for trusted publishing
+        run: |
+          set -euo pipefail
+          # Trusted Publishing（OIDC）は npm 11.5.1 以降が必要なので明示的に上げる。
+          npm install -g npm@latest
+          npm --version
+
       - name: Count changes since the last release
         id: count
         run: |
@@ -73,24 +83,9 @@ jobs:
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check npm credentials
-        id: credentials
-        if: steps.count.outputs.should_release == 'true'
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Repository secret NPM_TOKEN is not set, so the npm publish step is skipped. Add an npm automation token as NPM_TOKEN and re-run this workflow."
-          else
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Compute the next version
         id: version
-        if: steps.count.outputs.should_release == 'true' && steps.credentials.outputs.available == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: steps.count.outputs.should_release == 'true'
         run: |
           set -euo pipefail
           # package.json と npm の最新公開版のうち大きい方を基準にパッチを上げる。
@@ -130,10 +125,10 @@ jobs:
       - name: Publish to npm
         if: steps.version.outputs.version != ''
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          # Trusted Publishing ではシークレットを使わず、GitHub の OIDC トークンで認証する。
           # 先に公開し、成功したときだけタグを付ける（レジストリとタグのずれを避ける）。
           npm publish
           echo "Published design-compare@${VERSION}"
