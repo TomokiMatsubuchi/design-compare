@@ -1974,6 +1974,22 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if result["issue_count"] != float64(0) {
 				t.Errorf("issue_count=%v", result["issue_count"])
 			}
+			if result["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", result["parent_checked_nodes"])
+			}
+			if _, ok := result["unresolved_parent_refs"]; ok {
+				t.Errorf("unresolved_parent_refs should be omitted when empty: %v", result["unresolved_parent_refs"])
+			}
+			details, _ := result["details"].([]interface{})
+			foundNote := false
+			for _, d := range details {
+				if s, ok := d.(string); ok && strings.Contains(s, "parent_overflow was not applied") {
+					foundNote = true
+				}
+			}
+			if !foundNote {
+				t.Errorf("expected parent_overflow skip note in details, got %v", details)
+			}
 			if _, ok := result["issues"]; ok {
 				t.Errorf("issues should be omitted: %v", result["issues"])
 			}
@@ -2080,6 +2096,12 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if result["status"] != "mismatch" {
 				t.Fatalf("status=%v", result["status"])
 			}
+			if result["parent_checked_nodes"] != float64(1) {
+				t.Errorf("parent_checked_nodes=%v, want 1", result["parent_checked_nodes"])
+			}
+			if _, ok := result["unresolved_parent_refs"]; ok {
+				t.Errorf("unresolved_parent_refs should be omitted for valid parent: %v", result["unresolved_parent_refs"])
+			}
 			issues, _ := result["issues"].([]interface{})
 			foundParent := false
 			for _, raw := range issues {
@@ -2093,6 +2115,82 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 			if !foundParent {
 				t.Fatalf("issues=%v", issues)
+			}
+		})
+
+		// Issue #440: 親キー無しのフラット DOM でも parent_checked_nodes=0 と details 注記を返す。
+		t.Run("NoParentRefs_ParentCheckedZero", func(t *testing.T) {
+			flat := `[{"selector":"#a","x":0,"y":0,"w":768,"h":100},{"selector":"#b","x":10,"y":10,"w":100,"h":50}]`
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": flat,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("got %#v", result)
+			}
+			if result["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", result["parent_checked_nodes"])
+			}
+			if result["checked_nodes"] != float64(2) {
+				t.Errorf("checked_nodes=%v", result["checked_nodes"])
+			}
+			if _, ok := result["unresolved_parent_refs"]; ok {
+				t.Errorf("unresolved_parent_refs should be omitted: %v", result["unresolved_parent_refs"])
+			}
+			details, _ := result["details"].([]interface{})
+			foundNote := false
+			for _, d := range details {
+				if s, ok := d.(string); ok && strings.Contains(s, "parent_checked_nodes=0") {
+					foundNote = true
+				}
+			}
+			if !foundNote {
+				t.Errorf("expected parent_checked_nodes=0 note in details, got %v", details)
+			}
+		})
+
+		// Issue #440 / #460: parent 綴り違いでも status は変えず診断フィールドで通知する。
+		t.Run("UnresolvedParentTypo", func(t *testing.T) {
+			typo := `[{"selector":"#card","x":0,"y":0,"w":400,"h":200},{"selector":"#child","x":0,"y":0,"w":500,"h":50,"parent":"#card-typo"}]`
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": typo,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("got %#v", result)
+			}
+			if result["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", result["parent_checked_nodes"])
+			}
+			refs, ok := result["unresolved_parent_refs"].([]interface{})
+			if !ok || len(refs) != 1 || refs[0] != "Web: '#card-typo'" {
+				t.Errorf("unresolved_parent_refs=%v, want [Web: '#card-typo']", result["unresolved_parent_refs"])
 			}
 		})
 
@@ -2120,6 +2218,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 			if result["issue_count"] != float64(0) {
 				t.Errorf("issue_count=%v", result["issue_count"])
+			}
+			if result["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", result["parent_checked_nodes"])
 			}
 			refs, ok := result["unresolved_parent_refs"].([]interface{})
 			if !ok || len(refs) != 1 || refs[0] != "Web: '#missing'" {
@@ -2154,6 +2255,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 			if _, ok := result["unresolved_parent_refs"]; ok {
 				t.Errorf("zero-geometry parent must not appear in unresolved_parent_refs: %v", result["unresolved_parent_refs"])
+			}
+			if result["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", result["parent_checked_nodes"])
 			}
 			if result["parent_overflow_skipped_zero_geom"] != float64(1) {
 				t.Errorf("parent_overflow_skipped_zero_geom=%v", result["parent_overflow_skipped_zero_geom"])
@@ -2453,12 +2557,15 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected details array, got %v", resultAll["details"])
 			}
-			// summary + 3 viewport_overflow_x
-			if len(detailsAll) != 4 {
-				t.Fatalf("Expected 4 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
+			// summary + parent_overflow 未適用注記 + 3 viewport_overflow_x
+			if len(detailsAll) != 5 {
+				t.Fatalf("Expected 5 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
 			}
 			if resultAll["issue_count"] != float64(3) {
 				t.Fatalf("issue_count=%v", resultAll["issue_count"])
+			}
+			if resultAll["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", resultAll["parent_checked_nodes"])
 			}
 
 			reqZero := mcp.CallToolRequest{
@@ -2477,8 +2584,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			var resultZero map[string]interface{}
 			json.Unmarshal([]byte(resZero.Content[0].(mcp.TextContent).Text), &resultZero)
 			detailsZero, _ := resultZero["details"].([]interface{})
-			if len(detailsZero) != 4 {
-				t.Fatalf("Expected 4 details when max_details=0, got %d: %v", len(detailsZero), detailsZero)
+			if len(detailsZero) != 5 {
+				t.Fatalf("Expected 5 details when max_details=0, got %d: %v", len(detailsZero), detailsZero)
 			}
 
 			reqCap := mcp.CallToolRequest{
@@ -2508,7 +2615,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Errorf("Expected summary line first, got %v", detailsCap[0])
 			}
 			omit, _ := detailsCap[len(detailsCap)-1].(string)
-			if omit != "... and 2 more details omitted (max_details=2)" {
+			if omit != "... and 3 more details omitted (max_details=2)" {
 				t.Errorf("Expected omit line, got %q", omit)
 			}
 			// 機械可読フィールドは全件のまま

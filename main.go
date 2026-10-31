@@ -1207,14 +1207,15 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		integrityResult.Details = comparator.LimitLayoutTreeDetails(integrityResult.Details, maxDetails)
 
 		responseMap = map[string]interface{}{
-			"status":          integrityResult.Status,
-			"mode":            "layout_integrity",
-			"viewport_width":  integrityResult.ViewportWidth,
-			"viewport_height": integrityResult.ViewportHeight,
-			"checked_nodes":   integrityResult.CheckedNodes,
-			"issue_count":     integrityResult.IssueCount,
-			"details":         integrityResult.Details,
-			"ignored_count":   integrityResult.IgnoredCount,
+			"status":               integrityResult.Status,
+			"mode":                 "layout_integrity",
+			"viewport_width":       integrityResult.ViewportWidth,
+			"viewport_height":      integrityResult.ViewportHeight,
+			"checked_nodes":        integrityResult.CheckedNodes,
+			"parent_checked_nodes": integrityResult.ParentCheckedNodes,
+			"issue_count":          integrityResult.IssueCount,
+			"details":              integrityResult.Details,
+			"ignored_count":        integrityResult.IgnoredCount,
 		}
 		if preset != "" {
 			responseMap["viewport_preset"] = preset
