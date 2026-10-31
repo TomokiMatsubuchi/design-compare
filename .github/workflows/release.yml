@@ -22,7 +22,7 @@ concurrency:
 
 env:
   # 前回リリース以降の変更がこの件数以上になったら公開する。
-  RELEASE_CHANGE_THRESHOLD: "10"
+  RELEASE_CHANGE_THRESHOLD: "1"
 
 jobs:
   release:
