@@ -1240,6 +1240,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(integrityResult.UnresolvedParentRefs) > 0 {
 			responseMap["unresolved_parent_refs"] = integrityResult.UnresolvedParentRefs
 		}
+		// 親の w/h が 0 以下のため parent_overflow をスキップした件数。
+		// status は変えず可視化のみ (Issue #435)。
+		if integrityResult.ParentOverflowSkippedZeroGeom > 0 {
+			responseMap["parent_overflow_skipped_zero_geom"] = integrityResult.ParentOverflowSkippedZeroGeom
+		}
 
 	default:
 		// 有効モードを列挙し、タイポ時にREADME等を見ずに1回のリトライで自己修復できるようにする

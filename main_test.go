@@ -2125,6 +2125,39 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !ok || len(refs) != 1 || refs[0] != "Web: '#missing'" {
 				t.Errorf("Expected unresolved_parent_refs=[Web: '#missing'], got %v", result["unresolved_parent_refs"])
 			}
+			if _, ok := result["parent_overflow_skipped_zero_geom"]; ok {
+				t.Errorf("expected no parent_overflow_skipped_zero_geom, got %v", result["parent_overflow_skipped_zero_geom"])
+			}
+		})
+
+		// Issue #435: 親の w/h が 0 のとき status は success のまま件数で可視化する。
+		t.Run("ParentOverflowSkippedZeroGeom", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": `[{"selector":"#card","x":0,"y":0,"w":0,"h":0},{"selector":"#child","x":0,"y":0,"w":100,"h":50,"parent":"#card"}]`,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("status must stay success, got %#v", result)
+			}
+			if _, ok := result["unresolved_parent_refs"]; ok {
+				t.Errorf("zero-geometry parent must not appear in unresolved_parent_refs: %v", result["unresolved_parent_refs"])
+			}
+			if result["parent_overflow_skipped_zero_geom"] != float64(1) {
+				t.Errorf("parent_overflow_skipped_zero_geom=%v", result["parent_overflow_skipped_zero_geom"])
+			}
 		})
 
 		// Issue #460: ignore_nodes で除外した親は unresolved にしない（索引は除外前の元リスト）。

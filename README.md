@@ -49,9 +49,9 @@ Figma 比較は「あるキャンバス幅での再現」しか見ないため�
 - **既定ビューポート:** 768×1024 CSS px（`viewport_preset` 未指定 = `ipad_portrait`）。
 - **横向き:** `viewport_preset=ipad_landscape`（1024×768）。任意サイズは `viewport_width` / `viewport_height`（0 より大きい値。指定時はプリセットを上書き）。
 - **`viewport_overflow_x`:** `x < 0` または `x+w > viewport_width`（1px の丸めは許容）。ビューポート高さ超えはページスクロールとして扱い、失敗にしません。
-- **`parent_overflow`:** 子ボックスが親ボックスからいずれかの辺で 1px 超えてはみ出す。親が JSON に無い場合はこの検査をスキップし、解決できない `parent` は `status` を変えず `unresolved_parent_refs`（例: `Web: '#missing'`）として応答します（`layout_tree` と同じラベル形式。`ignore_nodes` で除外した親は誤検知しません）。
+- **`parent_overflow`:** 子ボックスが親ボックスからいずれかの辺で 1px 超えてはみ出す。親が JSON に無い場合、または親の `w`/`h` が 0 以下の場合はこの検査をスキップします（`status` は変えず、前者は `unresolved_parent_refs`、後者は `parent_overflow_skipped_zero_geom` と `details` 要約で可視化）。`ignore_nodes` / `ignore_region` で除外した親でも、親に非ゼロ幾何があれば子の `parent_overflow` は引き続き検査します。
 - **合否:** 崩れ 0 件 → `success` / 1 件以上 → `mismatch` / 検査対象がすべて除外 → `skipped`。Web ノードが 1 件もない、または全ノードで `w`/`h` が 0 以下（`width`/`height` 等のキー名ミス疑い）の場合も `mismatch` です。`match_rate` は返しません。
-- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`ignored_nodes`（`web:<selector>`。件数は `ignored_count` と一致）/ `unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。
+- **応答:** `status`, `mode`, `viewport_width`, `viewport_height`, `checked_nodes`, `issue_count`, `details`, `ignored_count`。崩れがあるとき `issues`（`type` / `selector` / `detail`）。`viewport_preset` を渡したときはエコーします。`ignored_nodes`（`web:<selector>`。件数は `ignored_count` と一致）/ `unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` / `parent_overflow_skipped_zero_geom` は該当時のみ。
 
 意図的な横スクロール領域（カルーセル、`overflow-x: auto` の表、マーキーなど）では、スクロールコンテナ自身はビューポート内に収まっていても、子要素のボックスが `viewport_width` を越えると `viewport_overflow_x` として検出されます。これは崩れではないため CSS で「直す」対象ではなく、`ignore_nodes`（例: `.carousel-*`）や `ignore_region` で明示的に除外し、除外が効いたかは `unmatched_ignores` / `unmatched_ignore_regions` で確認してください（除外がすべて一致していればこれらのフィールドは出ません）。
 
@@ -258,7 +258,22 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 
 ### `layout_integrity`
 
-§1 の「応答」と同じ。`status` / `mode` / `viewport_width` / `viewport_height` / `checked_nodes` / `issue_count` / `details` / `ignored_count`。崩れがあるとき `issues`。`viewport_preset` 指定時はエコー。`ignored_nodes`（`web:<selector>`。件数は `ignored_count` と一致）/ `unmatched_ignores` / `unmatched_ignore_regions` / `unresolved_parent_refs` は該当時のみ。
+| フィールド | 型 | 出現条件 | 説明 |
+| :--- | :--- | :--- | :--- |
+| `status` | string | 常時 | `success` / `mismatch` / `skipped` |
+| `mode` | string | 常時 | 常に `layout_integrity` |
+| `viewport_width` / `viewport_height` | number | 常時 | 実効ビューポート（CSS px） |
+| `viewport_preset` | string | 指定時 | 渡したプリセット名のエコー |
+| `checked_nodes` | number | 常時 | 検査したノード数（除外・ゼロ幾何を除く） |
+| `issue_count` | number | 常時 | 検出した崩れ件数 |
+| `issues` | object[] | 崩れあり | 各件の `type` / `selector` / `detail` |
+| `details` | string[] | 常時 | 要約行＋各 issue の detail。`parent_overflow` スキップ時は要約に件数を追記 |
+| `ignored_count` | number | 常時 | `ignore_nodes` / `ignore_region` で除外したノード数 |
+| `ignored_nodes` | string[] | 非空時のみ | 除外したノード（`web:<selector>`。件数は `ignored_count` と一致） |
+| `unmatched_ignores` | string[] | 非空時のみ | どのノードにも一致しなかった `ignore_nodes` エントリ |
+| `unmatched_ignore_regions` | string[] | 非空時のみ | どのノード中心とも重ならなかった `ignore_region` |
+| `unresolved_parent_refs` | string[] | 非空時のみ | 入力に無い `parent` 参照（例: `Web: '.foo'`）。`status` は変えない |
+| `parent_overflow_skipped_zero_geom` | number | 1 以上のとき | 親の `w`/`h` が 0 以下のため `parent_overflow` をスキップした子の件数 |
 
 ---
 
