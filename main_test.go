@@ -2557,9 +2557,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected details array, got %v", resultAll["details"])
 			}
-			// summary + parent_overflow 未適用注記 + 3 viewport_overflow_x
-			if len(detailsAll) != 5 {
-				t.Fatalf("Expected 5 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
+			// summary（未適用注記込み）+ 3 viewport_overflow_x
+			if len(detailsAll) != 4 {
+				t.Fatalf("Expected 4 details when max_details is omitted, got %d: %v", len(detailsAll), detailsAll)
 			}
 			if resultAll["issue_count"] != float64(3) {
 				t.Fatalf("issue_count=%v", resultAll["issue_count"])
@@ -2584,8 +2584,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			var resultZero map[string]interface{}
 			json.Unmarshal([]byte(resZero.Content[0].(mcp.TextContent).Text), &resultZero)
 			detailsZero, _ := resultZero["details"].([]interface{})
-			if len(detailsZero) != 5 {
-				t.Fatalf("Expected 5 details when max_details=0, got %d: %v", len(detailsZero), detailsZero)
+			if len(detailsZero) != 4 {
+				t.Fatalf("Expected 4 details when max_details=0, got %d: %v", len(detailsZero), detailsZero)
 			}
 
 			reqCap := mcp.CallToolRequest{
@@ -2614,8 +2614,15 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !strings.Contains(summary, "Found 3 layout issues") {
 				t.Errorf("Expected summary line first, got %v", detailsCap[0])
 			}
+			// 未適用注記は summary 行に連結されるため、切り詰めても issue の detail が残る。
+			if !strings.Contains(summary, "parent_checked_nodes=0") {
+				t.Errorf("Expected parent_checked_nodes=0 note on the summary line, got %q", summary)
+			}
+			if kept, _ := detailsCap[1].(string); !strings.Contains(kept, "#a") || !strings.Contains(kept, "overflows the right edge") {
+				t.Errorf("Expected the first issue detail to survive truncation, got %q", kept)
+			}
 			omit, _ := detailsCap[len(detailsCap)-1].(string)
-			if omit != "... and 3 more details omitted (max_details=2)" {
+			if omit != "... and 2 more details omitted (max_details=2)" {
 				t.Errorf("Expected omit line, got %q", omit)
 			}
 			// 機械可読フィールドは全件のまま

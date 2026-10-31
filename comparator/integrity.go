@@ -37,10 +37,10 @@ type LayoutIssue struct {
 }
 
 type LayoutIntegrityResult struct {
-	Status         string        `json:"status"` // success | mismatch | skipped
-	ViewportWidth  float64       `json:"viewport_width"`
-	ViewportHeight float64       `json:"viewport_height"`
-	CheckedNodes   int           `json:"checked_nodes"`
+	Status         string  `json:"status"` // success | mismatch | skipped
+	ViewportWidth  float64 `json:"viewport_width"`
+	ViewportHeight float64 `json:"viewport_height"`
+	CheckedNodes   int     `json:"checked_nodes"`
 	// ParentCheckedNodes は parent を解決できて包含検査を適用したノード数。
 	// layout_tree の absolute_mode_pairs と同種の診断。常時返し、0 なら
 	// parent_overflow が一度も走っていない（無言スキップの誤認防止。Issue #440）。
@@ -276,12 +276,14 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		summary += fmt.Sprintf(" Skipped parent_overflow for %d child node(s) (%d unresolved parent ref(s), %d zero-geometry parent(s)).",
 			skippedUnresolved+skippedZeroGeom, len(unresolvedParentRefs), skippedZeroGeom)
 	}
-	details := []string{summary}
 	// parent_checked_nodes=0 は親はみ出し検査が一度も走っていない合図。
-	// status は変えず details に注記し、success を「親検査込みの合格」と誤認させない (Issue #440)。
+	// status は変えず要約行に注記し、success を「親検査込みの合格」と誤認させない (Issue #440)。
+	// 独立した detail 行にすると max_details の切り詰めで issue の detail を押し出すため、
+	// 上の Skipped ... と同じく要約行へ連結する。
 	if parentChecked == 0 {
-		details = append(details, "parent_overflow was not applied because no usable parent references were resolved (parent_checked_nodes=0)")
+		summary += " parent_overflow was not applied because no usable parent references were resolved (parent_checked_nodes=0)."
 	}
+	details := []string{summary}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)
 	}

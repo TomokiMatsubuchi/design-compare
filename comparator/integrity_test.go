@@ -68,8 +68,8 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.ParentCheckedNodes != 0 {
 			t.Errorf("parent_checked_nodes=%d, want 0 (no parent refs)", res.ParentCheckedNodes)
 		}
-		if len(res.Details) < 2 || !strings.Contains(res.Details[1], "parent_overflow was not applied") {
-			t.Errorf("expected parent_overflow skip note in details, got %v", res.Details)
+		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "parent_overflow was not applied") {
+			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
 		}
 		raw, _ := json.Marshal(res)
 		if strings.Contains(string(raw), `"issues"`) {
@@ -182,8 +182,8 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "Skipped parent_overflow") || !strings.Contains(res.Details[0], "1 unresolved parent ref") {
 			t.Fatalf("details should mention skipped parent_overflow, got %v", res.Details)
 		}
-		if len(res.Details) < 2 || !strings.Contains(res.Details[1], "parent_overflow was not applied") {
-			t.Errorf("expected parent_overflow skip note in details, got %v", res.Details)
+		if !strings.Contains(res.Details[0], "parent_overflow was not applied") {
+			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
 		}
 	})
 
@@ -203,8 +203,8 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if len(res.UnresolvedParentRefs) != 0 {
 			t.Errorf("unresolved_parent_refs=%v", res.UnresolvedParentRefs)
 		}
-		if len(res.Details) < 2 || !strings.Contains(res.Details[1], "parent_checked_nodes=0") {
-			t.Errorf("details=%v", res.Details)
+		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "parent_checked_nodes=0") {
+			t.Errorf("expected the note on the summary line only, got %v", res.Details)
 		}
 	})
 
@@ -248,8 +248,8 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "1 zero-geometry parent") {
 			t.Fatalf("details should mention zero-geometry skip, got %v", res.Details)
 		}
-		if len(res.Details) < 2 || !strings.Contains(res.Details[1], "parent_checked_nodes=0") {
-			t.Errorf("expected parent_overflow skip note, got %v", res.Details)
+		if !strings.Contains(res.Details[0], "parent_checked_nodes=0") {
+			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
 		}
 	})
 
