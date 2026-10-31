@@ -1,9 +1,13 @@
 {
   "name": "design-compare",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Design comparison MCP server and Pi extension with structural, perceptual, strict, and iPad layout-integrity modes",
   "type": "module",
-  "keywords": ["pi-package", "opencode-plugin", "skills"],
+  "keywords": [
+    "pi-package",
+    "opencode-plugin",
+    "skills"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -20,8 +24,12 @@
     "README.md"
   ],
   "pi": {
-    "extensions": ["./extensions/design-compare/index.ts"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions/design-compare/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "scripts": {
     "test": "go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts",

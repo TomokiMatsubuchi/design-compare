@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "design-compare",
-      "version": "1.0.0",
+      "version": "1.0.2",
       "description": "Design comparison MCP server with structural, perceptual, strict, and iPad layout-integrity (portrait/landscape overflow) modes",
       "installType": "local",
       "source": {
