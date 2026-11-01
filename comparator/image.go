@@ -197,19 +197,21 @@ func decodeImageError(what string, err error) error {
 }
 
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
-// generateDiff is false, the diff image is not rendered and an empty string
-// is returned instead of its base64 data URI. When includeAA is true,
-// anti-aliased boundary pixels are counted as diffs (pixelmatch.IncludeAntiAlias).
-// The default false matches pixelmatch's includeAA=false and excludes those
-// pixels from the diff count. ignoreRegions are masked with
-// white on both images before comparison so their content is ignored.
+// generateDiff is false, PNG/base64 encoding is skipped and an empty string
+// is returned instead of a diff image data URI, but diff_regions are still
+// derived from the in-memory WriteTo raster (Issue #499). When includeAA is
+// true, anti-aliased boundary pixels are counted as diffs
+// (pixelmatch.IncludeAntiAlias). The default false matches pixelmatch's
+// includeAA=false and excludes those pixels from the diff count.
+// ignoreRegions are masked with white on both images before comparison so
+// their content is ignored.
 // ignoreRegions のうち画像矩形と全く交差しない領域は draw.Draw の自動クリップ
 // により何もマスクされないため、"x,y,w,h" 形式の文字列リストとして検出結果を
 // 返す (layout_tree モードの unmatched_ignores と同様のフィードバック)。
 // 成功時の 6 番目の戻り値は比較した画像の寸法 ("WxH")。ensureSameSize 後の
 // 同一サイズなので A/B を分けず image_size として応答へ echo できる。
-// generateDiff が true かつ diffCount>0 のとき、7 番目に赤ピクセルの連結成分
-// bounding box (最大 10 件) を返す。generateDiff が false なら nil。
+// diffCount>0 のとき、7 番目に赤ピクセルの連結成分 bounding box (最大 10 件)
+// を返す (generateDiff の真偽に依らない)。
 // 8 番目は warnings。diffCount==0 かつマスク後の両画像が単色ベタ塗りのとき、
 // 空洞比較の可能性を status / match_rate は変えずに通知する (Issue #227)。
 func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, []string, error) {
@@ -270,10 +272,11 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 	if includeAA {
 		opts = append(opts, pixelmatch.IncludeAntiAlias)
 	}
+	// generate_diff の真偽に関わらず WriteTo で差分ラスタを得る。
+	// diff_regions はここから算出し、PNG/base64 は generateDiff のときだけ行う
+	// (Issue #499)。EnableDiffMask は行またぎで赤が残る実装不具合があり使わない。
 	var diffImg image.Image
-	if generateDiff {
-		opts = append(opts, pixelmatch.WriteTo(&diffImg))
-	}
+	opts = append(opts, pixelmatch.WriteTo(&diffImg))
 
 	diffCount, err := pixelmatch.MatchPixel(normA, normB, opts...)
 	if err != nil {
@@ -287,9 +290,6 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 	if diffCount == 0 && isUniformImage(normA) && isUniformImage(normB) {
 		warnings = append(warnings, degenerateStrictUniformWarning)
 	}
-	if !generateDiff {
-		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, nil, warnings, nil
-	}
 
 	// pixelmatch は差分描画用に内部で NewRGBA し WriteTo へ差し替えるが、同一画像の
 	// fast path では差し替えずに return する。事前確保をやめたためその場合は nil。
@@ -298,18 +298,22 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 		diffImg = image.NewRGBA(bounds)
 	}
 
+	// 差分があるとき赤ピクセルの連結成分を返す (generate_diff に依らない)。
+	// 黄 (アンチエイリアス除外) は差分カウント対象外のため領域にも含めない。
+	var regions []DiffRegion
+	if diffCount > 0 {
+		regions = collectDiffRegions(diffImg)
+	}
+
+	if !generateDiff {
+		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, regions, warnings, nil
+	}
+
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, diffImg); err != nil {
 		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
-
-	// generate_diff=true かつ差分があるときだけ赤ピクセルの連結成分を返す。
-	// 黄 (アンチエイリアス除外) は差分カウント対象外のため領域にも含めない。
-	var regions []DiffRegion
-	if diffCount > 0 && diffImg != nil {
-		regions = collectDiffRegions(diffImg)
-	}
 
 	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, warnings, nil
 }

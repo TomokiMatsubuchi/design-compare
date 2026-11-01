@@ -4026,7 +4026,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
-	// generate_diff=false で差分画像 (base64) を返さない
+	// generate_diff=false で差分画像 (base64) は返さず、diff_regions は返す (Issue #499)
 	t.Run("StrictMode_GenerateDiff_False", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -4050,8 +4050,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if diffImage, ok := result["diff_image"].(string); !ok || diffImage != "" {
 			t.Errorf("Expected empty diff_image with generate_diff=false, got %v", result["diff_image"])
 		}
-		if _, ok := result["diff_regions"]; ok {
-			t.Errorf("Expected no diff_regions with generate_diff=false, got %v", result["diff_regions"])
+		raw, ok := result["diff_regions"].([]interface{})
+		if !ok || len(raw) == 0 {
+			t.Errorf("Expected diff_regions with generate_diff=false, got %v", result["diff_regions"])
 		}
 	})
 
@@ -4103,8 +4104,22 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		var resultOff map[string]interface{}
 		json.Unmarshal([]byte(resOff.Content[0].(mcp.TextContent).Text), &resultOff)
-		if _, ok := resultOff["diff_regions"]; ok {
-			t.Errorf("Expected no diff_regions with generate_diff=false, got %v", resultOff["diff_regions"])
+		if diffImage, ok := resultOff["diff_image"].(string); !ok || diffImage != "" {
+			t.Errorf("Expected empty diff_image with generate_diff=false, got %v", resultOff["diff_image"])
+		}
+		rawOff, ok := resultOff["diff_regions"].([]interface{})
+		if !ok || len(rawOff) != 1 {
+			t.Fatalf("Expected 1 diff_region with generate_diff=false, got %v", resultOff["diff_regions"])
+		}
+		regionOff, ok := rawOff[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected diff_regions[0] object, got %T", rawOff[0])
+		}
+		if regionOff["x"] != float64(0) || regionOff["y"] != float64(0) || regionOff["w"] != float64(100) || regionOff["h"] != float64(100) {
+			t.Errorf("Expected top-left 100x100 region with generate_diff=false, got %v", regionOff)
+		}
+		if regionOff["diff_pixels"] != float64(10000) {
+			t.Errorf("Expected diff_pixels=10000 with generate_diff=false, got %v", regionOff["diff_pixels"])
 		}
 	})
 

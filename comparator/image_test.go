@@ -963,12 +963,14 @@ func TestCollectDiffRegions(t *testing.T) {
 }
 
 // TestRunPixelMatch_DiffRegions は左上 100x100 の黒矩形 vs 全面白で
-// generateDiff=true のときその bounding box が返り、false では返らないこと。
+// generateDiff の真偽に依らず同じ bounding box が返り、false では
+// diff 画像 URI だけ空になること (Issue #499)。
 func TestRunPixelMatch_DiffRegions(t *testing.T) {
 	imgA, imgB := newIgnoreRegionTestImages()
+	want := DiffRegion{X: 0, Y: 0, W: 100, H: 100, DiffPixels: 10000}
 
 	t.Run("top_left_100x100_when_generate_diff", func(t *testing.T) {
-		_, _, diffCount, _, _, _, regions, _, err := RunPixelMatch(
+		_, _, diffCount, diffURI, _, _, regions, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, true, false, nil,
 		)
@@ -978,17 +980,19 @@ func TestRunPixelMatch_DiffRegions(t *testing.T) {
 		if diffCount == 0 {
 			t.Fatal("Expected positive diffCount")
 		}
+		if diffURI == "" {
+			t.Fatal("Expected non-empty diff URI when generateDiff=true")
+		}
 		if len(regions) != 1 {
 			t.Fatalf("Expected 1 diff region, got %v", regions)
 		}
-		want := DiffRegion{X: 0, Y: 0, W: 100, H: 100, DiffPixels: 10000}
 		if regions[0] != want {
 			t.Errorf("Expected %+v, got %+v", want, regions[0])
 		}
 	})
 
-	t.Run("omitted_when_generate_diff_false", func(t *testing.T) {
-		_, _, diffCount, _, _, _, regions, _, err := RunPixelMatch(
+	t.Run("regions_without_image_when_generate_diff_false", func(t *testing.T) {
+		_, _, diffCount, diffURI, _, _, regions, _, err := RunPixelMatch(
 			encodePNGBytes(t, imgA), encodePNGBytes(t, imgB),
 			0.1, false, false, nil,
 		)
@@ -998,8 +1002,14 @@ func TestRunPixelMatch_DiffRegions(t *testing.T) {
 		if diffCount == 0 {
 			t.Fatal("Expected positive diffCount even without a diff image")
 		}
-		if regions != nil {
-			t.Errorf("Expected no diff regions when generateDiff=false, got %v", regions)
+		if diffURI != "" {
+			t.Errorf("Expected empty diff URI when generateDiff=false, got len=%d", len(diffURI))
+		}
+		if len(regions) != 1 {
+			t.Fatalf("Expected 1 diff region when generateDiff=false, got %v", regions)
+		}
+		if regions[0] != want {
+			t.Errorf("Expected %+v, got %+v", want, regions[0])
 		}
 	})
 }

@@ -144,7 +144,7 @@ func newCompareDesignTool() mcp.Tool {
 			mcp.Description("For 'strict' mode: when true, count anti-aliased boundary pixels as diffs (pixelmatch IncludeAntiAlias). Default false keeps the current behavior of excluding AA edge pixels from the diff count. Use true to detect text-rendering and other AA-boundary differences that the default would hide."),
 		),
 		mcp.WithBoolean("generate_diff",
-			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image' is empty for 'perceptual' and 'strict' modes. In 'strict' mode, 'diff_regions' is also omitted because it is derived from the diff image. Useful to avoid large base64 payloads in responses."),
+			mcp.Description("Whether to generate a diff image (default true). When false, no diff image is produced and 'diff_image' is empty for 'perceptual' and 'strict' modes. In 'strict' mode, 'diff_regions' is still returned from an in-memory diff mask without PNG/base64 encoding. Useful to avoid large base64 payloads in responses while keeping machine-readable mismatch locations."),
 		),
 		mcp.WithBoolean("diff_on_mismatch",
 			mcp.Description("For 'perceptual' and 'strict' modes: when true, omit the diff image from the response if the comparison status is 'success' (default false). Combined with generate_diff (default true), this still generates a diff internally but replaces 'diff_image' with an empty string on success so matching calls do not return a large base64 payload. On mismatch the diff image is returned as usual. Ignored when generate_diff is false (diff_image is already empty)."),
@@ -1114,8 +1114,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(outOfBounds) > 0 {
 			responseMap["out_of_bounds_regions"] = outOfBounds
 		}
-		// 赤ピクセルの bounding box。generate_diff=false では差分画像が無く算出しない
-		// (Issue #187)。差分ピクセル数の多い順に最大 10 件。
+		// 赤ピクセルの bounding box。generate_diff=false でも in-memory マスクから返す
+		// (Issue #187 / #499)。差分ピクセル数の多い順に最大 10 件。
 		if len(diffRegions) > 0 {
 			responseMap["diff_regions"] = diffRegions
 		}
