@@ -1248,6 +1248,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if integrityResult.ParentOverflowSkippedZeroGeom > 0 {
 			responseMap["parent_overflow_skipped_zero_geom"] = integrityResult.ParentOverflowSkippedZeroGeom
 		}
+		// 過半数ノードが明示的な w/h=0 のときの誤用検出（layout_tree と同方針。Issue #498）。
+		// status / issue_count は非破壊。非空時のみ返す。
+		if integrityResult.ZeroGeometryWarning != "" {
+			responseMap["zero_geometry_warning"] = integrityResult.ZeroGeometryWarning
+		}
 
 	default:
 		// 有効モードを列挙し、タイポ時にREADME等を見ずに1回のリトライで自己修復できるようにする
