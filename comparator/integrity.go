@@ -61,7 +61,13 @@ type LayoutIntegrityResult struct {
 	// ParentOverflowSkippedZeroGeom は親ノードは入力にあるが w/h が 0 以下のため
 	// parent_overflow をスキップした checkable 子の件数（status は変えない）。
 	ParentOverflowSkippedZeroGeom int `json:"parent_overflow_skipped_zero_geom,omitempty"`
+	// ZeroGeometryWarning は ignore 後の Web ノードのうち過半数が明示的な w=h=0 のとき
+	// 付ける誤用検出（status / issue_count は変えない。layout_tree の同名フィールドと同方針。Issue #498）。
+	ZeroGeometryWarning string `json:"zero_geometry_warning,omitempty"`
 }
+
+// layout_integrity は Web のみなので、警告文のキー列は selector 付き。
+const zeroGeometryWarningMsgIntegrity = `Most nodes have zero width/height; check the layout JSON keys are {"selector","x","y","w","h","parent"}`
 
 // ViewportSizeForPreset は既知プリセットの CSS px サイズを返す。
 // 空文字は ipad_portrait (768x1024) として扱う。未知プリセットは
@@ -193,6 +199,13 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	// （layout_tree の collectUnresolvedParentRefs と同方針）。
 	unresolvedParentRefs := collectUnresolvedParentRefs(nil, wNodes, nil, indexWebNodesBySelector(allWebNodes))
 
+	// ignore 後の候補に対し、layout_tree と同じ過半数ゼロ幾何の警告を付ける。
+	// 全件ゼロの既存 mismatch でも status / details は変えず、フィールドだけ載せる。
+	zeroGeometryWarning := ""
+	if majorityZeroWebGeometry(wNodes) {
+		zeroGeometryWarning = zeroGeometryWarningMsgIntegrity
+	}
+
 	result := &LayoutIntegrityResult{
 		ViewportWidth:          viewportW,
 		ViewportHeight:         viewportH,
@@ -201,6 +214,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		UnmatchedIgnores:       unmatchedIgnores,
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		ZeroGeometryWarning:    zeroGeometryWarning,
 	}
 
 	if len(checkable) == 0 {
@@ -284,6 +298,14 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		summary += " parent_overflow was not applied because no usable parent references were resolved (parent_checked_nodes=0)."
 	}
 	details := []string{summary}
+	// 過半数ゼロ幾何で検査対象が減ったときは、checked_nodes と入力差を details に残す
+	// （status / issue_count は非破壊。Issue #498）。
+	if zeroGeometryWarning != "" {
+		zeroExcluded := len(wNodes) - len(checkable)
+		details = append(details, fmt.Sprintf(
+			"%d of %d Web nodes have zero width/height and were excluded from checks (checked_nodes=%d); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}",
+			zeroExcluded, len(wNodes), len(checkable)))
+	}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)
 	}

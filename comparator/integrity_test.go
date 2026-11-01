@@ -537,6 +537,59 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if strings.Contains(res.Details[0], "Web layout node data is empty") {
 			t.Errorf("zero geometry should not be reported as empty data: %q", res.Details[0])
 		}
+		// 全件ゼロでも過半数警告フィールドは載せるが、既存 details は 1 行のまま。
+		if res.ZeroGeometryWarning != zeroGeometryWarningMsgIntegrity {
+			t.Errorf("ZeroGeometryWarning=%q, want %q", res.ZeroGeometryWarning, zeroGeometryWarningMsgIntegrity)
+		}
+	})
+
+	t.Run("majority_zero_geometry_warns_status_unchanged", func(t *testing.T) {
+		// Issue #498: 有効 1 + w=h=0 が 2 のとき、checked_nodes=1 / success のまま
+		// zero_geometry_warning と details で除外差を説明する（layout_tree と同方針）。
+		web := `[
+			{"selector":"#page","x":0,"y":0,"w":768,"h":200},
+			{"selector":"#hidden-a","x":0,"y":0,"w":0,"h":0},
+			{"selector":"#hidden-b","x":0,"y":0,"w":0,"h":0}
+		]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IssueCount != 0 || res.CheckedNodes != 1 {
+			t.Fatalf("status/issue_count/checked_nodes must stay success/0/1, got %#v", res)
+		}
+		if res.ZeroGeometryWarning != zeroGeometryWarningMsgIntegrity {
+			t.Errorf("ZeroGeometryWarning=%q, want %q", res.ZeroGeometryWarning, zeroGeometryWarningMsgIntegrity)
+		}
+		found := false
+		for _, d := range res.Details {
+			if strings.Contains(d, "2 of 3 Web nodes have zero width/height") &&
+				strings.Contains(d, "checked_nodes=1") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("details should explain checked_nodes vs input gap, got %v", res.Details)
+		}
+	})
+
+	t.Run("minority_zero_geometry_no_warning", func(t *testing.T) {
+		web := `[
+			{"selector":"#a","x":0,"y":0,"w":100,"h":100},
+			{"selector":"#b","x":0,"y":0,"w":100,"h":50},
+			{"selector":"#collapsed","x":0,"y":0,"w":0,"h":0}
+		]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.CheckedNodes != 2 {
+			t.Fatalf("got %#v", res)
+		}
+		if res.ZeroGeometryWarning != "" {
+			t.Errorf("expected no ZeroGeometryWarning for minority zeros, got %q", res.ZeroGeometryWarning)
+		}
 	})
 
 	t.Run("partial_ignore_remaining_zero_geometry_is_mismatch", func(t *testing.T) {

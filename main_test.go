@@ -2637,6 +2637,57 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 1.5a. layout_integrity モード: 過半数ゼロ幾何の警告（Issue #498）
+	// =================================================================
+	t.Run("LayoutIntegrity_ZeroGeometryWarning", func(t *testing.T) {
+		webLayout := `[
+			{"selector":"#page","x":0,"y":0,"w":768,"h":200},
+			{"selector":"#hidden-a","x":0,"y":0,"w":0,"h":0},
+			{"selector":"#hidden-b","x":0,"y":0,"w":0,"h":0}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":       "layout_integrity",
+					"web_layout": webLayout,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected status success (non-destructive), got %v", result["status"])
+		}
+		if result["issue_count"] != float64(0) {
+			t.Errorf("Expected issue_count 0, got %v", result["issue_count"])
+		}
+		if result["checked_nodes"] != float64(1) {
+			t.Errorf("Expected checked_nodes 1, got %v", result["checked_nodes"])
+		}
+		got, ok := result["zero_geometry_warning"].(string)
+		if !ok || !strings.Contains(got, `{"selector","x","y","w","h","parent"}`) {
+			t.Errorf("Expected zero_geometry_warning about Web layout JSON keys, got %v", result["zero_geometry_warning"])
+		}
+		details, _ := result["details"].([]interface{})
+		found := false
+		for _, raw := range details {
+			d, _ := raw.(string)
+			if strings.Contains(d, "2 of 3 Web nodes have zero width/height") &&
+				strings.Contains(d, "checked_nodes=1") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("details should explain checked_nodes vs input gap, got %v", details)
+		}
+	})
+
+	// =================================================================
 	// 1.5b. layout_integrity モード: UTF-8 BOM 付き JSON（インライン / パス）
 	// =================================================================
 	t.Run("LayoutIntegrity_UTF8BOM", func(t *testing.T) {
