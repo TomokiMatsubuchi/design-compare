@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"image/color"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		"--include-aa",
 		"--ignore-region", "0,0,1,1",
 		"--generate-diff=false",
-	}, &stderr)
+	}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		"--web-layout", webInline,
 		"--figma-layout-file", "figma.json",
 		"--web-layout-file", "web.json",
-	}, &stderr)
+	}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("parseCLIArgs layout: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		"--image-b", "b.png",
 		"--generate-diff", "false",
 		"--max-diff-pixels", "100",
-	}, &stderr)
+	}, io.Discard, &stderr)
 	if err == nil {
 		t.Fatal("expected error for space-separated boolean value")
 	}
@@ -118,7 +119,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		"--image-b", "b.png",
 		"--include-aa", "false",
 		"--ignore-region", "0,0,100,50",
-	}, &stderr)
+	}, io.Discard, &stderr)
 	if err == nil {
 		t.Fatal("expected error for space-separated --include-aa value")
 	}
@@ -132,7 +133,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		"--image-b", "b.png",
 		"--generate-diff=false",
 		"--max-diff-pixels", "100",
-	}, &stderr)
+	}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("equals form must succeed: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 
 func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	var stderr bytes.Buffer
-	got, err := parseCLIArgs([]string{"--mode", "perceptual", "--image-a", "a.png", "--image-b", "b.png"}, &stderr)
+	got, err := parseCLIArgs([]string{"--mode", "perceptual", "--image-a", "a.png", "--image-b", "b.png"}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestParseCLIArgsMapsViewportAndLayoutFlags(t *testing.T) {
 		"--count-extra-web",
 		"--max-details", "5",
 		"--diff-on-mismatch",
-	}, &stderr)
+	}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
 	}
@@ -210,23 +211,26 @@ func TestParseCLIArgsMapsViewportAndLayoutFlags(t *testing.T) {
 }
 
 func TestParseCLIArgsHelp(t *testing.T) {
-	var stderr bytes.Buffer
-	_, err := parseCLIArgs([]string{"-h"}, &stderr)
+	var stdout, stderr bytes.Buffer
+	_, err := parseCLIArgs([]string{"-h"}, &stdout, &stderr)
 	if err != flag.ErrHelp {
 		t.Fatalf("expected flag.ErrHelp, got %v", err)
 	}
-	help := stderr.String()
+	help := stdout.String()
 	if !strings.Contains(help, "Usage:") {
-		t.Errorf("help output missing Usage: %q", help)
+		t.Errorf("help output missing Usage on stdout: %q", help)
 	}
 	if !strings.Contains(help, "Positional arguments are not accepted") {
 		t.Errorf("help output missing positional-args hint: %q", help)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("explicit help must not write Usage to stderr, got %q", stderr.String())
 	}
 }
 
 func TestParseCLIArgsRequiresMode(t *testing.T) {
 	var stderr bytes.Buffer
-	_, err := parseCLIArgs([]string{"--image-a", "a.png", "--image-b", "b.png"}, &stderr)
+	_, err := parseCLIArgs([]string{"--image-a", "a.png", "--image-b", "b.png"}, io.Discard, &stderr)
 	if err == nil {
 		t.Fatal("expected error when --mode is omitted")
 	}
@@ -255,7 +259,7 @@ func TestParseCLIArgsRejectsPositionalArgs(t *testing.T) {
 		"--mode", "strict",
 		"--image-a", "a.png",
 		"--image-b", "b.png",
-	}, &stderr)
+	}, io.Discard, &stderr)
 	if err == nil {
 		t.Fatal("expected error for leading positional arguments")
 	}
@@ -385,6 +389,20 @@ func TestRunCLIErrorExit(t *testing.T) {
 	}
 }
 
+func TestRunCLIHelpStdout(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{"--help"}, &stdout, &stderr)
+	if code != exitSuccess {
+		t.Fatalf("expected exit 0 for --help, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "Usage:") {
+		t.Errorf("--help must print Usage to stdout, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("--help must leave stderr empty, got %q", stderr.String())
+	}
+}
+
 func TestRunCLIUnknownFlagOnce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{"--bogus"}, &stdout, &stderr)
@@ -397,6 +415,9 @@ func TestRunCLIUnknownFlagOnce(t *testing.T) {
 	msg := "flag provided but not defined"
 	if n := strings.Count(stderr.String(), msg); n != 1 {
 		t.Errorf("stderr must mention %q exactly once, got %d in %q", msg, n, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Errorf("unknown flag should print Usage to stderr, got %q", stderr.String())
 	}
 }
 
