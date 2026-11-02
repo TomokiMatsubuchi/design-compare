@@ -224,6 +224,30 @@ func TestParseCLIArgsHelp(t *testing.T) {
 	}
 }
 
+func TestParseCLIArgsRequiresMode(t *testing.T) {
+	var stderr bytes.Buffer
+	_, err := parseCLIArgs([]string{"--image-a", "a.png", "--image-b", "b.png"}, &stderr)
+	if err == nil {
+		t.Fatal("expected error when --mode is omitted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "--mode is required") {
+		t.Errorf("error should say --mode is required, got %q", msg)
+	}
+	for _, mode := range []string{"layout_tree", "perceptual", "strict", "layout_integrity"} {
+		if !strings.Contains(msg, mode) {
+			t.Errorf("error should list valid mode %q, got %q", mode, msg)
+		}
+	}
+	if !strings.Contains(msg, "--help") {
+		t.Errorf("error should point to --help, got %q", msg)
+	}
+	usage := stderr.String()
+	if !strings.Contains(usage, "Usage:") {
+		t.Errorf("missing --mode should print Usage to stderr, got %q", usage)
+	}
+}
+
 func TestParseCLIArgsRejectsPositionalArgs(t *testing.T) {
 	var stderr bytes.Buffer
 	_, err := parseCLIArgs([]string{
@@ -335,6 +359,29 @@ func TestRunCLIErrorExit(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Strict mode input error: either image_path_a or image_a_base64 is required") {
 		t.Errorf("expected error text on stderr, got %q", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLIWithIO([]string{"--image-a", "a.png", "--image-b", "b.png"}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("missing --mode: expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty when --mode is missing, got %s", stdout.String())
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "--mode is required") {
+		t.Errorf("stderr should say --mode is required, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "valid modes: layout_tree, perceptual, strict, layout_integrity") {
+		t.Errorf("stderr should list valid modes, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "Usage:") {
+		t.Errorf("stderr should include Usage, got %q", errOut)
+	}
+	if strings.Contains(errOut, "invalid mode parameter") {
+		t.Errorf("CLI must not surface MCP RequireString wording, got %q", errOut)
 	}
 }
 
