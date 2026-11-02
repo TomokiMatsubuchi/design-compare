@@ -31,9 +31,10 @@ func runCLI(args []string) int {
 }
 
 func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
-	toolArgs, err := parseCLIArgs(args, stderr)
+	toolArgs, err := parseCLIArgs(args, stdout, stderr)
 	if err != nil {
 		if err == flag.ErrHelp {
+			// 明示ヘルプの Usage は parseCLIArgs が stdout へ書き済み。
 			return exitSuccess
 		}
 		// parseCLIArgs は flag の自動出力を Discard しているため、ここが
@@ -61,21 +62,26 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 	return exitCodeFromResultJSON(text)
 }
 
-func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
+// writeUsage は CLI の使い方を w へ書く。明示ヘルプは stdout、パース／検証エラーは stderr。
+func writeUsage(fs *flag.FlagSet, w io.Writer) {
+	fmt.Fprintf(w, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
+	fmt.Fprintf(w, "       design-compare          (no args: start stdio MCP server)\n")
+	fmt.Fprintf(w, "Positional arguments are not accepted; specify images with --image-a / --image-b.\n\n")
+	prev := fs.Output()
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+	fs.SetOutput(prev)
+}
+
+func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, error) {
 	fs := flag.NewFlagSet("design-compare", flag.ContinueOnError)
 	// flag は ContinueOnError でも解析失敗時にエラー行を Output へ書く。
 	// runCLIWithIO でも同じ行を出すと二重になるため Discard し、エラー本文は
-	// 呼び出し元に一本化する。Usage だけは利用者向けに stderr へ出す。
+	// 呼び出し元に一本化する。fs.Usage は stderr 用（検証エラーなど）のままにする。
 	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
-		fmt.Fprintf(stderr, "       design-compare          (no args: start stdio MCP server)\n")
-		fmt.Fprintf(stderr, "Positional arguments are not accepted; specify images with --image-a / --image-b.\n\n")
-		prev := fs.Output()
-		fs.SetOutput(stderr)
-		fs.PrintDefaults()
-		fs.SetOutput(prev)
-	}
+	// fs.Usage は stderr 用のまま（--mode 未指定などの検証エラー向け）。
+	usageStderr := func() { writeUsage(fs, stderr) }
+	fs.Usage = usageStderr
 
 	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")
 	imageA := fs.String("image-a", "", "Path to reference image A (maps to image_path_a)")
@@ -101,9 +107,18 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 	maxDetails := fs.Int("max-details", 0, "Max details lines for layout_tree and layout_integrity; 0 = unlimited (maps to max_details)")
 	diffOnMismatch := fs.Bool("diff-on-mismatch", false, "Only generate diff image on mismatch in perceptual/strict (maps to diff_on_mismatch)")
 
+	// Parse は -h/--help でも Usage を呼ぶ。明示ヘルプは stdout だけにしたいので
+	// 自動 Usage を抑え、行き先を分岐する。
+	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			writeUsage(fs, stdout)
+			return nil, err
+		}
+		writeUsage(fs, stderr)
 		return nil, err
 	}
+	fs.Usage = usageStderr
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected non-flag argument(s): %s (positional arguments are not accepted; specify images with --image-a / --image-b; boolean flags need the --flag=value form)", strings.Join(fs.Args(), " "))
 	}
