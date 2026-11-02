@@ -1,6 +1,6 @@
 {
   "name": "design-compare",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Design comparison MCP plugin for Codex",
   "skills": "./skills/"
 }
