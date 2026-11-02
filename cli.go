@@ -159,6 +159,13 @@ func parseCLIArgs(args []string, stderr io.Writer) (map[string]any, error) {
 			toolArgs["diff_on_mismatch"] = *diffOnMismatch
 		}
 	})
+	// --mode は CLI の必須入口。未指定のまま handler へ渡すと MCP 向けの
+	// RequireString 文言だけが出て直し方が分からないため、ここで Usage と
+	// 有効値を案内する (未知モード時の案内方針と揃える)。
+	if _, ok := toolArgs["mode"]; !ok {
+		fs.Usage()
+		return nil, fmt.Errorf("--mode is required (valid modes: layout_tree, perceptual, strict, layout_integrity); see --help")
+	}
 	return toolArgs, nil
 }
 
