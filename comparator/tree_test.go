@@ -264,8 +264,8 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 			t.Fatalf("Expected 1 mismatched_pairs entry, got %#v", result.MismatchedPairs)
 		}
 		mp := result.MismatchedPairs[0]
-		if mp.FigmaName != "childB" || mp.Reason != "no_unused_web_elements" || mp.WebSelector != "" || mp.GeometricDiff != 0 || mp.Tolerance != 0 {
-			t.Errorf("Expected figma_name=childB reason=no_unused_web_elements empty selector/diff/tolerance, got %#v", mp)
+		if mp.FigmaName != "childB" || mp.Reason != "no_unused_web_elements" || mp.WebSelector != "" || mp.GeometricDiff != 0 || mp.Tolerance != nil {
+			t.Errorf("Expected figma_name=childB reason=no_unused_web_elements empty selector/diff/nil tolerance, got %#v", mp)
 		}
 	})
 
@@ -338,8 +338,12 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if mp.FigmaName != "hero" || mp.WebSelector != ".hero" || mp.Reason != "exceeds_tolerance" {
 			t.Errorf("Expected figma_name=hero web_selector=.hero reason=exceeds_tolerance, got %#v", mp)
 		}
-		if mp.GeometricDiff != wantDiff || mp.Tolerance != 0.15 {
-			t.Errorf("Expected geometric_diff=%g tolerance=0.15, got geometric_diff=%g tolerance=%g", wantDiff, mp.GeometricDiff, mp.Tolerance)
+		if mp.GeometricDiff != wantDiff || mp.Tolerance == nil || *mp.Tolerance != 0.15 {
+			gotTol := any(nil)
+			if mp.Tolerance != nil {
+				gotTol = *mp.Tolerance
+			}
+			t.Errorf("Expected geometric_diff=%g tolerance=0.15, got geometric_diff=%g tolerance=%v", wantDiff, mp.GeometricDiff, gotTol)
 		}
 	})
 }

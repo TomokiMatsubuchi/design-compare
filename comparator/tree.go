@@ -44,11 +44,11 @@ type MismatchedNode struct {
 // 機械可読に返す。details の free-text と同じ対象を文字列パースなしで特定できる。
 // Reason は "exceeds_tolerance" または "no_unused_web_elements"。
 type MismatchPair struct {
-	FigmaName     string  `json:"figma_name"`
-	WebSelector   string  `json:"web_selector,omitempty"` // 候補枯渇時は空
-	GeometricDiff float64 `json:"geometric_diff,omitempty"`
-	Tolerance     float64 `json:"tolerance,omitempty"`
-	Reason        string  `json:"reason"`
+	FigmaName     string   `json:"figma_name"`
+	WebSelector   string   `json:"web_selector,omitempty"` // 候補枯渇時は空
+	GeometricDiff float64  `json:"geometric_diff,omitempty"`
+	Tolerance     *float64 `json:"tolerance,omitempty"` // 超過時のみ設定（0 も省略しない）
+	Reason        string   `json:"reason"`
 }
 
 type LayoutTreeResult struct {
@@ -440,11 +440,12 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				DW:          bestDiffW,
 				DH:          bestDiffH,
 			})
+			tol := tolerance
 			mismatchedPairs = append(mismatchedPairs, MismatchPair{
 				FigmaName:     fn.Name,
 				WebSelector:   bestMatchSelector,
 				GeometricDiff: minDiff,
-				Tolerance:     tolerance,
+				Tolerance:     &tol,
 				Reason:        "exceeds_tolerance",
 			})
 		}

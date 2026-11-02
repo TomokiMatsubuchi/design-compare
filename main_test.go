@@ -5623,6 +5623,102 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 }
 
+// threshold: 0 の超過ペアでは mismatched_pairs に tolerance: 0 が残り、
+// 候補枯渇ペアでは tolerance が省略されること（Issue #508）。
+func TestLayoutTree_MismatchPairsToleranceZero(t *testing.T) {
+	t.Run("exceeds_tolerance_includes_tolerance_zero", func(t *testing.T) {
+		figmaLayout := `[{"id":"1","name":"nav","x":0,"y":0,"w":100,"h":100}]`
+		webLayout := `[{"selector":".nav","x":50,"y":0,"w":100,"h":100}]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result); err != nil {
+			t.Fatalf("unmarshal failed: %v", err)
+		}
+		if result["status"] != "mismatch" {
+			t.Fatalf("Expected mismatch, got status=%v", result["status"])
+		}
+		pairs, ok := result["mismatched_pairs"].([]interface{})
+		if !ok || len(pairs) != 1 {
+			t.Fatalf("Expected 1 mismatched_pairs entry, got %v", result["mismatched_pairs"])
+		}
+		mp, ok := pairs[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected mismatched_pairs[0] object, got %v", pairs[0])
+		}
+		if mp["reason"] != "exceeds_tolerance" {
+			t.Errorf("Expected reason=exceeds_tolerance, got %v", mp["reason"])
+		}
+		tol, ok := mp["tolerance"]
+		if !ok {
+			t.Fatalf("Expected tolerance key present when threshold=0, got keys %v", mp)
+		}
+		if tol != float64(0) {
+			t.Errorf("Expected tolerance=0, got %v (%T)", tol, tol)
+		}
+	})
+
+	t.Run("no_unused_web_elements_omits_tolerance", func(t *testing.T) {
+		// Figma 2 ノード / Web 1 ノード → 2 つ目は候補枯渇。
+		figmaLayout := `[
+			{"id":"1","name":"parent","x":0,"y":0,"w":200,"h":200},
+			{"id":"2","name":"childB","x":10,"y":10,"w":50,"h":50,"parent":"1"}
+		]`
+		webLayout := `[{"selector":".parent","x":0,"y":0,"w":200,"h":200}]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.0,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result); err != nil {
+			t.Fatalf("unmarshal failed: %v", err)
+		}
+		pairs, ok := result["mismatched_pairs"].([]interface{})
+		if !ok || len(pairs) == 0 {
+			t.Fatalf("Expected mismatched_pairs with no_unused_web_elements, got %v", result["mismatched_pairs"])
+		}
+		var foundExhausted bool
+		for _, p := range pairs {
+			mp, ok := p.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if mp["reason"] != "no_unused_web_elements" {
+				continue
+			}
+			foundExhausted = true
+			if _, ok := mp["tolerance"]; ok {
+				t.Errorf("Expected tolerance omitted for no_unused_web_elements, got %v", mp["tolerance"])
+			}
+		}
+		if !foundExhausted {
+			t.Errorf("Expected a no_unused_web_elements pair, got %v", pairs)
+		}
+	})
+}
+
 // resolveImageInput が data URI 形式 ("data:<mime>;base64,<payload>") の
 // base64 入力を受け付けること、および従来のプレーン base64 が引き続き
 // 動作することを検証する (Issue #127)。
