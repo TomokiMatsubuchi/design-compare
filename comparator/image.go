@@ -621,10 +621,6 @@ func mergeOutOfBoundsRegions(lists ...[]string) []string {
 	return merged
 }
 
-// isUniformGray は 16x16 グレースケール配列の最小値と最大値が一致する
-// (一様 = ベタ塗り) かどうかを判定する。aHash は各画像自身の平均輝度で
-// 2値化するため、一様な画像は全セルが同一ビットになり (255>=255 も 0>=0 も
-// true)、画像間で内容が全く異なっても diffBits=0 (一致率100%) になってしまう。
 // aspectRatioMismatchThreshold は perceptual 比較で警告するアスペクト比の
 // 相対差 (大きい方 / 小さい方)。16x16 への独立リサイズは縦横比を捨てるため、
 // この倍率を超えるペアは一致率が高くても幾何が全く異なる可能性がある。
@@ -648,6 +644,10 @@ func aspectRatioMismatchWarning(imgA, imgB image.Image) string {
 	return fmt.Sprintf("aspect ratio mismatch: image A is %dx%d (aspect %.2f), image B is %dx%d (aspect %.2f); perceptual comparison stretches both to %dx%d", wA, hA, aspectA, wB, hB, aspectB, AHashGridSize, AHashGridSize)
 }
 
+// isUniformGray は 16x16 グレースケール配列の最小値と最大値が一致する
+// (一様 = ベタ塗り) かどうかを判定する。aHash は各画像自身の平均輝度で
+// 2値化するため、一様な画像は全セルが同一ビットになり (255>=255 も 0>=0 も
+// true)、画像間で内容が全く異なっても diffBits=0 (一致率100%) になってしまう。
 func isUniformGray(gray []byte) bool {
 	minVal, maxVal := gray[0], gray[0]
 	for _, v := range gray[1:] {
