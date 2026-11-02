@@ -27,6 +27,8 @@ When asked to verify how well a web page implementation matches a Figma design, 
 Example layout for one run (`RUN=/tmp/design-compare-<unique-suffix>`):
 - `$RUN/figma.png` — Figma node image
 - `$RUN/web.png` — Web screenshot
+- `$RUN/figma_layout.json` — Figma node list for `layout_tree` (Step 3)
+- `$RUN/web_layout.json` — Web DOM boxes for `layout_tree` (Step 3)
 - `$RUN/web-portrait.json` — DOM boxes at iPad portrait (Step 5)
 - `$RUN/web-landscape.json` — DOM boxes at iPad landscape (Step 5)
 
@@ -83,7 +85,9 @@ Call the `compare_design` tool from **design-compare** using the appropriate mod
 
 *   **Mode: `layout_tree` (Recommended for pure structural/template validation)**
     *   Use when you want to verify if components are placed in the correct hierarchy and alignment without worrying about precise text changes, fonts, or minor coloring.
-    *   Parameters: `mode: "layout_tree"`, `figma_layout: "[...]"`, `web_layout: "[...]"`
+    *   Parameters: `mode: "layout_tree"`, plus either `figma_layout: "[...]"` **or** `figma_layout_path: "/tmp/design-compare-<unique-suffix>/figma_layout.json"`, and either `web_layout: "[...]"` **or** `web_layout_path: "/tmp/design-compare-<unique-suffix>/web_layout.json"`.
+    *   `figma_layout` and `figma_layout_path` are mutually exclusive (provide exactly one); same for `web_layout` and `web_layout_path`.
+    *   For pages with many nodes, write the browser/Figma tool output to files under `$RUN` and pass `*_path` instead of inlining large JSON (avoids token bloat and escaping mistakes).
 *   **Mode: `perceptual` (Recommended for visual template verification)**
     *   Use when comparing images, but you want to ignore minor sub-pixel rendering quirks, text content differences, or anti-aliasing details. It scales down and checks macro-layout blocks.
     *   Parameters: `mode: "perceptual"`, `image_path_a: "/tmp/design-compare-<unique-suffix>/figma.png"`, `image_path_b: "/tmp/design-compare-<unique-suffix>/web.png"`
@@ -137,3 +141,4 @@ Intentional horizontal scroll regions (carousels, `overflow-x: auto` tables, mar
 3. **Viewport Matching**: For Figma compare (`layout_tree` / `perceptual` / `strict`), the browser viewport must match the Figma mockup frame size. Image inputs for `perceptual` / `strict` are limited to **8192px** on each side; resize oversized captures (e.g. high-DPR Retina screenshots) before comparison. Additionally you **MUST** run `layout_integrity` at iPad portrait **and** landscape unless the user specifies other tablet sizes.
 4. **Interaction Integrity**: Verification is not complete until you confirm the UI/UX stays intact **after** interactions. You **MUST** exercise scrolling (top/middle/bottom) and press interactive controls (buttons, tabs, modals, dropdowns, accordions, drawers), then re-run `compare_design` on the resulting states to prove nothing overlaps, clips, overflows, or collapses.
 5. **Tablet Layout Integrity**: Verification is not complete until `layout_integrity` succeeds at both iPad portrait (768×1024) and landscape (1024×768), each with DOM captured at that viewport.
+6. **Large Layout JSON via Files**: Prefer `figma_layout_path` / `web_layout_path` (files under `$RUN`) over inline `figma_layout` / `web_layout` when the node list is large. Do not pass both the inline parameter and its `*_path` counterpart for the same side.
