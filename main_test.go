@@ -2538,7 +2538,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
-		// Issue #425: max_details で details を切り詰める（issue_count / issues は全件）
+		// Issue #527: max_details で issues / details を切り詰める（issue_count は実件数のまま）
 		t.Run("MaxDetails", func(t *testing.T) {
 			manyOverflow := `[
 				{"selector":"#a","x":0,"y":0,"w":900,"h":50},
@@ -2571,6 +2571,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if resultAll["issue_count"] != float64(3) {
 				t.Fatalf("issue_count=%v", resultAll["issue_count"])
 			}
+			issuesAll, _ := resultAll["issues"].([]interface{})
+			if len(issuesAll) != 3 {
+				t.Fatalf("issues=%d when max_details omitted, want 3", len(issuesAll))
+			}
 			if resultAll["parent_checked_nodes"] != float64(0) {
 				t.Errorf("parent_checked_nodes=%v, want 0", resultAll["parent_checked_nodes"])
 			}
@@ -2594,6 +2598,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if len(detailsZero) != 4 {
 				t.Fatalf("Expected 4 details when max_details=0, got %d: %v", len(detailsZero), detailsZero)
 			}
+			issuesZero, _ := resultZero["issues"].([]interface{})
+			if len(issuesZero) != 3 {
+				t.Fatalf("issues=%d when max_details=0, want 3", len(issuesZero))
+			}
 
 			reqCap := mcp.CallToolRequest{
 				Params: mcp.CallToolParams{
@@ -2614,8 +2622,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected details array, got %v", resultCap["details"])
 			}
-			if len(detailsCap) != 3 {
-				t.Fatalf("Expected 2 kept details + omit line, got %d: %v", len(detailsCap), detailsCap)
+			// summary + 2 kept issue details + omit line
+			if len(detailsCap) != 4 {
+				t.Fatalf("Expected summary + 2 issues + omit line, got %d: %v", len(detailsCap), detailsCap)
 			}
 			summary, _ := detailsCap[0].(string)
 			if !strings.Contains(summary, "Found 3 layout issues") {
@@ -2629,16 +2638,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Errorf("Expected the first issue detail to survive truncation, got %q", kept)
 			}
 			omit, _ := detailsCap[len(detailsCap)-1].(string)
-			if omit != "... and 2 more details omitted (max_details=2)" {
+			if omit != "... and 1 more issues omitted (max_details=2)" {
 				t.Errorf("Expected omit line, got %q", omit)
 			}
-			// 機械可読フィールドは全件のまま
+			// issue_count は実件数のまま（合否判定は変えない）
 			if resultCap["issue_count"] != float64(3) {
 				t.Errorf("issue_count should remain full, got %v", resultCap["issue_count"])
 			}
 			issues, _ := resultCap["issues"].([]interface{})
-			if len(issues) != 3 {
-				t.Errorf("issues should remain full, got %d", len(issues))
+			if len(issues) != 2 {
+				t.Errorf("issues should be truncated to max_details, got %d", len(issues))
 			}
 		})
 	})

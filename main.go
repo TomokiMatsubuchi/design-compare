@@ -121,7 +121,7 @@ func newCompareDesignTool() mcp.Tool {
 		),
 		mcp.WithNumber("max_details",
 			mcp.Min(0),
-			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of 'details' lines to return (default 0 = unlimited). When greater than 0, the summary line is kept first, remaining details are truncated to this count, and a final '... and N more details omitted (max_details=M)' line is appended. Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'issue_count' and 'issues' are unaffected and still return the full set."),
+			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines / issues to return (default 0 = unlimited). When greater than 0, the summary line is kept first, remaining details are truncated to this count, and a final omit line is appended ('... and N more details omitted' in layout_tree; '... and N more issues omitted' in layout_integrity). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'issues' is truncated to the same cap while 'issue_count' stays the full count so pass/fail is unchanged."),
 		),
 		mcp.WithNumber("threshold",
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
@@ -716,7 +716,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if maxDetails < 0 {
-			return mcp.NewToolResultError("max_details for layout_tree mode must be >= 0 (0 = unlimited)."), nil
+			return mcp.NewToolResultError("max_details must be >= 0 (0 = unlimited)."), nil
 		}
 
 		// 除外領域 (ignore_region) をパースする (形式は画像モードと共通)。
@@ -1209,14 +1209,16 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if maxDetails < 0 {
-			return mcp.NewToolResultError("max_details for layout_integrity mode must be >= 0 (0 = unlimited)."), nil
+			return mcp.NewToolResultError("max_details must be >= 0 (0 = unlimited)."), nil
 		}
 
 		integrityResult, err := comparator.CheckLayoutIntegrity(webLayout, viewportW, viewportH, ignoreList, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity check failed: %v", err)), nil
 		}
-		integrityResult.Details = comparator.LimitLayoutTreeDetails(integrityResult.Details, maxDetails)
+		// issues / details を max_details で切り詰める（issue_count は実件数のまま）。
+		// CheckLayoutIntegrity の引数は増やさず、応答マップ組み立て前に適用する (Issue #527)。
+		limitIntegrityOutput(integrityResult, maxDetails)
 
 		responseMap = map[string]interface{}{
 			"status":               integrityResult.Status,
@@ -1310,6 +1312,26 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 	}
 	return mcp.NewToolResultStructured(responseMap, string(responseJSON)), nil
+}
+
+// limitIntegrityOutput は layout_integrity の issues / details を maxDetails 件に
+// 切り詰める。maxDetails <= 0 または件数以内なら無変更。issue_count は実件数のまま
+// 残し、合否（issue_count == 0）は変えない。details は先頭の summary 行と
+// 切り詰め後の issue.Detail から再構築し、末尾に省略行を付ける (Issue #527)。
+func limitIntegrityOutput(result *comparator.LayoutIntegrityResult, maxDetails int) {
+	if maxDetails <= 0 || len(result.Issues) <= maxDetails {
+		return
+	}
+	omitted := len(result.Issues) - maxDetails
+	result.Issues = result.Issues[:maxDetails]
+	details := make([]string, 0, maxDetails+2)
+	if len(result.Details) > 0 {
+		details = append(details, result.Details[0]) // 先頭は summary 行
+	}
+	for _, issue := range result.Issues {
+		details = append(details, issue.Detail)
+	}
+	result.Details = append(details, fmt.Sprintf("... and %d more issues omitted (max_details=%d)", omitted, maxDetails))
 }
 
 // pngPayloadFromDiffImage は JSON の diff_image (PNG data URI) から
