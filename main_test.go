@@ -5283,11 +5283,13 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			{"strict", "generate_diff", false, false, ""},
 			{"strict", "diff_on_mismatch", true, false, ""},
 			{"strict", "diff_image_content", true, false, ""},
-			// layout_integrity: Figma/画像/閾値系は非対応。viewport と web 除外は対応
+			// layout_integrity: Figma/画像/閾値系は非対応。viewport と web 除外は対応。
+			// min_match / pass_rate の代替はいずれも layout_integrity 非対応なので
+			// "(use '…' instead)" は付けない (Issue #523)。
 			{"layout_integrity", "figma_layout", figmaLayout, true, ""},
 			{"layout_integrity", "image_path_a", pathA, true, ""},
-			{"layout_integrity", "min_match", 90.0, true, " (use 'pass_rate' instead)"},
-			{"layout_integrity", "pass_rate", 90.0, true, " (use 'min_match' instead)"},
+			{"layout_integrity", "min_match", 90.0, true, ""},
+			{"layout_integrity", "pass_rate", 90.0, true, ""},
 			{"layout_integrity", "threshold", 0.15, true, ""},
 			{"layout_integrity", "max_diff_pixels", 10.0, true, ""},
 			{"layout_integrity", "include_aa", true, true, ""},
@@ -5327,6 +5329,14 @@ func TestVRTUnifiedCompare(t *testing.T) {
 					}
 					if c.hint == "" && strings.Contains(got, "instead") {
 						t.Errorf("Expected no alternative hint for parameter %q in mode %q, got %q", c.param, c.mode, got)
+					}
+					// layout_integrity は一致率合格ラインを使わないため、min_match /
+					// pass_rate 誤指定時は issue_count 判定である旨を案内する (Issue #523)。
+					if c.mode == "layout_integrity" && (c.param == "min_match" || c.param == "pass_rate") {
+						wantExplain := "layout_integrity judges by issue_count rather than match_rate, so a pass-threshold parameter is not needed"
+						if !strings.Contains(got, wantExplain) {
+							t.Errorf("Expected layout_integrity pass-threshold explanation %q, got %q", wantExplain, got)
+						}
 					}
 				} else if res.IsError {
 					t.Fatalf("Expected no error for supported parameter %q in mode %q, got content=%v", c.param, c.mode, res.Content[0].(mcp.TextContent).Text)

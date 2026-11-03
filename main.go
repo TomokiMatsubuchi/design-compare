@@ -388,6 +388,8 @@ var modeParamSupport = map[string]map[string]bool{
 // layout_tree への min_match / 画像モードへの pass_rate が自然に起きる。
 // ignore_nodes は layout_tree / layout_integrity 専用で、画像モードでは
 // ignore_region を使う（SKILL.md ガードレールと同じ自己修復ヒント）。
+// 案内は validateModeParams で代替先が呼び出し中モードでも有効なときだけ付く
+// (layout_integrity ではどちらも非対応のため案内しない)。
 // 未知モードが有効モードを列挙するのと同様、1 リトライで自己修復できるようにする。
 var modeParamAlternatives = map[string]string{
 	"min_match":    "pass_rate",
@@ -410,7 +412,10 @@ func recognizedParamNames() string {
 // (指定しても警告なく無視されるだけの) パラメータがないかを modeParamSupport
 // と照合して検証する。非対応キーは無視せず "parameter 'X' is not supported in
 // mode 'Y'" を返し、除外・合格ラインが効いていない判定結果を静かに受け取るのを
-// 防ぐ。既知の代替があるキーは "(use 'Z' instead)" を追記し、続けて
+// 防ぐ。既知の代替があり、かつ呼び出し中のモードでも有効なときだけ
+// "(use 'Z' instead)" を追記する (無効な代替を案内するとリトライが再び失敗する)。
+// layout_integrity への min_match / pass_rate は代替が無いため、issue_count
+// 判定である旨を追記して合格基準パラメータが不要だと示す。続けて
 // modeParamSupport から有効モードを固定順で "(supported in: ...)" に列挙する。
 // mode 自身は検証対象外 (未知のモードは handler の switch で
 // "Unknown comparison mode" としてエラーになる)。modeParamSupport に無い
@@ -447,7 +452,12 @@ func validateModeParams(args map[string]any, mode string) error {
 		}
 		msg := fmt.Sprintf("parameter '%s' is not supported in mode '%s'", key, mode)
 		if alt, ok := modeParamAlternatives[key]; ok {
-			msg += fmt.Sprintf(" (use '%s' instead)", alt)
+			if altSupport, ok2 := modeParamSupport[alt]; ok2 && altSupport[mode] {
+				msg += fmt.Sprintf(" (use '%s' instead)", alt)
+			}
+		}
+		if mode == "layout_integrity" && (key == "min_match" || key == "pass_rate") {
+			msg += "; layout_integrity judges by issue_count rather than match_rate, so a pass-threshold parameter is not needed"
 		}
 		msg += fmt.Sprintf(" (supported in: %s)", strings.Join(validModes, ", "))
 		return fmt.Errorf("%s", msg)
