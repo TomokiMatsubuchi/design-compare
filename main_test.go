@@ -324,12 +324,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if mn["figma_name"] != "nav" || mn["web_selector"] != ".nav" {
 			t.Errorf("Expected figma_name=nav web_selector=.nav, got %v", mn)
 		}
+		// 親付き nav は相対空間（親幅 1000 に対する比率）。dx=0.40 は px ではなく比率。
+		if mn["space"] != "relative" {
+			t.Errorf("Expected space=relative for parented nav pair, got %v", mn["space"])
+		}
 		dx, _ := mn["dx"].(float64)
 		dy, _ := mn["dy"].(float64)
 		dw, _ := mn["dw"].(float64)
 		dh, _ := mn["dh"].(float64)
 		diff, _ := mn["diff"].(float64)
-		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (relative to the parent box; dx/dw are ratios: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
 			diff, 0.15, 600.0, 10.0, 380.0, 80.0, 200.0, 10.0, 380.0, 80.0, dx, dy, dw, dh)
 		detailsMismatch, _ := resultMismatch["details"].([]interface{})
 		foundGeom := false
@@ -352,6 +356,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if mp["figma_name"] != "nav" || mp["web_selector"] != ".nav" || mp["reason"] != "exceeds_tolerance" {
 			t.Errorf("Expected figma_name=nav web_selector=.nav reason=exceeds_tolerance, got %v", mp)
+		}
+		if mp["space"] != "relative" {
+			t.Errorf("Expected mismatched_pairs space=relative, got %v", mp["space"])
 		}
 		if mp["geometric_diff"] != diff || mp["tolerance"] != 0.15 {
 			t.Errorf("Expected geometric_diff=%v tolerance=0.15, got geometric_diff=%v tolerance=%v", diff, mp["geometric_diff"], mp["tolerance"])

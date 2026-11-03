@@ -30,6 +30,8 @@ type WebNode struct {
 // MismatchedNode は tolerance 超過で不一致になった Figma/Web ペアの
 // 機械可読な幾何差分。details の "geometric diff … (dx: …)" と同じ数値を
 // 文字列パースなしで扱うためのフィールド。
+// Space は比較空間: "relative"（親ボックス比）または "absolute"（生 px）。
+// dx/dy/dw/dh の単位はこの値に従う。
 type MismatchedNode struct {
 	FigmaName   string  `json:"figma_name"`
 	WebSelector string  `json:"web_selector"`
@@ -38,17 +40,20 @@ type MismatchedNode struct {
 	DY          float64 `json:"dy"`
 	DW          float64 `json:"dw"`
 	DH          float64 `json:"dh"`
+	Space       string  `json:"space"` // "relative" | "absolute"
 }
 
 // MismatchPair は layout_tree の不一致 2 分岐（tolerance 超過 / Web 候補枯渇）を
 // 機械可読に返す。details の free-text と同じ対象を文字列パースなしで特定できる。
 // Reason は "exceeds_tolerance" または "no_unused_web_elements"。
+// Space は exceeds_tolerance 時のみ: "relative"（親ボックス比）または "absolute"（生 px）。
 type MismatchPair struct {
 	FigmaName     string   `json:"figma_name"`
 	WebSelector   string   `json:"web_selector,omitempty"` // 候補枯渇時は空
 	GeometricDiff float64  `json:"geometric_diff,omitempty"`
 	Tolerance     *float64 `json:"tolerance,omitempty"` // 超過時のみ設定（0 も省略しない）
 	Reason        string   `json:"reason"`
+	Space         string   `json:"space,omitempty"` // "relative" | "absolute"（超過時のみ）
 }
 
 type LayoutTreeResult struct {
@@ -430,7 +435,13 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
 			bestWeb := wNodes[bestMatchIdx]
-			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, fn.X, fn.Y, fn.W, fn.H, bestWeb.X, bestWeb.Y, bestWeb.W, bestWeb.H, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			space := "relative"
+			spaceLabel := "relative to the parent box; dx/dw are ratios"
+			if bestAbs {
+				space = "absolute"
+				spaceLabel = "absolute px"
+			}
+			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (%s: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, spaceLabel, fn.X, fn.Y, fn.W, fn.H, bestWeb.X, bestWeb.Y, bestWeb.W, bestWeb.H, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
 			mismatchedNodes = append(mismatchedNodes, MismatchedNode{
 				FigmaName:   fn.Name,
 				WebSelector: bestMatchSelector,
@@ -439,6 +450,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				DY:          bestDiffY,
 				DW:          bestDiffW,
 				DH:          bestDiffH,
+				Space:       space,
 			})
 			tol := tolerance
 			mismatchedPairs = append(mismatchedPairs, MismatchPair{
@@ -447,6 +459,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				GeometricDiff: minDiff,
 				Tolerance:     &tol,
 				Reason:        "exceeds_tolerance",
+				Space:         space,
 			})
 		}
 	}
