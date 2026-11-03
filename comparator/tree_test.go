@@ -314,12 +314,16 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 			t.Errorf("Expected figma_name=hero web_selector=.hero, got figma_name=%q web_selector=%q", mn.FigmaName, mn.WebSelector)
 		}
 		// details は %.2f で同じ値を出す。Figma(0,0,100,100) vs Web(50,0,100,100) → dx=-50。
+		// 親なしなので絶対座標空間（space=absolute、dx/dw は px）。
 		wantDX, wantDY, wantDW, wantDH, wantDiff := -50.0, 0.0, 0.0, 0.0, 50.0
 		if mn.DX != wantDX || mn.DY != wantDY || mn.DW != wantDW || mn.DH != wantDH || mn.Diff != wantDiff {
 			t.Errorf("Expected dx=%g dy=%g dw=%g dh=%g diff=%g, got dx=%g dy=%g dw=%g dh=%g diff=%g",
 				wantDX, wantDY, wantDW, wantDH, wantDiff, mn.DX, mn.DY, mn.DW, mn.DH, mn.Diff)
 		}
-		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+		if mn.Space != "absolute" {
+			t.Errorf("Expected space=absolute for parentless pair, got %q", mn.Space)
+		}
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (absolute px: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
 			mn.Diff, 0.15, 0.0, 0.0, 100.0, 100.0, 50.0, 0.0, 100.0, 100.0, mn.DX, mn.DY, mn.DW, mn.DH)
 		var detailsMatch bool
 		for _, d := range result.Details {
@@ -337,6 +341,9 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		mp := result.MismatchedPairs[0]
 		if mp.FigmaName != "hero" || mp.WebSelector != ".hero" || mp.Reason != "exceeds_tolerance" {
 			t.Errorf("Expected figma_name=hero web_selector=.hero reason=exceeds_tolerance, got %#v", mp)
+		}
+		if mp.Space != "absolute" {
+			t.Errorf("Expected mismatched_pairs space=absolute, got %q", mp.Space)
 		}
 		if mp.GeometricDiff != wantDiff || mp.Tolerance == nil || *mp.Tolerance != 0.15 {
 			gotTol := any(nil)
