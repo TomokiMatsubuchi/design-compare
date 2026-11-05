@@ -212,7 +212,7 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 			toolArgs["max_details"] = *maxDetails
 		case "diff-on-mismatch":
 			toolArgs["diff_on_mismatch"] = *diffOnMismatch
-		// diff-image-out is intentionally omitted: CLI-only, not a tool argument.
+			// diff-image-out is intentionally omitted: CLI-only, not a tool argument.
 		}
 	})
 	opts := cliOptions{DiffImageOut: *diffImageOut}
