@@ -749,6 +749,11 @@ func TestLayoutIntegrity_RequiredKeys(t *testing.T) {
 			webJSON: `[{"selector":"","x":0,"y":0,"w":100,"h":50}]`,
 			wantSub: "Web layout node at index 0 has empty required field 'selector'",
 		},
+		{
+			name:    "null_element",
+			webJSON: `[null,{"selector":"#ok","x":0,"y":0,"w":100,"h":50}]`,
+			wantSub: "failed to parse Web layout JSON: element at index 0 is null",
+		},
 	}
 
 	for _, tc := range tests {
