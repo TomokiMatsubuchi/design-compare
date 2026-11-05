@@ -307,6 +307,8 @@ go build -o design-compare
 
 主なフラグ: `--mode` / `--image-a` / `--image-b` / `--image-a-base64` / `--image-b-base64` / `--figma-layout` / `--web-layout` / `--figma-layout-file` / `--web-layout-file` / `--threshold` / `--min-match` / `--pass-rate` / `--max-diff-pixels` / `--include-aa` / `--ignore-region` / `--generate-diff` / `--viewport-preset` / `--viewport-width` / `--viewport-height` / `--ignore-nodes` / `--count-extra-web` / `--max-details` / `--diff-on-mismatch`
 
+真偽値フラグは `--include-aa`（値なしで true）または `--generate-diff=false` の形式で指定し、空白区切りの値（例: `--generate-diff false`）は受け付けません。位置引数や解釈できなかった引数はエラーになります。
+
 `--diff-image-content` は CLI 非対応です（CLI の出力は JSON テキストのみで、MCP の image コンテンツブロックを出しません）。入力側の `image_a_base64` / `image_b_base64` / `figma_layout` / `web_layout` はそれぞれ `--image-a-base64` / `--image-b-base64` / `--figma-layout` / `--web-layout` で渡せます。
 
 ### 単体テストの実行

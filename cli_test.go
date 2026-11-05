@@ -118,13 +118,18 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		"--image-a", "a.png",
 		"--image-b", "b.png",
 		"--include-aa", "false",
-		"--ignore-region", "0,0,100,50",
+		"--min-match", "99",
 	}, io.Discard, &stderr)
 	if err == nil {
 		t.Fatal("expected error for space-separated --include-aa value")
 	}
-	if !strings.Contains(err.Error(), "unexpected non-flag argument(s): false") {
-		t.Errorf("error should mention unexpected false, got %q", err.Error())
+	msg = err.Error()
+	if !strings.Contains(msg, "unexpected non-flag argument(s): false") {
+		t.Errorf("error should mention unexpected false, got %q", msg)
+	}
+	// Go flag は最初の非フラグで打ち切るため、後続の --min-match も残存引数に含まれる。
+	if !strings.Contains(msg, "--min-match") {
+		t.Errorf("error should list flags dropped after space-separated boolean, got %q", msg)
 	}
 
 	got, err := parseCLIArgs([]string{
