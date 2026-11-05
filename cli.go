@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +19,11 @@ const (
 	exitMismatch = 2
 )
 
+// cliOptions holds CLI-only flags that are not compare_design tool arguments.
+type cliOptions struct {
+	DiffImageOut string
+}
+
 // useCLI reports whether process arguments select one-shot CLI instead of stdio MCP.
 func useCLI(osArgs []string) bool {
 	return len(osArgs) > 1
@@ -31,7 +37,7 @@ func runCLI(args []string) int {
 }
 
 func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
-	toolArgs, err := parseCLIArgs(args, stdout, stderr)
+	toolArgs, opts, err := parseCLIArgs(args, stdout, stderr)
 	if err != nil {
 		if err == flag.ErrHelp {
 			// 明示ヘルプの Usage は parseCLIArgs が stdout へ書き済み。
@@ -59,7 +65,39 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 	fmt.Fprintln(stdout, text)
+	if opts.DiffImageOut != "" {
+		if err := writeCLIDiffImage(opts.DiffImageOut, text, stderr); err != nil {
+			fmt.Fprintln(stderr, err)
+			return exitError
+		}
+	}
 	return exitCodeFromResultJSON(text)
+}
+
+// writeCLIDiffImage decodes result JSON's diff_image data URI and writes a PNG to path.
+// Empty diff_image skips the write and notes that on stderr (not an error).
+func writeCLIDiffImage(path, resultJSON string, stderr io.Writer) error {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(resultJSON), &m); err != nil {
+		return fmt.Errorf("parse result JSON for --diff-image-out: %w", err)
+	}
+	diffImage, _ := m["diff_image"].(string)
+	if diffImage == "" {
+		fmt.Fprintln(stderr, "diff_image is empty; skipping --diff-image-out")
+		return nil
+	}
+	payload, ok := pngPayloadFromDiffImage(diffImage)
+	if !ok {
+		return fmt.Errorf("--diff-image-out: diff_image is not a PNG data URI")
+	}
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return fmt.Errorf("decode diff_image for --diff-image-out: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write --diff-image-out: %w", err)
+	}
+	return nil
 }
 
 // writeUsage は CLI の使い方を w へ書く。明示ヘルプは stdout、パース／検証エラーは stderr。
@@ -73,7 +111,7 @@ func writeUsage(fs *flag.FlagSet, w io.Writer) {
 	fs.SetOutput(prev)
 }
 
-func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, error) {
+func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliOptions, error) {
 	fs := flag.NewFlagSet("design-compare", flag.ContinueOnError)
 	// flag は ContinueOnError でも解析失敗時にエラー行を Output へ書く。
 	// runCLIWithIO でも同じ行を出すと二重になるため Discard し、エラー本文は
@@ -106,6 +144,8 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, erro
 	countExtraWeb := fs.Bool("count-extra-web", false, "Count unmatched Web nodes in layout_tree match rate (maps to count_extra_web)")
 	maxDetails := fs.Int("max-details", 0, "Max details lines for layout_tree and layout_integrity; 0 = unlimited (maps to max_details)")
 	diffOnMismatch := fs.Bool("diff-on-mismatch", false, "Only generate diff image on mismatch in perceptual/strict (maps to diff_on_mismatch)")
+	// CLI-only: must not enter toolArgs (validateModeParams would reject it).
+	diffImageOut := fs.String("diff-image-out", "", "Write decoded diff_image PNG to this path (CLI-only)")
 
 	// Parse は -h/--help でも Usage を呼ぶ。明示ヘルプは stdout だけにしたいので
 	// 自動 Usage を抑え、行き先を分岐する。
@@ -113,14 +153,14 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, erro
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			writeUsage(fs, stdout)
-			return nil, err
+			return nil, cliOptions{}, err
 		}
 		writeUsage(fs, stderr)
-		return nil, err
+		return nil, cliOptions{}, err
 	}
 	fs.Usage = usageStderr
 	if fs.NArg() > 0 {
-		return nil, fmt.Errorf("unexpected non-flag argument(s): %s (positional arguments are not accepted; specify images with --image-a / --image-b; boolean flags need the --flag=value form)", strings.Join(fs.Args(), " "))
+		return nil, cliOptions{}, fmt.Errorf("unexpected non-flag argument(s): %s (positional arguments are not accepted; specify images with --image-a / --image-b; boolean flags need the --flag=value form)", strings.Join(fs.Args(), " "))
 	}
 
 	toolArgs := make(map[string]any)
@@ -172,16 +212,18 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, erro
 			toolArgs["max_details"] = *maxDetails
 		case "diff-on-mismatch":
 			toolArgs["diff_on_mismatch"] = *diffOnMismatch
+			// diff-image-out is intentionally omitted: CLI-only, not a tool argument.
 		}
 	})
+	opts := cliOptions{DiffImageOut: *diffImageOut}
 	// --mode は CLI の必須入口。未指定のまま handler へ渡すと MCP 向けの
 	// RequireString 文言だけが出て直し方が分からないため、ここで Usage と
 	// 有効値を案内する (未知モード時の案内方針と揃える)。
 	if _, ok := toolArgs["mode"]; !ok {
 		fs.Usage()
-		return nil, fmt.Errorf("--mode is required (valid modes: layout_tree, perceptual, strict, layout_integrity); see --help")
+		return nil, opts, fmt.Errorf("--mode is required (valid modes: layout_tree, perceptual, strict, layout_integrity); see --help")
 	}
-	return toolArgs, nil
+	return toolArgs, opts, nil
 }
 
 func toolResultText(res *mcp.CallToolResult) string {
