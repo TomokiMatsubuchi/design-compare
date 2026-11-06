@@ -1731,11 +1731,36 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatal("expected IsError when figma_layout is a number")
 		}
 		gotBad := resBadType.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array") {
+		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array/object") {
 			t.Errorf("got %q", gotBad)
 		}
 
-		// 比較側は JSON 配列しか受け付けないため、ネイティブ object は明示エラーにする
+		// ネイティブ単一オブジェクトは 1 要素配列として受理し、比較が通る
+		figmaOne := map[string]any{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100}
+		webOne := map[string]any{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100}
+		reqNativeObj := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaOne,
+					"web_layout":   webOne,
+				},
+			},
+		}
+		resNativeObj, err := compareDesignHandler(context.Background(), reqNativeObj)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resNativeObj.IsError {
+			t.Fatalf("Expected native JSON objects to compare, got error: %v", resNativeObj.Content[0].(mcp.TextContent).Text)
+		}
+		var resultNativeObj map[string]interface{}
+		json.Unmarshal([]byte(resNativeObj.Content[0].(mcp.TextContent).Text), &resultNativeObj)
+		if resultNativeObj["status"] != "success" || resultNativeObj["match_rate"] != "100.00%" {
+			t.Errorf("Expected success and 100%% match with native objects, got status=%v, rate=%v", resultNativeObj["status"], resultNativeObj["match_rate"])
+		}
+
+		// 必須キーの無いネイティブ object は 1 要素配列へ包んだうえで、後段のキー検証エラーになる
 		// (Marshal して後段の cannot unmarshal object に落とさない)。
 		reqObject := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -1753,24 +1778,24 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("handler failed: %v", err)
 		}
 		if !resObject.IsError {
-			t.Fatal("expected IsError when figma_layout is a JSON object")
+			t.Fatal("expected IsError when figma_layout object lacks required node keys")
 		}
 		gotObject := resObject.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(gotObject, "figma_layout must be a JSON array of node objects (a JSON object is not supported); pass the nodes as an array") {
+		if !strings.Contains(gotObject, "missing required field") {
 			t.Errorf("got %q", gotObject)
 		}
 		if strings.Contains(gotObject, "cannot unmarshal") {
-			t.Errorf("expected explicit object rejection, not Go unmarshal error: %q", gotObject)
+			t.Errorf("expected required-key validation, not Go unmarshal error: %q", gotObject)
 		}
 	})
 
 	// =================================================================
-	// 2.12e. layout_tree モード: 単一 JSON オブジェクトは配列必須の明示エラー
+	// 2.12e. layout_tree モード: オブジェクトの JSON 文字列は配列必須の明示エラー
 	// =================================================================
-	// ツール説明の "array/object" 表記に従ってオブジェクトを渡すと、かつては
-	// []json.RawMessage 向け Unmarshal の内部型名エラーになった。ネイティブ
-	// オブジェクト・オブジェクト文字列のどちらも「配列が必要」と分かる文言にする。
-	t.Run("LayoutTree_JSONObjectRejected", func(t *testing.T) {
+	// ネイティブ object は 1 要素配列として受理するが、オブジェクト文字列は
+	// 比較側が配列しか受け付けないため「配列が必要」と分かる文言にする。
+	// かつては []json.RawMessage 向け Unmarshal の内部型名エラーだった。
+	t.Run("LayoutTree_JSONObjectStringRejected", func(t *testing.T) {
 		webOK := `[{"selector":"#c","x":0,"y":0,"w":10,"h":10}]`
 		figmaOK := `[{"id":"1","name":"c","x":0,"y":0,"w":10,"h":10}]`
 
@@ -1780,15 +1805,6 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			want string
 		}{
 			{
-				name: "native_figma_object",
-				args: map[string]any{
-					"mode":         "layout_tree",
-					"figma_layout": map[string]any{"id": "1", "name": "c", "x": 0, "y": 0, "w": 10, "h": 10},
-					"web_layout":   webOK,
-				},
-				want: "figma_layout must be a JSON array of node objects",
-			},
-			{
 				name: "string_figma_object",
 				args: map[string]any{
 					"mode":         "layout_tree",
@@ -1796,15 +1812,6 @@ func TestVRTUnifiedCompare(t *testing.T) {
 					"web_layout":   webOK,
 				},
 				want: "figma_layout must be a JSON array of node objects",
-			},
-			{
-				name: "native_web_object",
-				args: map[string]any{
-					"mode":         "layout_tree",
-					"figma_layout": figmaOK,
-					"web_layout":   map[string]any{"selector": "#c", "x": 0, "y": 0, "w": 10, "h": 10},
-				},
-				want: "web_layout must be a JSON array of node objects",
 			},
 			{
 				name: "string_web_object",
@@ -1825,7 +1832,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 					t.Fatalf("handler failed: %v", err)
 				}
 				if !res.IsError {
-					t.Fatal("expected IsError for single JSON object layout input")
+					t.Fatal("expected IsError for JSON object string layout input")
 				}
 				got := res.Content[0].(mcp.TextContent).Text
 				if !strings.Contains(got, c.want) {
@@ -2391,7 +2398,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatal("expected IsError when web_layout is a number")
 			}
 			gotBad := resBadType.Content[0].(mcp.TextContent).Text
-			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array") {
+			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array/object") {
 				t.Errorf("got %q", gotBad)
 			}
 		})
