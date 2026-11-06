@@ -491,13 +491,28 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 	})
 
 	t.Run("zero_size_skipped_not_issue", func(t *testing.T) {
+		// Issue #555: 0x0 と正常が混在しても success / checked_nodes=1 のまま、
+		// 除外件数と details 注記で未検査分が分かる。
 		web := `[{"selector":"#hidden","x":0,"y":0,"w":0,"h":0},{"selector":"#ok","x":0,"y":0,"w":100,"h":50}]`
 		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Status != "success" || res.CheckedNodes != 1 {
+		if res.Status != "success" || res.CheckedNodes != 1 || res.IssueCount != 0 {
 			t.Fatalf("got %#v", res)
+		}
+		if res.SkippedZeroGeometry != 1 {
+			t.Fatalf("skipped_zero_geometry=%d, want 1", res.SkippedZeroGeometry)
+		}
+		found := false
+		for _, d := range res.Details {
+			if strings.Contains(d, "1 Web nodes were skipped because w/h is <= 0") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("details should note skipped zero-geometry nodes, got %v", res.Details)
 		}
 	})
 
@@ -558,6 +573,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" || res.IssueCount != 0 || res.CheckedNodes != 1 {
 			t.Fatalf("status/issue_count/checked_nodes must stay success/0/1, got %#v", res)
 		}
+		if res.SkippedZeroGeometry != 2 {
+			t.Fatalf("skipped_zero_geometry=%d, want 2", res.SkippedZeroGeometry)
+		}
 		if res.ZeroGeometryWarning != zeroGeometryWarningMsgIntegrity {
 			t.Errorf("ZeroGeometryWarning=%q, want %q", res.ZeroGeometryWarning, zeroGeometryWarningMsgIntegrity)
 		}
@@ -589,6 +607,19 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if res.ZeroGeometryWarning != "" {
 			t.Errorf("expected no ZeroGeometryWarning for minority zeros, got %q", res.ZeroGeometryWarning)
+		}
+		if res.SkippedZeroGeometry != 1 {
+			t.Fatalf("skipped_zero_geometry=%d, want 1", res.SkippedZeroGeometry)
+		}
+		found := false
+		for _, d := range res.Details {
+			if strings.Contains(d, "1 Web nodes were skipped because w/h is <= 0") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("details should note skipped zero-geometry nodes, got %v", res.Details)
 		}
 	})
 

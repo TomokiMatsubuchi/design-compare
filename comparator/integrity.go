@@ -61,6 +61,9 @@ type LayoutIntegrityResult struct {
 	// ParentOverflowSkippedZeroGeom は親ノードは入力にあるが w/h が 0 以下のため
 	// parent_overflow をスキップした checkable 子の件数（status は変えない）。
 	ParentOverflowSkippedZeroGeom int `json:"parent_overflow_skipped_zero_geom,omitempty"`
+	// SkippedZeroGeometry は w/h が 0 以下のため checkable から外したノード数。
+	// 一部だけ零サイズのときも件数を返し、success を「全要素検査済み」と誤認させない（Issue #555）。
+	SkippedZeroGeometry int `json:"skipped_zero_geometry,omitempty"`
 	// ZeroGeometryWarning は ignore 後の Web ノードのうち過半数が明示的な w=h=0 のとき
 	// 付ける誤用検出（status / issue_count は変えない。layout_tree の同名フィールドと同方針。Issue #498）。
 	ZeroGeometryWarning string `json:"zero_geometry_warning,omitempty"`
@@ -186,8 +189,10 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	var checkable []WebNode
+	var skippedZeroGeometry int
 	for _, wn := range wNodes {
 		if wn.W <= 0 || wn.H <= 0 {
+			skippedZeroGeometry++
 			continue
 		}
 		checkable = append(checkable, wn)
@@ -214,6 +219,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		UnmatchedIgnores:       unmatchedIgnores,
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		SkippedZeroGeometry:    skippedZeroGeometry,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 	}
 
@@ -305,6 +311,11 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		details = append(details, fmt.Sprintf(
 			"%d of %d Web nodes have zero width/height and were excluded from checks (checked_nodes=%d); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}",
 			zeroExcluded, len(wNodes), len(checkable)))
+	} else if skippedZeroGeometry > 0 {
+		// 少数でも零サイズ除外は無言にしない（過半数警告が無いときだけ。Issue #555）。
+		details = append(details, fmt.Sprintf(
+			"%d Web nodes were skipped because w/h is <= 0 (hidden elements or a key-name mismatch)",
+			skippedZeroGeometry))
 	}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)

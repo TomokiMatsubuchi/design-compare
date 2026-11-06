@@ -1260,6 +1260,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if integrityResult.ParentOverflowSkippedZeroGeom > 0 {
 			responseMap["parent_overflow_skipped_zero_geom"] = integrityResult.ParentOverflowSkippedZeroGeom
 		}
+		// w/h<=0 のため checkable から外した件数。一部だけ零サイズでも success と
+		// 「全要素検査済み」を誤認させない（Issue #555）。1 以上のときのみ返す。
+		if integrityResult.SkippedZeroGeometry > 0 {
+			responseMap["skipped_zero_geometry"] = integrityResult.SkippedZeroGeometry
+		}
 		// 過半数ノードが明示的な w/h=0 のときの誤用検出（layout_tree と同方針。Issue #498）。
 		// status / issue_count は非破壊。非空時のみ返す。
 		if integrityResult.ZeroGeometryWarning != "" {
