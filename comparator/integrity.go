@@ -122,17 +122,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	var ignoredNodes []string
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
-		ignoreMap := make(map[string]bool)
-		var wildcardPrefixes []string
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				prefix := strings.TrimSuffix(item, "*")
-				wildcardPrefixes = append(wildcardPrefixes, prefix, cleanNodeName(prefix))
-				continue
-			}
-			ignoreMap[item] = true
-			ignoreMap[cleanNodeName(item)] = true
-		}
+		matcher := newIgnoreMatcher(ignoreList)
 
 		nodeValues := make(map[string]bool)
 		for _, wn := range wNodes {
@@ -142,7 +132,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 
 		var filtered []WebNode
 		for _, wn := range wNodes {
-			if isNodeValueIgnored(wn.Selector, ignoreMap, wildcardPrefixes) {
+			if matcher.matches(wn.Selector) {
 				ignoredCount++
 				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
@@ -151,17 +141,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		}
 		wNodes = filtered
 
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				if !anyNodeValueHasPrefix(nodeValues, strings.TrimSuffix(item, "*")) {
-					unmatchedIgnores = append(unmatchedIgnores, item)
-				}
-				continue
-			}
-			if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
-				unmatchedIgnores = append(unmatchedIgnores, item)
-			}
-		}
+		unmatchedIgnores = matcher.unmatched(nodeValues)
 	}
 
 	// ignore_region のうちどのノード中心とも重ならない領域 (座標ミス等)。

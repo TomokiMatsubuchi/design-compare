@@ -161,18 +161,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var ignoredNodes []string
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
-		ignoreMap := make(map[string]bool)
-		var wildcardPrefixes []string
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				// プレフィックス一致エントリ: '*' を除いた部分（raw + clean）を prefix として登録
-				prefix := strings.TrimSuffix(item, "*")
-				wildcardPrefixes = append(wildcardPrefixes, prefix, cleanNodeName(prefix))
-				continue
-			}
-			ignoreMap[item] = true
-			ignoreMap[cleanNodeName(item)] = true
-		}
+		matcher := newIgnoreMatcher(ignoreList)
 
 		// ノード側の識別値（raw + clean）を集め、ignore エントリが実際に
 		// どれかのノードに一致したかの判定に使う
@@ -190,7 +179,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 		var filteredFNodes []FigmaNode
 		for _, fn := range fNodes {
-			if isNodeValueIgnored(fn.ID, ignoreMap, wildcardPrefixes) || isNodeValueIgnored(fn.Name, ignoreMap, wildcardPrefixes) {
+			if matcher.matches(fn.ID) || matcher.matches(fn.Name) {
 				ignoredCount++
 				ignoredNodes = append(ignoredNodes, ignoredFigmaID(fn))
 				continue
@@ -201,7 +190,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 		var filteredWNodes []WebNode
 		for _, wn := range wNodes {
-			if isNodeValueIgnored(wn.Selector, ignoreMap, wildcardPrefixes) {
+			if matcher.matches(wn.Selector) {
 				ignoredCount++
 				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
@@ -210,20 +199,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 		wNodes = filteredWNodes
 
-		// どのノードにも一致しなかった ignore エントリ（スペルミス等）を検出する。
-		// 末尾 '*' のプレフィックスエントリは、プレフィックスに一致するノードが
-		// 1つも無い場合のみ報告する。
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				if !anyNodeValueHasPrefix(nodeValues, strings.TrimSuffix(item, "*")) {
-					unmatchedIgnores = append(unmatchedIgnores, item)
-				}
-				continue
-			}
-			if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
-				unmatchedIgnores = append(unmatchedIgnores, item)
-			}
-		}
+		unmatchedIgnores = matcher.unmatched(nodeValues)
 	}
 
 	// ignore_region による領域除外: BoundingBox の中心点が領域内にあるノードを
@@ -835,6 +811,58 @@ func cleanNodeName(s string) string {
 	return s
 }
 
+// ignoreMatcher は ignore_nodes の完全一致・末尾 '*' プレフィックス一致を
+// 1か所で組み立てる。layout_tree / layout_integrity が同じ規則を共有する。
+type ignoreMatcher struct {
+	exact    map[string]bool
+	prefixes []string
+	list     []string
+}
+
+// newIgnoreMatcher は ignoreList から判定器を組み立てる。
+// 末尾 '*' はプレフィックス一致（raw + clean）、それ以外は完全一致（raw + clean）。
+func newIgnoreMatcher(ignoreList []string) *ignoreMatcher {
+	m := &ignoreMatcher{
+		exact: make(map[string]bool),
+		list:  ignoreList,
+	}
+	for _, item := range ignoreList {
+		if strings.HasSuffix(item, "*") {
+			prefix := strings.TrimSuffix(item, "*")
+			m.prefixes = append(m.prefixes, prefix, cleanNodeName(prefix))
+			continue
+		}
+		m.exact[item] = true
+		m.exact[cleanNodeName(item)] = true
+	}
+	return m
+}
+
+// matches はノード識別値の raw と cleanNodeName 適用後の値の両方に対して
+// ignore 判定を行う。
+func (m *ignoreMatcher) matches(value string) bool {
+	return isIgnored(value, m.exact, m.prefixes) || isIgnored(cleanNodeName(value), m.exact, m.prefixes)
+}
+
+// unmatched はどのノードにも一致しなかった ignore エントリを指定順で返す。
+// 末尾 '*' のプレフィックスエントリは、プレフィックスに一致するノードが
+// 1つも無い場合のみ報告する。
+func (m *ignoreMatcher) unmatched(nodeValues map[string]bool) []string {
+	var out []string
+	for _, item := range m.list {
+		if strings.HasSuffix(item, "*") {
+			if !anyNodeValueHasPrefix(nodeValues, strings.TrimSuffix(item, "*")) {
+				out = append(out, item)
+			}
+			continue
+		}
+		if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // isIgnored はノード識別値 v が ignore エントリ（完全一致: m、末尾 '*' の
 // プレフィックス一致: prefixes）に一致するかを判定する。
 func isIgnored(v string, m map[string]bool, prefixes []string) bool {
@@ -847,12 +875,6 @@ func isIgnored(v string, m map[string]bool, prefixes []string) bool {
 		}
 	}
 	return false
-}
-
-// isNodeValueIgnored はノード識別値の raw と cleanNodeName 適用後の値の
-// 両方に対して ignore 判定を行う。
-func isNodeValueIgnored(v string, m map[string]bool, prefixes []string) bool {
-	return isIgnored(v, m, prefixes) || isIgnored(cleanNodeName(v), m, prefixes)
 }
 
 // anyNodeValueHasPrefix はノード識別値の集合の中に、prefix（またはその
