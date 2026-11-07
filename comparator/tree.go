@@ -502,18 +502,50 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	}, nil
 }
 
+// limitMaxKeep は maxDetails 件までの残件数と省略件数を返す。
+// maxDetails <= 0 は無制限（全件残し・省略 0）。details と構造化配列で共通。
+func limitMaxKeep(n, maxDetails int) (keep, omitted int) {
+	if maxDetails <= 0 || n <= maxDetails {
+		return n, 0
+	}
+	return maxDetails, n - maxDetails
+}
+
 // LimitLayoutTreeDetails は layout_tree の details を maxDetails 件に切り詰める。
 // maxDetails <= 0 のときは無制限（現行どおり全件）。件数を超える場合は
 // summary 行を先頭に残したまま先頭 maxDetails 件を残し、末尾に省略行を付ける。
 func LimitLayoutTreeDetails(details []string, maxDetails int) []string {
-	if maxDetails <= 0 || len(details) <= maxDetails {
+	keep, omitted := limitMaxKeep(len(details), maxDetails)
+	if omitted == 0 {
 		return details
 	}
-	omitted := len(details) - maxDetails
-	limited := make([]string, 0, maxDetails+1)
-	limited = append(limited, details[:maxDetails]...)
+	limited := make([]string, 0, keep+1)
+	limited = append(limited, details[:keep]...)
 	limited = append(limited, fmt.Sprintf("... and %d more details omitted (max_details=%d)", omitted, maxDetails))
 	return limited
+}
+
+// LimitLayoutTreeStructured は layout_tree の構造化配列を maxDetails 件に切り詰める。
+// mismatched_pairs / mismatched_nodes / extra_web_nodes が対象。ignored_nodes は
+// ignored_count と件数が一致する契約のため対象外。maxDetails <= 0 は無変更。
+// 省略件数は pairsOmitted / extraOmitted（0 のときは応答に載せる必要なし）。
+func LimitLayoutTreeStructured(result *LayoutTreeResult, maxDetails int) (pairsOmitted, extraOmitted int) {
+	if result == nil || maxDetails <= 0 {
+		return 0, 0
+	}
+	if keep, omitted := limitMaxKeep(len(result.MismatchedPairs), maxDetails); omitted > 0 {
+		result.MismatchedPairs = result.MismatchedPairs[:keep]
+		pairsOmitted = omitted
+	}
+	// mismatched_nodes は切り詰めのみ（省略件数フィールドは mismatched_pairs_omitted で表現）
+	if keep, nOmitted := limitMaxKeep(len(result.MismatchedNodes), maxDetails); nOmitted > 0 {
+		result.MismatchedNodes = result.MismatchedNodes[:keep]
+	}
+	if keep, omitted := limitMaxKeep(len(result.ExtraWebNodes), maxDetails); omitted > 0 {
+		result.ExtraWebNodes = result.ExtraWebNodes[:keep]
+		extraOmitted = omitted
+	}
+	return pairsOmitted, extraOmitted
 }
 
 // layout_tree 入力で必須のキー。明示的な 0 は許容し、キー欠落のみ拒否する

@@ -121,7 +121,7 @@ func newCompareDesignTool() mcp.Tool {
 		),
 		mcp.WithNumber("max_details",
 			mcp.Min(0),
-			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines / issues to return (default 0 = unlimited). When greater than 0, the summary line is kept first, remaining details are truncated to this count, and a final omit line is appended ('... and N more details omitted' in layout_tree; '... and N more issues omitted' in layout_integrity). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'issues' is truncated to the same cap while 'issue_count' stays the full count so pass/fail is unchanged."),
+			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines / issues / structured array entries to return (default 0 = unlimited). When greater than 0, the summary line is kept first, remaining details are truncated to this count, and a final omit line is appended ('... and N more details omitted' in layout_tree; '... and N more issues omitted' in layout_integrity). In 'layout_tree', mismatched_pairs / mismatched_nodes / extra_web_nodes are truncated to the same cap with mismatched_pairs_omitted / extra_web_nodes_omitted reporting how many were dropped (ignored_nodes is not truncated so it stays aligned with ignored_count). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'issues' is truncated to the same cap while 'issue_count' stays the full count so pass/fail is unchanged."),
 		),
 		mcp.WithNumber("threshold",
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
@@ -739,6 +739,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Layout Tree comparison failed: %v", err)), nil
 		}
 		treeResult.Details = comparator.LimitLayoutTreeDetails(treeResult.Details, maxDetails)
+		// mismatched_pairs / mismatched_nodes / extra_web_nodes も同じ max_details に切り詰める。
+		// ignored_nodes は ignored_count と件数が一致する契約のため対象外 (Issue #570)。
+		pairsOmitted, extraOmitted := comparator.LimitLayoutTreeStructured(treeResult, maxDetails)
 
 		// 実効パラメータと除外件数を応答に含め、どの閾値で判定されたかを検証可能にする
 		responseMap = map[string]interface{}{
@@ -772,8 +775,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		// どの Figma ノードにもマッチしなかった余分な Web ノード（実装側の過剰要素）を
 		// 文字列パースなしで扱えるよう、セレクタを構造化フィールドでも返す（0件時は省略）。
+		// extra_web_count は実件数のまま。切り詰め時は extra_web_nodes_omitted を付ける。
 		if len(treeResult.ExtraWebNodes) > 0 {
 			responseMap["extra_web_nodes"] = treeResult.ExtraWebNodes
+		}
+		if extraOmitted > 0 {
+			responseMap["extra_web_nodes_omitted"] = extraOmitted
 		}
 		// tolerance 超過の不一致ペアを、details と同じ数値で構造化して返す（0件時は省略）。
 		if len(treeResult.MismatchedNodes) > 0 {
@@ -782,6 +789,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 不一致 2 分岐（tolerance 超過 / Web 候補枯渇）を reason 付きで返す（0件時は省略）。
 		if len(treeResult.MismatchedPairs) > 0 {
 			responseMap["mismatched_pairs"] = treeResult.MismatchedPairs
+		}
+		if pairsOmitted > 0 {
+			responseMap["mismatched_pairs_omitted"] = pairsOmitted
 		}
 		// width/height などキー名の揺れで幾何が全て 0 になると一致率 100% になるため、
 		// unmatched_ignores と同様に誤用検出のフィードバックを載せる（status は非破壊）。

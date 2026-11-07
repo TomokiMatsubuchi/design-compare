@@ -123,7 +123,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `viewport_width` | number | `layout_integrity` | 0 より大 | 768 | CSS ピクセルのビューポート幅。指定時は `viewport_preset` の幅を上書きする。 |
 | `viewport_height` | number | `layout_integrity` | 0 より大 | 1024 | CSS ピクセルのビューポート高さ。指定時は `viewport_preset` の高さを上書きする。 |
 | `count_extra_web` | boolean | `layout_tree` | true / false | false | `true` の場合、どの Figma ノードにもマッチしなかった Web ノード（実装側の余分な要素）を一致率の分母に加算して一致率を下げる。 |
-| `max_details` | number | `layout_tree` / `layout_integrity` | 0 以上 | 0 | 出力の最大件数。0（未指定）は無制限。1 以上のとき先頭の summary 行を残したまま指定件数に切り詰め、末尾に省略行を付ける。`layout_tree` は `... and N more details omitted (max_details=M)`。`layout_integrity` は `issues` も同じ件数に切り詰め、`... and N more issues omitted (max_details=M)` を付ける（`issue_count` は実件数のまま）。 |
+| `max_details` | number | `layout_tree` / `layout_integrity` | 0 以上 | 0 | 出力の最大件数。0（未指定）は無制限。1 以上のとき先頭の summary 行を残したまま指定件数に切り詰め、末尾に省略行を付ける。`layout_tree` は `... and N more details omitted (max_details=M)` に加え、`mismatched_pairs` / `mismatched_nodes` / `extra_web_nodes` も同じ件数に切り詰め、省略時は `mismatched_pairs_omitted` / `extra_web_nodes_omitted` を返す（`extra_web_count` は実件数のまま。`ignored_nodes` は `ignored_count` と一致させるため対象外）。`layout_integrity` は `issues` も同じ件数に切り詰め、`... and N more issues omitted (max_details=M)` を付ける（`issue_count` は実件数のまま）。 |
 | `generate_diff` | boolean | `perceptual` / `strict` | true / false | true | `false` の場合は差分画像の PNG/base64 化を行わず、`diff_image` は空文字列で返される。`strict` の `diff_regions` は in-memory マスクから算出するため `false` でも返る。 |
 | `diff_on_mismatch` | boolean | `perceptual` / `strict` | true / false | false | `true` かつ判定が `success` の場合、応答の `diff_image` を空文字列にする（失敗時の分析用に差分画像は残しつつ、成功時のトークン消費を抑える）。`generate_diff=false` のときはもともと空。 |
 | `diff_image_content` | boolean | `perceptual` / `strict` | true / false | false | `true` かつ `diff_image` が空でない場合、JSON テキストの後に MCP image コンテンツ（`image/png`）を付ける。既定は JSON のみ。 |
@@ -218,9 +218,11 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 | `absolute_mode_pairs` | number | ○ | 実比較ペアのうち絶対座標（生 px）空間で比較された件数。この件数では `threshold` は比率ではなく px に対して適用される。 |
 | `unmatched_ignores` | string[] | 非空時のみ | `ignore_nodes` のうちどのノードにも一致しなかったエントリ。 |
 | `unmatched_ignore_regions` | string[] | 非空時のみ | どのノード中心とも重ならない `ignore_region`。 |
-| `extra_web_nodes` | string[] | 非空時のみ | 余分な Web ノードのセレクタ。 |
-| `mismatched_nodes` | object[] | 非空時のみ | tolerance 超過の不一致ペア。`figma_name` / `web_selector` / `diff` / `dx` / `dy` / `dw` / `dh` / `space`（`relative` = 親ボックス比、`absolute` = 生 px。`dx`/`dw` の単位はこの値に従う。`details` の幾何差分と同じ数値）。 |
-| `mismatched_pairs` | object[] | 非空時のみ | 不一致ペア（tolerance 超過と Web 候補枯渇の両方）。`figma_name` / `reason`（`exceeds_tolerance` \| `no_unused_web_elements`）。超過時は `web_selector` / `geometric_diff` / `tolerance` / `space`（`relative` \| `absolute`）も付く。 |
+| `extra_web_nodes` | string[] | 非空時のみ | 余分な Web ノードのセレクタ。`max_details` > 0 のときは先頭からその件数までに切り詰め（`extra_web_count` は実件数のまま）。 |
+| `extra_web_nodes_omitted` | number | 切り詰め時のみ | `extra_web_nodes` から省略した件数（`max_details` > 0 かつ実件数が上限超のとき）。 |
+| `mismatched_nodes` | object[] | 非空時のみ | tolerance 超過の不一致ペア。`figma_name` / `web_selector` / `diff` / `dx` / `dy` / `dw` / `dh` / `space`（`relative` = 親ボックス比、`absolute` = 生 px。`dx`/`dw` の単位はこの値に従う。`details` の幾何差分と同じ数値）。`max_details` > 0 のときは先頭からその件数までに切り詰め。 |
+| `mismatched_pairs` | object[] | 非空時のみ | 不一致ペア（tolerance 超過と Web 候補枯渇の両方）。`figma_name` / `reason`（`exceeds_tolerance` \| `no_unused_web_elements`）。超過時は `web_selector` / `geometric_diff` / `tolerance` / `space`（`relative` \| `absolute`）も付く。`max_details` > 0 のときは先頭からその件数までに切り詰め。 |
+| `mismatched_pairs_omitted` | number | 切り詰め時のみ | `mismatched_pairs` から省略した件数（`max_details` > 0 かつ実件数が上限超のとき）。 |
 | `zero_geometry_warning` | string | 非空時のみ | 過半数ノードの `w`/`h` が 0 のときの誤用検出。 |
 | `unresolved_parent_refs` | string[] | 非空時のみ | 解決できない `parent` 参照。 |
 

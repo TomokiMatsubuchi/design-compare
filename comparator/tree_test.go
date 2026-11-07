@@ -1198,6 +1198,66 @@ func TestLimitLayoutTreeDetails(t *testing.T) {
 	})
 }
 
+func TestLimitLayoutTreeStructured(t *testing.T) {
+	newResult := func() *LayoutTreeResult {
+		return &LayoutTreeResult{
+			MismatchedPairs: []MismatchPair{
+				{FigmaName: "a", Reason: "exceeds_tolerance"},
+				{FigmaName: "b", Reason: "exceeds_tolerance"},
+				{FigmaName: "c", Reason: "no_unused_web_elements"},
+				{FigmaName: "d", Reason: "exceeds_tolerance"},
+			},
+			MismatchedNodes: []MismatchedNode{
+				{FigmaName: "a"},
+				{FigmaName: "b"},
+				{FigmaName: "d"},
+			},
+			ExtraWebNodes: []string{".x", ".y", ".z"},
+			IgnoredNodes:  []string{"figma:1", "web:#ad"},
+			IgnoredCount:  2,
+		}
+	}
+
+	t.Run("max_details_2_truncates_arrays_and_reports_omitted", func(t *testing.T) {
+		result := newResult()
+		pairsOmitted, extraOmitted := LimitLayoutTreeStructured(result, 2)
+		if pairsOmitted != 2 {
+			t.Errorf("pairsOmitted=%d, want 2", pairsOmitted)
+		}
+		if extraOmitted != 1 {
+			t.Errorf("extraOmitted=%d, want 1", extraOmitted)
+		}
+		if len(result.MismatchedPairs) != 2 {
+			t.Fatalf("mismatched_pairs=%d, want 2", len(result.MismatchedPairs))
+		}
+		if result.MismatchedPairs[0].FigmaName != "a" || result.MismatchedPairs[1].FigmaName != "b" {
+			t.Errorf("expected first two pairs kept, got %#v", result.MismatchedPairs)
+		}
+		if len(result.MismatchedNodes) != 2 {
+			t.Fatalf("mismatched_nodes=%d, want 2", len(result.MismatchedNodes))
+		}
+		if len(result.ExtraWebNodes) != 2 {
+			t.Fatalf("extra_web_nodes=%d, want 2", len(result.ExtraWebNodes))
+		}
+		// ignored_nodes は監査用のため切り詰めない
+		if len(result.IgnoredNodes) != 2 || result.IgnoredCount != 2 {
+			t.Errorf("ignored_nodes should stay intact, got %v count=%d", result.IgnoredNodes, result.IgnoredCount)
+		}
+	})
+
+	t.Run("unspecified_or_zero_keeps_all", func(t *testing.T) {
+		result := newResult()
+		pairsOmitted, extraOmitted := LimitLayoutTreeStructured(result, 0)
+		if pairsOmitted != 0 || extraOmitted != 0 {
+			t.Errorf("omitted should be 0, got pairs=%d extra=%d", pairsOmitted, extraOmitted)
+		}
+		if len(result.MismatchedPairs) != 4 || len(result.MismatchedNodes) != 3 || len(result.ExtraWebNodes) != 3 {
+			t.Fatalf("expected no truncation, got pairs=%d nodes=%d extra=%d",
+				len(result.MismatchedPairs), len(result.MismatchedNodes), len(result.ExtraWebNodes))
+		}
+	})
+}
+
 // TestLayoutTree_IgnoredNodes verifies that ignore_nodes / ignore_region
 // collect machine-readable identifiers (figma:<id>, web:<selector>) whose
 // length matches IgnoredCount, including the skipped early-return path.
