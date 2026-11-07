@@ -333,7 +333,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		dw, _ := mn["dw"].(float64)
 		dh, _ := mn["dh"].(float64)
 		diff, _ := mn["diff"].(float64)
-		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (relative to the parent box; dx/dw are ratios: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (relative: figma (px): x=%g y=%g w=%g h=%g / web (px): x=%g y=%g w=%g h=%g; dx: %.2f (ratio), dy: %.2f (ratio), dw: %.2f (ratio), dh: %.2f (ratio))",
 			diff, 0.15, 600.0, 10.0, 380.0, 80.0, 200.0, 10.0, 380.0, 80.0, dx, dy, dw, dh)
 		detailsMismatch, _ := resultMismatch["details"].([]interface{})
 		foundGeom := false

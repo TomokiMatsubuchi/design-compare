@@ -412,12 +412,13 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
 			bestWeb := wNodes[bestMatchIdx]
 			space := "relative"
-			spaceLabel := "relative to the parent box; dx/dw are ratios"
+			unit := "ratio"
 			if bestAbs {
 				space = "absolute"
-				spaceLabel = "absolute px"
+				unit = "px"
 			}
-			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (%s: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, spaceLabel, fn.X, fn.Y, fn.W, fn.H, bestWeb.X, bestWeb.Y, bestWeb.W, bestWeb.H, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			// figma/web の bbox は常に絶対 px。dx/dy/dw/dh だけ比較空間に応じ ratio か px。
+			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (%s: figma (px): x=%g y=%g w=%g h=%g / web (px): x=%g y=%g w=%g h=%g; dx: %.2f (%s), dy: %.2f (%s), dw: %.2f (%s), dh: %.2f (%s))", fn.Name, bestMatchSelector, minDiff, tolerance, space, fn.X, fn.Y, fn.W, fn.H, bestWeb.X, bestWeb.Y, bestWeb.W, bestWeb.H, bestDiffX, unit, bestDiffY, unit, bestDiffW, unit, bestDiffH, unit))
 			mismatchedNodes = append(mismatchedNodes, MismatchedNode{
 				FigmaName:   fn.Name,
 				WebSelector: bestMatchSelector,
