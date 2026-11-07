@@ -39,7 +39,7 @@
 - `generate_diff` を `false` に指定した場合は差分画像の PNG/base64 化を行わず、`diff_image` は空文字列で返されます。差分マスク自体はメモリ上で計算するため、`diff_regions` は `generate_diff=true` のときと同じく返ります（巨大な base64 を避けつつ位置情報だけ得る用途向け）。
 - `diff_on_mismatch` を `true` に指定した場合、判定が `success` なら `diff_image` は空文字列、`mismatch` なら差分画像が返されます。
 - `diff_image_content` を `true` に指定し、かつ `diff_image` が空でない場合、MCP 応答の `content[0]`（JSON テキスト）の後に `image/png` の image コンテンツが付きます。既定は `false` で、既存クライアントは `content[0]` だけを読めば足ります。
-- 差分ピクセルがある場合、応答に機械可読な `diff_regions`（例: `[{"x": 0, "y": 0, "w": 100, "h": 100, "diff_pixels": 10000}]`）が付きます。pixelmatch 差分ラスタの赤いピクセルを 4 近傍連結成分に分割し、bounding box と差分ピクセル数を算出します。差分ピクセル数の多い順に最大 10 件で、座標は画像のピクセル座標です。黄色いアンチエイリアス除外ピクセルは含めません。`generate_diff=false` でも返します。
+- 差分ピクセルがある場合、応答に機械可読な `diff_regions`（例: `[{"x": 0, "y": 0, "w": 100, "h": 100, "diff_pixels": 10000}]`）が付きます。pixelmatch 差分ラスタの赤いピクセルを 4 近傍連結成分に分割し、bounding box と差分ピクセル数を算出します。差分ピクセル数の多い順に最大 10 件で、座標は画像のピクセル座標です。黄色いアンチエイリアス除外ピクセルは含めません。`generate_diff=false` でも返します。連結成分が 11 件以上あるときは `diff_regions_total` に切り詰め前の総数を付けます（ちょうど 10 件以下のときは省略）。
 
 ### `layout_integrity` モードの検査内容とレスポンス
 
@@ -255,7 +255,8 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 | `ignored_regions` | number | ○ | パースできた `ignore_region` の件数。 |
 | `warnings` | string[] | 条件付き | 両画像が単色ベタ塗りで差分 0 のとき（空洞比較）、および `min_match` のみ指定し `max_diff_pixels` を省略したうえで既定 0 が判定を支配して `mismatch` になったとき（既定 0 が判定を支配する旨。合格時は付けない）。 |
 | `out_of_bounds_regions` | string[] | 非空時のみ | 画像と交差しない `ignore_region`。 |
-| `diff_regions` | object[] | 非空時のみ | 赤い差分ピクセルの bounding box（`generate_diff=false` でも返す）。 |
+| `diff_regions` | object[] | 非空時のみ | 赤い差分ピクセルの bounding box（`generate_diff=false` でも返す）。差分ピクセル数の多い順に最大 10 件。 |
+| `diff_regions_total` | number | 切り詰め時のみ | `diff_regions` の切り詰め前の連結成分総数（11 件以上のとき）。 |
 | `max_diff_pixels` | number | ○ | 判定に使った許容差分ピクセル数（省略時は既定 0）。 |
 
 ### `layout_integrity`
