@@ -1402,6 +1402,145 @@ func TestVRTUnifiedCompare(t *testing.T) {
 	})
 
 	// =================================================================
+	// 2.10c. layout_tree モード: max_details で mismatched_pairs 等も切り詰める
+	// =================================================================
+	t.Run("LayoutTree_MaxDetails_StructuredArrays", func(t *testing.T) {
+		// exceeds_tolerance のペアは usedWeb に入らないため、ずれノードだけでは
+		// extra_web_nodes が膨れる。pairs と extras は別フィクスチャで検証する。
+		t.Run("mismatched_pairs", func(t *testing.T) {
+			figmaLayout := `[
+				{"id": "1", "name": "a", "x": 0, "y": 0, "w": 100, "h": 40},
+				{"id": "2", "name": "b", "x": 0, "y": 50, "w": 100, "h": 40},
+				{"id": "3", "name": "c", "x": 0, "y": 100, "w": 100, "h": 40},
+				{"id": "4", "name": "d", "x": 0, "y": 150, "w": 100, "h": 40}
+			]`
+			webLayout := `[
+				{"selector": "#a", "x": 80, "y": 0, "w": 100, "h": 40},
+				{"selector": "#b", "x": 80, "y": 50, "w": 100, "h": 40},
+				{"selector": "#c", "x": 80, "y": 100, "w": 100, "h": 40},
+				{"selector": "#d", "x": 80, "y": 150, "w": 100, "h": 40}
+			]`
+
+			reqAll := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.01,
+					},
+				},
+			}
+			resAll, err := compareDesignHandler(context.Background(), reqAll)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultAll map[string]interface{}
+			json.Unmarshal([]byte(resAll.Content[0].(mcp.TextContent).Text), &resultAll)
+			pairsAll, ok := resultAll["mismatched_pairs"].([]interface{})
+			if !ok || len(pairsAll) != 4 {
+				t.Fatalf("Expected 4 mismatched_pairs without cap, got %v", resultAll["mismatched_pairs"])
+			}
+			if _, ok := resultAll["mismatched_pairs_omitted"]; ok {
+				t.Errorf("mismatched_pairs_omitted should be absent without cap, got %v", resultAll["mismatched_pairs_omitted"])
+			}
+
+			reqCap := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.01,
+						"max_details":  2.0,
+					},
+				},
+			}
+			resCap, err := compareDesignHandler(context.Background(), reqCap)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultCap map[string]interface{}
+			json.Unmarshal([]byte(resCap.Content[0].(mcp.TextContent).Text), &resultCap)
+
+			pairsCap, ok := resultCap["mismatched_pairs"].([]interface{})
+			if !ok || len(pairsCap) != 2 {
+				t.Fatalf("Expected 2 mismatched_pairs with max_details=2, got %v", resultCap["mismatched_pairs"])
+			}
+			if got := resultCap["mismatched_pairs_omitted"]; got != float64(2) {
+				t.Errorf("mismatched_pairs_omitted=%v, want 2", got)
+			}
+			nodesCap, ok := resultCap["mismatched_nodes"].([]interface{})
+			if !ok || len(nodesCap) != 2 {
+				t.Fatalf("Expected 2 mismatched_nodes with max_details=2, got %v", resultCap["mismatched_nodes"])
+			}
+		})
+
+		t.Run("extra_web_nodes", func(t *testing.T) {
+			// 全ペア一致 + 余分 Web 3 件 → extra_web_nodes だけが切り詰め対象
+			figmaLayout := `[
+				{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100}
+			]`
+			webLayout := `[
+				{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+				{"selector": ".extra1", "x": 0, "y": 200, "w": 10, "h": 10},
+				{"selector": ".extra2", "x": 20, "y": 200, "w": 10, "h": 10},
+				{"selector": ".extra3", "x": 40, "y": 200, "w": 10, "h": 10}
+			]`
+
+			reqAll := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.15,
+					},
+				},
+			}
+			resAll, err := compareDesignHandler(context.Background(), reqAll)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultAll map[string]interface{}
+			json.Unmarshal([]byte(resAll.Content[0].(mcp.TextContent).Text), &resultAll)
+			extraAll, ok := resultAll["extra_web_nodes"].([]interface{})
+			if !ok || len(extraAll) != 3 {
+				t.Fatalf("Expected 3 extra_web_nodes without cap, got %v", resultAll["extra_web_nodes"])
+			}
+
+			reqCap := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.15,
+						"max_details":  2.0,
+					},
+				},
+			}
+			resCap, err := compareDesignHandler(context.Background(), reqCap)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultCap map[string]interface{}
+			json.Unmarshal([]byte(resCap.Content[0].(mcp.TextContent).Text), &resultCap)
+
+			extraCap, ok := resultCap["extra_web_nodes"].([]interface{})
+			if !ok || len(extraCap) != 2 {
+				t.Fatalf("Expected 2 extra_web_nodes with max_details=2, got %v", resultCap["extra_web_nodes"])
+			}
+			if got := resultCap["extra_web_nodes_omitted"]; got != float64(1) {
+				t.Errorf("extra_web_nodes_omitted=%v, want 1", got)
+			}
+			if got := resultCap["extra_web_count"]; got != float64(3) {
+				t.Errorf("extra_web_count=%v, want 3 (full count)", got)
+			}
+		})
+	})
+
+	// =================================================================
 	// 2.11. layout_tree モード: threshold=0 / pass_rate=0 は有効値
 	// =================================================================
 	t.Run("LayoutTree_ZeroThresholdAndPassRate", func(t *testing.T) {
