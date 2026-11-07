@@ -211,29 +211,29 @@ func decodeImageError(what string, err error) error {
 // 成功時の 6 番目の戻り値は比較した画像の寸法 ("WxH")。ensureSameSize 後の
 // 同一サイズなので A/B を分けず image_size として応答へ echo できる。
 // diffCount>0 のとき、7 番目に赤ピクセルの連結成分 bounding box (最大 10 件)
-// を返す (generateDiff の真偽に依らない)。
-// 8 番目は warnings。diffCount==0 かつマスク後の両画像が単色ベタ塗りのとき、
+// を返し、8 番目に切り詰め前の総数を返す (generateDiff の真偽に依らない)。
+// 9 番目は warnings。diffCount==0 かつマスク後の両画像が単色ベタ塗りのとき、
 // 空洞比較の可能性を status / match_rate は変えずに通知する (Issue #227)。
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, []string, error) {
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, int, []string, error) {
 	if err := ValidateImageSizeLimit(imgABytes, "design image"); err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, err
+		return 0, 0, 0, "", nil, "", nil, 0, nil, err
 	}
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("design image", err)
+		return 0, 0, 0, "", nil, "", nil, 0, nil, decodeImageError("design image", err)
 	}
 
 	if err := ValidateImageSizeLimit(imgBBytes, "web screenshot"); err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, err
+		return 0, 0, 0, "", nil, "", nil, 0, nil, err
 	}
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("web screenshot", err)
+		return 0, 0, 0, "", nil, "", nil, 0, nil, decodeImageError("web screenshot", err)
 	}
 
 	normA, normB, err := ensureSameSize(imgA, imgB)
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, err
+		return 0, 0, 0, "", nil, "", nil, 0, nil, err
 	}
 
 	bounds := normA.Bounds()
@@ -242,13 +242,13 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 	// 0次元画像は totalPixels=0 となり一致率計算が0除算 (NaN) になるため、
 	// 明示的なエラーとして報告する。
 	if w == 0 || h == 0 {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
 	}
 	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーや
 	// pixelmatch の差分画像による追加確保の前に修復可能なエラーとして弾く
 	// (ensureSameSize 済みのため両画像の寸法は同一)。
 	if err := dimensionLimitError("image", w, h); err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, err
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, err
 	}
 	totalPixels := w * h
 
@@ -280,7 +280,7 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 
 	diffCount, err := pixelmatch.MatchPixel(normA, normB, opts...)
 	if err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("pixelmatch error: %w", err)
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, fmt.Errorf("pixelmatch error: %w", err)
 	}
 
 	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
@@ -300,35 +300,38 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 
 	// 差分があるとき赤ピクセルの連結成分を返す (generate_diff に依らない)。
 	// 黄 (アンチエイリアス除外) は差分カウント対象外のため領域にも含めない。
+	// regionsTotal は maxDiffRegions での切り詰め前の総数 (Issue #573)。
 	var regions []DiffRegion
+	var regionsTotal int
 	if diffCount > 0 {
-		regions = collectDiffRegions(diffImg)
+		regions, regionsTotal = collectDiffRegions(diffImg)
 	}
 
 	if !generateDiff {
-		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, regions, warnings, nil
+		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, regions, regionsTotal, warnings, nil
 	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, diffImg); err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, warnings, nil
+	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, regionsTotal, warnings, nil
 }
 
 // collectDiffRegions は差分画像の赤ピクセルを 4 近傍連結成分に分割し、
 // bounding box とピクセル数を差分ピクセル数の多い順（同数なら y, x）に最大
-// maxDiffRegions 件返す。座標は画像原点からのピクセル座標。
-func collectDiffRegions(img image.Image) []DiffRegion {
+// maxDiffRegions 件返す。戻り値の int は切り詰め前の連結成分総数
+// (Issue #573)。座標は画像原点からのピクセル座標。
+func collectDiffRegions(img image.Image) ([]DiffRegion, int) {
 	if img == nil {
-		return nil
+		return nil, 0
 	}
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
 	if w == 0 || h == 0 {
-		return nil
+		return nil, 0
 	}
 
 	visited := make([]bool, w*h)
@@ -396,13 +399,14 @@ func collectDiffRegions(img image.Image) []DiffRegion {
 		}
 		return regions[i].X < regions[j].X
 	})
+	total := len(regions)
 	if len(regions) > maxDiffRegions {
 		regions = regions[:maxDiffRegions]
 	}
 	if len(regions) == 0 {
-		return nil
+		return nil, 0
 	}
-	return regions
+	return regions, total
 }
 
 // CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and, when

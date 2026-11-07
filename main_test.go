@@ -4334,6 +4334,48 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if regionOff["diff_pixels"] != float64(10000) {
 			t.Errorf("Expected diff_pixels=10000 with generate_diff=false, got %v", regionOff["diff_pixels"])
 		}
+		if _, ok := result["diff_regions_total"]; ok {
+			t.Errorf("diff_regions_total should be omitted when not truncated, got %v", result["diff_regions_total"])
+		}
+	})
+
+	// Issue #573: 11 連結成分の差分は diff_regions を 10 件に切り詰め、
+	// 切り詰め前総数を diff_regions_total で通知する。
+	t.Run("StrictMode_DiffRegionsTotal_WhenTruncated", func(t *testing.T) {
+		white := color.RGBA{255, 255, 255, 255}
+		black := color.RGBA{0, 0, 0, 255}
+		imgWhite := generateSolidImage(40, 4, white)
+		imgDots := image.NewRGBA(image.Rect(0, 0, 40, 4))
+		draw.Draw(imgDots, imgDots.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+		for i := 0; i < 11; i++ {
+			imgDots.SetRGBA(i*2, 0, black)
+		}
+		pathWhite := saveTempImage(t, tmpDir, "diff-regions-total-white.png", imgWhite)
+		pathDots := saveTempImage(t, tmpDir, "diff-regions-total-dots.png", imgDots)
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "strict",
+					"image_path_a":  pathWhite,
+					"image_path_b":  pathDots,
+					"generate_diff": false,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		raw, ok := result["diff_regions"].([]interface{})
+		if !ok || len(raw) != 10 {
+			t.Fatalf("Expected 10 diff_regions after cap, got %v", result["diff_regions"])
+		}
+		if got := result["diff_regions_total"]; got != float64(11) {
+			t.Errorf("diff_regions_total=%v, want 11", got)
+		}
 	})
 
 	// diff_on_mismatch=true: 同一画像の success では空、色差 mismatch では生成する

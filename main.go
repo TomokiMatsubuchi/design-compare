@@ -1066,7 +1066,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, warnings, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, diffRegionsTotal, warnings, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -1140,8 +1140,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		// 赤ピクセルの bounding box。generate_diff=false でも in-memory マスクから返す
 		// (Issue #187 / #499)。差分ピクセル数の多い順に最大 10 件。
+		// 切り詰め前の総数は diff_regions_total として、上限超過時のみ返す
+		// (Issue #573。layout_integrity の issue_count と同様に実件数を残す)。
 		if len(diffRegions) > 0 {
 			responseMap["diff_regions"] = diffRegions
+			if diffRegionsTotal > len(diffRegions) {
+				responseMap["diff_regions_total"] = diffRegionsTotal
+			}
 		}
 
 	case "layout_integrity":
