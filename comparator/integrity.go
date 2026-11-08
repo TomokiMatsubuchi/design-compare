@@ -30,10 +30,15 @@ const (
 const layoutSlopPx = 1.0
 
 // LayoutIssue は検出した 1 件の崩れ。Type は viewport_overflow_x または parent_overflow。
+// Edge / OverflowPx は修正量を文字列パースなしで読めるよう数値で返す（Issue #578）。
+// ParentSelector は parent_overflow のときのみ。
 type LayoutIssue struct {
-	Type     string `json:"type"`
-	Selector string `json:"selector"`
-	Detail   string `json:"detail"`
+	Type           string  `json:"type"`
+	Selector       string  `json:"selector"`
+	Detail         string  `json:"detail"`
+	Edge           string  `json:"edge"`                      // left | right | top | bottom
+	OverflowPx     float64 `json:"overflow_px"`               // はみ出し量（正の px）
+	ParentSelector string  `json:"parent_selector,omitempty"` // parent_overflow のみ
 }
 
 type LayoutIntegrityResult struct {
@@ -329,10 +334,16 @@ func viewportOverflowX(wn WebNode, viewportW float64) (LayoutIssue, bool) {
 	switch {
 	case left < -layoutSlopPx:
 		detail := fmt.Sprintf("selector %q overflows the left edge of the viewport (x=%.2f, viewport_width=%.0f)", wn.Selector, left, viewportW)
-		return LayoutIssue{Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail}, true
+		return LayoutIssue{
+			Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail,
+			Edge: "left", OverflowPx: -left,
+		}, true
 	case right > viewportW+layoutSlopPx:
 		detail := fmt.Sprintf("selector %q overflows the right edge of the viewport (right=%.2f, viewport_width=%.0f)", wn.Selector, right, viewportW)
-		return LayoutIssue{Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail}, true
+		return LayoutIssue{
+			Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail,
+			Edge: "right", OverflowPx: right - viewportW,
+		}, true
 	default:
 		return LayoutIssue{}, false
 	}
@@ -352,20 +363,23 @@ func parentOverflow(wn WebNode, bySelector map[string]*WebNode) (LayoutIssue, bo
 	cRight, cBottom := wn.X+wn.W, wn.Y+wn.H
 
 	var side string
-	var childEdge, parentEdge float64
+	var childEdge, parentEdge, overflowPx float64
 	switch {
 	case cLeft < pLeft-layoutSlopPx:
-		side, childEdge, parentEdge = "left", cLeft, pLeft
+		side, childEdge, parentEdge, overflowPx = "left", cLeft, pLeft, pLeft-cLeft
 	case cRight > pRight+layoutSlopPx:
-		side, childEdge, parentEdge = "right", cRight, pRight
+		side, childEdge, parentEdge, overflowPx = "right", cRight, pRight, cRight-pRight
 	case cTop < pTop-layoutSlopPx:
-		side, childEdge, parentEdge = "top", cTop, pTop
+		side, childEdge, parentEdge, overflowPx = "top", cTop, pTop, pTop-cTop
 	case cBottom > pBottom+layoutSlopPx:
-		side, childEdge, parentEdge = "bottom", cBottom, pBottom
+		side, childEdge, parentEdge, overflowPx = "bottom", cBottom, pBottom, cBottom-pBottom
 	default:
 		return LayoutIssue{}, false
 	}
 	detail := fmt.Sprintf("selector %q overflows its parent %q on the %s (child=%.2f, parent=%.2f)",
 		wn.Selector, parent.Selector, side, childEdge, parentEdge)
-	return LayoutIssue{Type: "parent_overflow", Selector: wn.Selector, Detail: detail}, true
+	return LayoutIssue{
+		Type: "parent_overflow", Selector: wn.Selector, Detail: detail,
+		Edge: side, OverflowPx: overflowPx, ParentSelector: parent.Selector,
+	}, true
 }
