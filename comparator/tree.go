@@ -56,6 +56,14 @@ type MismatchPair struct {
 	Space         string   `json:"space,omitempty"` // "relative" | "absolute"（超過時のみ）
 }
 
+// MatchedPair は layout_tree で tolerance 以内に一致した Figma/Web ペアを
+// 機械可読に返す。details の "Matched: '<figma>' ↔ '<selector>'" と同じ対応を
+// 文字列パースなしで扱うためのフィールド。
+type MatchedPair struct {
+	FigmaName   string `json:"figma_name"`
+	WebSelector string `json:"web_selector"`
+}
+
 type LayoutTreeResult struct {
 	MatchRate              float64          `json:"match_rate"`
 	Status                 string           `json:"status"`
@@ -70,6 +78,7 @@ type LayoutTreeResult struct {
 	ExtraWebNodes          []string         `json:"extra_web_nodes,omitempty"`
 	MismatchedNodes        []MismatchedNode `json:"mismatched_nodes,omitempty"`
 	MismatchedPairs        []MismatchPair   `json:"mismatched_pairs,omitempty"`
+	MatchedPairs           []MatchedPair    `json:"matched_pairs,omitempty"`
 	ZeroGeometryWarning    string           `json:"zero_geometry_warning,omitempty"`
 	UnresolvedParentRefs   []string         `json:"unresolved_parent_refs,omitempty"`
 	AbsoluteModePairs      int              `json:"absolute_mode_pairs"`
@@ -325,6 +334,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var totalCompared int
 	var absoluteModePairs int
 	var matchedPairDetails []string
+	var matchedPairs []MatchedPair
 	var mismatchDetails []string
 	var extraWebDetails []string
 	var mismatchedNodes []MismatchedNode
@@ -397,7 +407,12 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				usedWeb[bestMatchIdx] = true
 			}
 			// 一致したペア（Figmaノード名 ↔ Webセレクタ）を details に出力する。
+			// 同じ対応を matched_pairs でも返し、文字列パースなしで扱えるようにする。
 			matchedPairDetails = append(matchedPairDetails, fmt.Sprintf("Matched: '%s' ↔ '%s'", fn.Name, bestMatchSelector))
+			matchedPairs = append(matchedPairs, MatchedPair{
+				FigmaName:   fn.Name,
+				WebSelector: bestMatchSelector,
+			})
 		} else if bestMatchIdx == -1 {
 			// 比較候補（未使用のWebノード）が残っていないケース（Web側のノードがFigma側より少ない等）。
 			// このとき bestMatchSelector / minDiff は初期値（空文字・math.MaxFloat64）のまま意味を
@@ -496,6 +511,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		ExtraWebNodes:          extraWebSelectors,
 		MismatchedNodes:        mismatchedNodes,
 		MismatchedPairs:        mismatchedPairs,
+		MatchedPairs:           matchedPairs,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
 		AbsoluteModePairs:      absoluteModePairs,
