@@ -89,6 +89,12 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if portrait.Status != "mismatch" || portrait.IssueCount < 1 || portrait.Issues[0].Type != "viewport_overflow_x" {
 			t.Fatalf("portrait: %#v", portrait)
 		}
+		if portrait.Issues[0].Edge != "right" || portrait.Issues[0].OverflowPx != 132 {
+			t.Errorf("portrait edge/overflow: edge=%q overflow_px=%g, want right/132", portrait.Issues[0].Edge, portrait.Issues[0].OverflowPx)
+		}
+		if portrait.Issues[0].ParentSelector != "" {
+			t.Errorf("viewport_overflow_x must omit parent_selector, got %q", portrait.Issues[0].ParentSelector)
+		}
 
 		landscape, err := CheckLayoutIntegrity(web, 1024, 768, nil, nil)
 		if err != nil {
@@ -108,6 +114,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "mismatch" || res.IssueCount < 1 || res.Issues[0].Type != "viewport_overflow_x" {
 			t.Fatalf("got %#v", res)
 		}
+		if res.Issues[0].Edge != "right" || res.Issues[0].OverflowPx != 76 {
+			t.Errorf("edge/overflow: edge=%q overflow_px=%g, want right/76", res.Issues[0].Edge, res.Issues[0].OverflowPx)
+		}
 	})
 
 	t.Run("negative_x_overflow", func(t *testing.T) {
@@ -118,6 +127,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if res.Status != "mismatch" || res.Issues[0].Type != "viewport_overflow_x" {
 			t.Fatalf("got %#v", res)
+		}
+		if res.Issues[0].Edge != "left" || res.Issues[0].OverflowPx != 10 {
+			t.Errorf("edge/overflow: edge=%q overflow_px=%g, want left/10", res.Issues[0].Edge, res.Issues[0].OverflowPx)
 		}
 	})
 
@@ -151,6 +163,12 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		for _, issue := range res.Issues {
 			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
 				found = true
+				if issue.Edge != "right" || issue.OverflowPx != 100 {
+					t.Errorf("parent_overflow edge/overflow: edge=%q overflow_px=%g, want right/100", issue.Edge, issue.OverflowPx)
+				}
+				if issue.ParentSelector != "#card" {
+					t.Errorf("parent_selector=%q, want #card", issue.ParentSelector)
+				}
 			}
 			if issue.Type == "viewport_overflow_x" {
 				t.Errorf("unexpected viewport overflow: %#v", issue)
