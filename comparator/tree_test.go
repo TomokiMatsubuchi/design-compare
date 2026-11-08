@@ -355,6 +355,74 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_MatchedPairs verifies that tolerance 以内の一致ペアが
+// MatchedPairs（figma_name / web_selector）に構造化され、0 件時は空のままになる。
+func TestLayoutTree_MatchedPairs(t *testing.T) {
+	t.Run("all_match", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"},
+			{"id":"3","name":"nav","x":600,"y":10,"w":380,"h":80,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"},
+			{"selector":".nav","x":600,"y":10,"w":380,"h":80,"parent":"#header"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.MatchedNodes != 3 {
+			t.Fatalf("Expected 3 matched nodes, got %d", result.MatchedNodes)
+		}
+		want := []MatchedPair{
+			{FigmaName: "header", WebSelector: "#header"},
+			{FigmaName: "logo", WebSelector: ".logo"},
+			{FigmaName: "nav", WebSelector: ".nav"},
+		}
+		if len(result.MatchedPairs) != len(want) {
+			t.Fatalf("Expected %d matched_pairs, got %#v", len(want), result.MatchedPairs)
+		}
+		for i, mp := range result.MatchedPairs {
+			if mp != want[i] {
+				t.Errorf("matched_pairs[%d]=%#v, want %#v", i, mp, want[i])
+			}
+		}
+		// details の Matched 行も従来どおり残る。
+		for _, pair := range want {
+			needle := fmt.Sprintf("Matched: '%s' ↔ '%s'", pair.FigmaName, pair.WebSelector)
+			found := false
+			for _, d := range result.Details {
+				if strings.Contains(d, needle) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Expected details to contain %q, got %v", needle, result.Details)
+			}
+		}
+	})
+
+	t.Run("no_matches_empty", func(t *testing.T) {
+		figmaJSON := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100}]`
+		webJSON := `[{"selector":".B","x":500,"y":500,"w":100,"h":100}]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.MatchedNodes != 0 {
+			t.Fatalf("Expected 0 matched nodes, got %d", result.MatchedNodes)
+		}
+		if len(result.MatchedPairs) != 0 {
+			t.Errorf("Expected empty matched_pairs when none match, got %#v", result.MatchedPairs)
+		}
+	})
+}
+
 // TestLayoutTree_DetailsOrderPutsFailuresFirst verifies that after the
 // summary line, mismatch and extra-Web rows come before matched pairs so
 // failures are not buried behind hundreds of "Matched: …" lines.

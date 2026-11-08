@@ -270,6 +270,25 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := resultMatch["mismatched_pairs"]; ok {
 			t.Errorf("Expected no mismatched_pairs when all pairs match, got %v", resultMatch["mismatched_pairs"])
 		}
+		// 一致ペアが matched_pairs に構造化されることの検証（figma_name / web_selector）
+		matchedPairs, ok := resultMatch["matched_pairs"].([]interface{})
+		if !ok || len(matchedPairs) != 3 {
+			t.Fatalf("Expected 3 matched_pairs, got %v", resultMatch["matched_pairs"])
+		}
+		wantMatched := []struct{ name, sel string }{
+			{"header", "#header"},
+			{"logo", ".logo"},
+			{"nav", ".nav"},
+		}
+		for i, want := range wantMatched {
+			mp, ok := matchedPairs[i].(map[string]interface{})
+			if !ok {
+				t.Fatalf("Expected matched_pairs[%d] object, got %v", i, matchedPairs[i])
+			}
+			if mp["figma_name"] != want.name || mp["web_selector"] != want.sel {
+				t.Errorf("matched_pairs[%d]=%v, want figma_name=%s web_selector=%s", i, mp, want.name, want.sel)
+			}
+		}
 		// 一致ペアが details に出力されることの検証
 		detailsMatch, ok := resultMatch["details"].([]interface{})
 		if !ok {
@@ -312,6 +331,11 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := resultMismatch["total_nodes"]; got != float64(3) {
 			t.Errorf("Expected total_nodes=3, got %v", got)
+		}
+		// 不一致でも一致した 2 ペアは matched_pairs に残る
+		matchedOnMismatch, ok := resultMismatch["matched_pairs"].([]interface{})
+		if !ok || len(matchedOnMismatch) != 2 {
+			t.Fatalf("Expected 2 matched_pairs on partial match, got %v", resultMismatch["matched_pairs"])
 		}
 		mismatched, ok := resultMismatch["mismatched_nodes"].([]interface{})
 		if !ok || len(mismatched) != 1 {
@@ -1142,6 +1166,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if got := result2["matched_nodes"]; got != float64(0) {
 			t.Errorf("Expected matched_nodes=0, got %v", got)
+		}
+		if _, ok := result2["matched_pairs"]; ok {
+			t.Errorf("Expected no matched_pairs when matched_nodes=0, got %v", result2["matched_pairs"])
 		}
 
 		// ケース3: Figma側だけサイズ0の親（絶対座標モード）、Web側は通常の親。

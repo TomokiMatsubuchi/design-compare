@@ -793,6 +793,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if pairsOmitted > 0 {
 			responseMap["mismatched_pairs_omitted"] = pairsOmitted
 		}
+		// 一致ペアを構造化して返す（0件時は省略）。details の Matched 行と同じ対応。
+		if len(treeResult.MatchedPairs) > 0 {
+			responseMap["matched_pairs"] = treeResult.MatchedPairs
+		}
 		// width/height などキー名の揺れで幾何が全て 0 になると一致率 100% になるため、
 		// unmatched_ignores と同様に誤用検出のフィードバックを載せる（status は非破壊）。
 		if treeResult.ZeroGeometryWarning != "" {
