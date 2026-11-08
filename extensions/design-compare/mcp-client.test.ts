@@ -24,6 +24,7 @@ const realBinary = join(repoDir, "design-compare");
 let workDir: string;
 let hangingServer: string;
 let silentExitServer: string;
+let initErrorServer: string;
 
 /** Count live processes spawned from a given stub path. */
 function liveStubs(path: string): number {
@@ -99,6 +100,12 @@ before(() => {
   hangingServer = writeStub("hanging-server", "cat > /dev/null\nsleep 5");
   // Closes stdout immediately without producing a JSON-RPC reply.
   silentExitServer = writeStub("silent-exit-server", "echo 'boom' >&2\nexit 3");
+  // Returns an initialize (id=1) JSON-RPC error then hangs; the client must
+  // reject on that frame instead of waiting for the tools/call timeout.
+  initErrorServer = writeStub(
+    "init-error-server",
+    `printf '%s\\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad init"}}'\ncat > /dev/null\nsleep 5`,
+  );
 
   redA = writePng("red-a.png", 64, 64, () => [255, 0, 0]);
   redB = writePng("red-b.png", 64, 64, () => [255, 0, 0]);
@@ -155,6 +162,15 @@ test("surfaces stderr when the server exits before replying", async () => {
     callCompareDesign({ binaryPath: silentExitServer, args: { mode: "layout_tree" }, cwd: workDir, timeoutMs: 10_000 }),
     /exited with code 3.*boom/s,
   );
+});
+
+test("rejects immediately on an initialize JSON-RPC error frame", async () => {
+  await assert.rejects(
+    callCompareDesign({ binaryPath: initErrorServer, args: { mode: "layout_tree" }, cwd: workDir, timeoutMs: 60_000 }),
+    /^Error: bad init$/,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(liveStubs(initErrorServer), 0, "errored child must be killed");
 });
 
 test("preserves Japanese UTF-8 when stdout chunks split mid-character", async () => {
