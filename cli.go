@@ -7,10 +7,39 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// mcpParamToCLIFlag は compare_design の MCP パラメータ名と CLI フラグの対応表。
+// ツールエラー本文が MCP 名のまま出るとき、stderr へ CLI 側の直し方を追記する。
+// mode は英語エラー文 ("… mode …") に誤マッチしやすいため載せない。
+var mcpParamToCLIFlag = map[string]string{
+	"image_path_a":      "--image-a",
+	"image_path_b":      "--image-b",
+	"image_a_base64":    "--image-a-base64",
+	"image_b_base64":    "--image-b-base64",
+	"figma_layout":      "--figma-layout",
+	"web_layout":        "--web-layout",
+	"figma_layout_path": "--figma-layout-file",
+	"web_layout_path":   "--web-layout-file",
+	"threshold":         "--threshold",
+	"min_match":         "--min-match",
+	"pass_rate":         "--pass-rate",
+	"max_diff_pixels":   "--max-diff-pixels",
+	"include_aa":        "--include-aa",
+	"ignore_region":     "--ignore-region",
+	"generate_diff":     "--generate-diff",
+	"viewport_preset":   "--viewport-preset",
+	"viewport_width":    "--viewport-width",
+	"viewport_height":   "--viewport-height",
+	"ignore_nodes":      "--ignore-nodes",
+	"count_extra_web":   "--count-extra-web",
+	"max_details":       "--max-details",
+	"diff_on_mismatch":  "--diff-on-mismatch",
+}
 
 const (
 	exitSuccess  = 0
@@ -47,7 +76,9 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		Params: mcp.CallToolParams{Arguments: toolArgs},
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		msg := err.Error()
+		fmt.Fprintln(stderr, msg)
+		writeCLIParamHints(stderr, msg)
 		return exitError
 	}
 
@@ -56,10 +87,30 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		// stdout を JSON としてパースする呼び出し側に非 JSON テキストが混入するのを
 		// 防ぐため、エラー本文は stderr へ出す (終了コード 1 で検知できる)。
 		fmt.Fprintln(stderr, text)
+		writeCLIParamHints(stderr, text)
 		return exitError
 	}
 	fmt.Fprintln(stdout, text)
 	return exitCodeFromResultJSON(text)
+}
+
+// writeCLIParamHints はエラー本文に MCP パラメータ名が含まれるときだけ、
+// 対応する CLI フラグを hint 行として追記する。CI のワンショット検証で
+// MCP 名のままリトライして無駄打ちしないための案内。
+func writeCLIParamHints(w io.Writer, msg string) {
+	var params []string
+	for param := range mcpParamToCLIFlag {
+		if strings.Contains(msg, param) {
+			params = append(params, param)
+		}
+	}
+	if len(params) == 0 {
+		return
+	}
+	sort.Strings(params)
+	for _, param := range params {
+		fmt.Fprintf(w, "hint: CLI flag is %s\n", mcpParamToCLIFlag[param])
+	}
 }
 
 // writeUsage は CLI の使い方を w へ書く。明示ヘルプは stdout、パース／検証エラーは stderr。

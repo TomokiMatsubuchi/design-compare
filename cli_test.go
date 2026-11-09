@@ -394,6 +394,85 @@ func TestRunCLIErrorExit(t *testing.T) {
 	}
 }
 
+// TestRunCLIParamHints はツールエラー本文の MCP パラメータ名に対し、
+// 対応する CLI フラグの hint 行が stderr に付くことを確認する (Issue #589)。
+func TestRunCLIParamHints(t *testing.T) {
+	tmp := t.TempDir()
+	pathA := saveTempImage(t, tmp, "a.png", generateSolidImage(8, 8, color.White))
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "strict",
+		"--image-a", pathA,
+	}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("strict without image-b: expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "either image_path_b or image_b_base64 is required") {
+		t.Errorf("expected missing image-b error, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "hint: CLI flag is --image-b") {
+		t.Errorf("expected --image-b hint, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "hint: CLI flag is --image-b-base64") {
+		t.Errorf("expected --image-b-base64 hint, got %q", errOut)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLIWithIO([]string{
+		"--mode", "layout_tree",
+		"--min-match", "90",
+	}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("layout_tree with --min-match: expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	errOut = stderr.String()
+	if !strings.Contains(errOut, "parameter 'min_match' is not supported in mode 'layout_tree'") {
+		t.Errorf("expected min_match unsupported error, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "use 'pass_rate' instead") {
+		t.Errorf("expected pass_rate alternative, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "hint: CLI flag is --min-match") {
+		t.Errorf("expected --min-match hint, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "hint: CLI flag is --pass-rate") {
+		t.Errorf("expected --pass-rate hint, got %q", errOut)
+	}
+}
+
+func TestWriteCLIParamHints(t *testing.T) {
+	var buf bytes.Buffer
+	writeCLIParamHints(&buf, "no mcp params here")
+	if buf.Len() != 0 {
+		t.Errorf("no-op when no params, got %q", buf.String())
+	}
+
+	buf.Reset()
+	writeCLIParamHints(&buf, "parameter 'min_match' is not supported (use 'pass_rate' instead)")
+	got := buf.String()
+	if !strings.Contains(got, "hint: CLI flag is --min-match\n") {
+		t.Errorf("missing --min-match hint: %q", got)
+	}
+	if !strings.Contains(got, "hint: CLI flag is --pass-rate\n") {
+		t.Errorf("missing --pass-rate hint: %q", got)
+	}
+	// mode は英語文に誤マッチさせない
+	buf.Reset()
+	writeCLIParamHints(&buf, "Strict mode input error: something")
+	if buf.Len() != 0 {
+		t.Errorf("must not hint on bare English 'mode', got %q", buf.String())
+	}
+}
+
 func TestRunCLIHelpStdout(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{"--help"}, &stdout, &stderr)
