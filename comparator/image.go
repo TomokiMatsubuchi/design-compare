@@ -145,12 +145,20 @@ func gifHeaderDimensions(data []byte) (w, h int, ok bool) {
 	return int(binary.LittleEndian.Uint16(data[6:8])), int(binary.LittleEndian.Uint16(data[8:10])), true
 }
 
+// decodeImageConfig は画像ヘッダだけを読み image.Config を返す。
+// CheckImageHeaderSize / ValidateImageSizeLimit が同じ DecodeConfig 結果を
+// 共有し、辺上限と総画素上限を二重パースせず判定できるようにする (Issue #599)。
+func decodeImageConfig(data []byte) (image.Config, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return cfg, err
+}
+
 // CheckImageHeaderSize は画像ヘッダ (DecodeConfig) だけを読んで寸法上限を検査する。
 // #158 の maxImageDimension (8192) をフルデコード前に適用し、圧縮爆弾的な
 // PNG がピクセルバッファを確保する前に修復可能なエラーで弾く (Issue #273)。
 // ヘッダが読めない場合は nil を返し、後続の image.Decode に任せる。
 func CheckImageHeaderSize(data []byte, label string) error {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, err := decodeImageConfig(data)
 	if err != nil {
 		return nil
 	}
@@ -158,16 +166,17 @@ func CheckImageHeaderSize(data []byte, label string) error {
 }
 
 // ValidateImageSizeLimit はヘッダだけ読んで幅・高さを確認し、上限を超えていれば
-// フルデコードせずエラーを返す。先に CheckImageHeaderSize (8192) を適用し、
-// 各辺が比較上限内でも総画素が大きすぎる画像は #237 の画素上限で弾く。
-// ヘッダが読めない場合は nil を返し、後続の image.Decode に既存の形式・破損エラーを任せる。
+// フルデコードせずエラーを返す。1 回の DecodeConfig 結果で先に #158 の辺上限
+// (8192) を適用し、各辺が比較上限内でも総画素が大きすぎる画像は #237 の画素
+// 上限で弾く。ヘッダが読めない場合は nil を返し、後続の image.Decode に既存の
+// 形式・破損エラーを任せる。
 func ValidateImageSizeLimit(data []byte, label string) error {
-	if err := CheckImageHeaderSize(data, label); err != nil {
-		return err
-	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, err := decodeImageConfig(data)
 	if err != nil {
 		return nil
+	}
+	if err := dimensionLimitError(label, cfg.Width, cfg.Height); err != nil {
+		return err
 	}
 	w, h := cfg.Width, cfg.Height
 	pixels := int64(w) * int64(h)
