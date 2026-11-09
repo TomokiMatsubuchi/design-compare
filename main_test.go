@@ -5798,7 +5798,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatalf("Expected decode error for text image A, got content=%v", res.Content[0].(mcp.TextContent).Text)
 			}
 			got := res.Content[0].(mcp.TextContent).Text
-			if !strings.Contains(got, "Failed to decode image A") {
+			if !strings.Contains(got, "failed to decode image A") {
 				t.Errorf("Expected image A decode error, got %q", got)
 			}
 			if !strings.Contains(got, formatsHint) {
@@ -5854,7 +5854,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatalf("Expected decode error for empty image B, got content=%v", res.Content[0].(mcp.TextContent).Text)
 			}
 			got := res.Content[0].(mcp.TextContent).Text
-			if !strings.Contains(got, "Failed to decode image B") {
+			if !strings.Contains(got, "failed to decode image B") {
 				t.Errorf("Expected image B decode error, got %q", got)
 			}
 			if !strings.Contains(got, formatsHint) {
@@ -6855,8 +6855,8 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 		pathA, pathB string
 		wantMsg      string
 	}{
-		{"svg_as_image_A", svgPath, pngPath, "Failed to decode image A"},
-		{"svg_as_image_B", pngPath, svgPath, "Failed to decode image B"},
+		{"svg_as_image_A", svgPath, pngPath, "failed to decode image A"},
+		{"svg_as_image_B", pngPath, svgPath, "failed to decode image B"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{
@@ -6927,7 +6927,7 @@ func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 		t.Fatalf("expected decode error for corrupted PNG, got content=%v", res.Content[0].(mcp.TextContent).Text)
 	}
 	got := res.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(got, "Failed to decode image A") {
+	if !strings.Contains(got, "failed to decode image A") {
 		t.Errorf("expected decode error prefix, got %q", got)
 	}
 	if strings.Contains(got, comparator.UnsupportedImageFormatHint) {

@@ -184,16 +184,22 @@ func ValidateImageSizeLimit(data []byte, label string) error {
 // 1 箇所で済むようにする。
 const UnsupportedImageFormatHint = "(supported: PNG, JPEG, GIF, WebP; SVG and animated WebP are not supported)"
 
-// decodeImageError は image.Decode の失敗エラーに "failed to decode <画像>" の
-// コンテキストを付けて返す。対応外の画像形式 (image.ErrFormat) のときだけ
-// UnsupportedImageFormatHint を付ける。PNG/JPEG/GIF/WebP だが破損・途中切れの
-// ファイル (例: unexpected EOF) では「SVG and animated WebP are not supported」
-// と読める文面が原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
-func decodeImageError(what string, err error) error {
+// DecodeImageErrorMessage は image.Decode の失敗メッセージを組み立てる。
+// 対応外の画像形式 (image.ErrFormat) のときだけ UnsupportedImageFormatHint を
+// 付ける。PNG/JPEG/GIF/WebP だが破損・途中切れのファイル (例: unexpected EOF)
+// では「SVG and animated WebP are not supported」と読める文面が原因を形式違い
+// だと誤認させるため、ヒントは付けない (Issue #122)。strict / perceptual の
+// 案内文面を揃えるため、文字列版をこの 1 箇所に集約する (Issue #592)。
+func DecodeImageErrorMessage(what string, err error) string {
 	if errors.Is(err, image.ErrFormat) {
-		return fmt.Errorf("failed to decode %s: %w %s", what, err, UnsupportedImageFormatHint)
+		return fmt.Sprintf("failed to decode %s: %v %s", what, err, UnsupportedImageFormatHint)
 	}
-	return fmt.Errorf("failed to decode %s: %w", what, err)
+	return fmt.Sprintf("failed to decode %s: %v", what, err)
+}
+
+// decodeImageError は DecodeImageErrorMessage の error 版。
+func decodeImageError(what string, err error) error {
+	return errors.New(DecodeImageErrorMessage(what, err))
 }
 
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
