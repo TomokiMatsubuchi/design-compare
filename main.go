@@ -649,6 +649,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	// GetBool は変換不能値を黙って false にするので、他の真偽引数と同様 boolArg で読む。
+	// 比較完了後だと不正値でも重い比較をやり切ってしまうため、モード分岐前に検証する (Issue #591)。
+	diffOnMismatch, err := boolArg(request, "diff_on_mismatch", false)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	diffImageContent, err := boolArg(request, "diff_image_content", false)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
 	var responseMap map[string]interface{}
 
 	switch mode {
@@ -1301,11 +1312,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 	// 成功時は差分画像が不要な呼び出し向け: 合否確定後に diff_image だけ空にする。
 	// comparator は変更せず、generate_diff の既存挙動 (未指定時は生成) を保つ。
-	// GetBool は変換不能値を黙って false にするので、他の真偽引数と同様 boolArg で読む (Issue #419)。
-	diffOnMismatch, err := boolArg(request, "diff_on_mismatch", false)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
+	// diff_on_mismatch / diff_image_content は冒頭で boolArg 済み。
 	if diffOnMismatch {
 		if status, _ := responseMap["status"].(string); status == "success" {
 			if _, ok := responseMap["diff_image"]; ok {
@@ -1322,10 +1329,6 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 	// MCP クライアントが差分 PNG をネイティブ描画できるよう、オプトイン時だけ
 	// JSON テキストの後に image コンテンツを付ける。content[0] は従来どおり JSON。
-	diffImageContent, err := boolArg(request, "diff_image_content", false)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
 	if diffImageContent {
 		if diffImage, _ := responseMap["diff_image"].(string); diffImage != "" {
 			if payload, ok := pngPayloadFromDiffImage(diffImage); ok {

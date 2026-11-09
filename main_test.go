@@ -6731,6 +6731,18 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "diff_on_mismatch": "yes"},
 			want: "argument 'diff_on_mismatch' must be a boolean",
 		},
+		{
+			// Issue #591: GetBool なら黙って false になり比較後に大きな diff が返る
+			name: "diff_on_mismatch maybe",
+			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "diff_on_mismatch": "maybe"},
+			want: "argument 'diff_on_mismatch' must be a boolean",
+		},
+		{
+			// Issue #591: オブジェクトも変換不能として比較前に拒否する
+			name: "diff_image_content object",
+			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "diff_image_content": map[string]any{}},
+			want: "argument 'diff_image_content' must be a boolean",
+		},
 	}
 
 	for _, tc := range cases {
@@ -6765,7 +6777,7 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 		}
 	})
 
-	// Issue #419: bool / ParseBool 可能な文字列は受け付け、success 時は diff_image を空にする
+	// Issue #419 / #591: bool / ParseBool 可能な文字列は受け付け、success 時は diff_image を空にする
 	for _, tc := range []struct {
 		name string
 		val  any
@@ -6798,6 +6810,26 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			}
 		})
 	}
+
+	// Issue #591: 不正な真偽値は画像読込より前に拒否する（比較を走らせない）
+	t.Run("diff_on_mismatch maybe rejects before image load", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":             "perceptual",
+			"image_path_a":     "/nonexistent/a.png",
+			"image_path_b":     "/nonexistent/b.png",
+			"diff_on_mismatch": "maybe",
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatal("Expected IsError for diff_on_mismatch=maybe")
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "argument 'diff_on_mismatch' must be a boolean") {
+			t.Errorf("Expected boolean error before image load, got %q", got)
+		}
+	})
 }
 
 // TestPerceptualDecodeErrorListsSupportedFormats verifies that perceptual-mode
