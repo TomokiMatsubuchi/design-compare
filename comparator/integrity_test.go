@@ -95,6 +95,10 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if portrait.Issues[0].ParentSelector != "" {
 			t.Errorf("viewport_overflow_x must omit parent_selector, got %q", portrait.Issues[0].ParentSelector)
 		}
+		wantNode := LayoutIssueNode{X: 0, Y: 0, W: 900, H: 100}
+		if portrait.Issues[0].Node != wantNode {
+			t.Errorf("portrait node=%#v, want %#v", portrait.Issues[0].Node, wantNode)
+		}
 
 		landscape, err := CheckLayoutIntegrity(web, 1024, 768, nil, nil)
 		if err != nil {
@@ -102,6 +106,31 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if landscape.Status != "success" || landscape.IssueCount != 0 {
 			t.Fatalf("landscape should succeed for 900px width, got %#v", landscape)
+		}
+	})
+
+	// Issue #603: right=812 / viewport_width=768 → overflow_px=44, edge=right, node 付き。
+	t.Run("right_812_overflow_px_44", func(t *testing.T) {
+		web := `[{"selector":".card","x":0,"y":10,"w":812,"h":120}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" || res.IssueCount != 1 || res.Issues[0].Type != "viewport_overflow_x" {
+			t.Fatalf("got %#v", res)
+		}
+		if res.Issues[0].Edge != "right" || res.Issues[0].OverflowPx != 44 {
+			t.Errorf("edge/overflow: edge=%q overflow_px=%g, want right/44", res.Issues[0].Edge, res.Issues[0].OverflowPx)
+		}
+		wantNode := LayoutIssueNode{X: 0, Y: 10, W: 812, H: 120}
+		if res.Issues[0].Node != wantNode {
+			t.Errorf("node=%#v, want %#v", res.Issues[0].Node, wantNode)
+		}
+		if res.Issues[0].ParentSelector != "" {
+			t.Errorf("viewport_overflow_x must omit parent_selector, got %q", res.Issues[0].ParentSelector)
+		}
+		if !strings.Contains(res.Issues[0].Detail, "right=812.00") || !strings.Contains(res.Issues[0].Detail, "viewport_width=768") {
+			t.Errorf("detail should keep right=812.00 / viewport_width=768 wording, got %q", res.Issues[0].Detail)
 		}
 	})
 
@@ -168,6 +197,10 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 				}
 				if issue.ParentSelector != "#card" {
 					t.Errorf("parent_selector=%q, want #card", issue.ParentSelector)
+				}
+				wantNode := LayoutIssueNode{X: 0, Y: 0, W: 500, H: 50}
+				if issue.Node != wantNode {
+					t.Errorf("parent_overflow node=%#v, want %#v", issue.Node, wantNode)
 				}
 			}
 			if issue.Type == "viewport_overflow_x" {

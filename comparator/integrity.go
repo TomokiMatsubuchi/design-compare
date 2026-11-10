@@ -29,16 +29,26 @@ const (
 // 0.5px 程度のはみ出しは描画ノイズであり、1.0px を超えたものだけを崩れとみなす。
 const layoutSlopPx = 1.0
 
+// LayoutIssueNode は崩れを起こした Web ノードの Bounding Box（CSS px）。
+// detail 文面をパースせず座標を読めるようにする（Issue #603）。
+type LayoutIssueNode struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
 // LayoutIssue は検出した 1 件の崩れ。Type は viewport_overflow_x または parent_overflow。
 // Edge / OverflowPx は修正量を文字列パースなしで読めるよう数値で返す（Issue #578）。
-// ParentSelector は parent_overflow のときのみ。
+// Node は対象ノードの x/y/w/h（Issue #603）。ParentSelector は parent_overflow のときのみ。
 type LayoutIssue struct {
-	Type           string  `json:"type"`
-	Selector       string  `json:"selector"`
-	Detail         string  `json:"detail"`
-	Edge           string  `json:"edge"`                      // left | right | top | bottom
-	OverflowPx     float64 `json:"overflow_px"`               // はみ出し量（正の px）
-	ParentSelector string  `json:"parent_selector,omitempty"` // parent_overflow のみ
+	Type           string          `json:"type"`
+	Selector       string          `json:"selector"`
+	Detail         string          `json:"detail"`
+	Edge           string          `json:"edge"`                      // left | right | top | bottom
+	OverflowPx     float64         `json:"overflow_px"`               // はみ出し量（正の px）
+	Node           LayoutIssueNode `json:"node"`                      // 対象ノードの Bounding Box
+	ParentSelector string          `json:"parent_selector,omitempty"` // parent_overflow のみ
 }
 
 type LayoutIntegrityResult struct {
@@ -328,6 +338,10 @@ func viewportPresetNote(viewportW, viewportH float64) string {
 	return ""
 }
 
+func layoutIssueNode(wn WebNode) LayoutIssueNode {
+	return LayoutIssueNode{X: wn.X, Y: wn.Y, W: wn.W, H: wn.H}
+}
+
 func viewportOverflowX(wn WebNode, viewportW float64) (LayoutIssue, bool) {
 	left := wn.X
 	right := wn.X + wn.W
@@ -336,13 +350,13 @@ func viewportOverflowX(wn WebNode, viewportW float64) (LayoutIssue, bool) {
 		detail := fmt.Sprintf("selector %q overflows the left edge of the viewport (x=%.2f, viewport_width=%.0f)", wn.Selector, left, viewportW)
 		return LayoutIssue{
 			Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail,
-			Edge: "left", OverflowPx: -left,
+			Edge: "left", OverflowPx: -left, Node: layoutIssueNode(wn),
 		}, true
 	case right > viewportW+layoutSlopPx:
 		detail := fmt.Sprintf("selector %q overflows the right edge of the viewport (right=%.2f, viewport_width=%.0f)", wn.Selector, right, viewportW)
 		return LayoutIssue{
 			Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail,
-			Edge: "right", OverflowPx: right - viewportW,
+			Edge: "right", OverflowPx: right - viewportW, Node: layoutIssueNode(wn),
 		}, true
 	default:
 		return LayoutIssue{}, false
@@ -380,6 +394,7 @@ func parentOverflow(wn WebNode, bySelector map[string]*WebNode) (LayoutIssue, bo
 		wn.Selector, parent.Selector, side, childEdge, parentEdge)
 	return LayoutIssue{
 		Type: "parent_overflow", Selector: wn.Selector, Detail: detail,
-		Edge: side, OverflowPx: overflowPx, ParentSelector: parent.Selector,
+		Edge: side, OverflowPx: overflowPx, Node: layoutIssueNode(wn),
+		ParentSelector: parent.Selector,
 	}, true
 }
