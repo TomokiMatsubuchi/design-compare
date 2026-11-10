@@ -1901,7 +1901,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Errorf("got %q", gotBad)
 		}
 
-		// ネイティブ単一オブジェクトは 1 要素配列として受理し、比較が通る
+		// ネイティブ単一オブジェクトは配列必須の明示エラーにする
+		// ({"nodes":[...]} のような API レスポンス全体との曖昧さを避け、
+		// かつては 1 要素配列へ包んでいたが明示拒否に揃えた)。
 		figmaOne := map[string]any{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100}
 		webOne := map[string]any{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100}
 		reqNativeObj := mcp.CallToolRequest{
@@ -1917,17 +1919,19 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handler failed: %v", err)
 		}
-		if resNativeObj.IsError {
-			t.Fatalf("Expected native JSON objects to compare, got error: %v", resNativeObj.Content[0].(mcp.TextContent).Text)
+		if !resNativeObj.IsError {
+			t.Fatal("expected IsError when figma_layout/web_layout are native JSON objects")
 		}
-		var resultNativeObj map[string]interface{}
-		json.Unmarshal([]byte(resNativeObj.Content[0].(mcp.TextContent).Text), &resultNativeObj)
-		if resultNativeObj["status"] != "success" || resultNativeObj["match_rate"] != "100.00%" {
-			t.Errorf("Expected success and 100%% match with native objects, got status=%v, rate=%v", resultNativeObj["status"], resultNativeObj["match_rate"])
+		gotNativeObj := resNativeObj.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotNativeObj, "figma_layout") || !strings.Contains(gotNativeObj, "array") {
+			t.Errorf("got %q", gotNativeObj)
+		}
+		if strings.Contains(gotNativeObj, "cannot unmarshal") || strings.Contains(gotNativeObj, "[]json.RawMessage") {
+			t.Errorf("error should not expose Go internal type name: %q", gotNativeObj)
 		}
 
-		// 必須キーの無いネイティブ object は 1 要素配列へ包んだうえで、後段のキー検証エラーになる
-		// (Marshal して後段の cannot unmarshal object に落とさない)。
+		// {"nodes":[...]} のようなラッパー object も同様に配列必須エラー
+		// (1 要素配列へ包んだうえで後段のキー検証に落とさない)。
 		reqObject := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
@@ -1944,24 +1948,24 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("handler failed: %v", err)
 		}
 		if !resObject.IsError {
-			t.Fatal("expected IsError when figma_layout object lacks required node keys")
+			t.Fatal("expected IsError when figma_layout is a wrapper object")
 		}
 		gotObject := resObject.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(gotObject, "missing required field") {
+		if !strings.Contains(gotObject, "figma_layout") || !strings.Contains(gotObject, "array") {
 			t.Errorf("got %q", gotObject)
 		}
-		if strings.Contains(gotObject, "cannot unmarshal") {
-			t.Errorf("expected required-key validation, not Go unmarshal error: %q", gotObject)
+		if strings.Contains(gotObject, "cannot unmarshal") || strings.Contains(gotObject, "missing required field") {
+			t.Errorf("expected array-required error, not unwrap/unmarshal path: %q", gotObject)
 		}
 	})
 
 	// =================================================================
-	// 2.12e. layout_tree モード: オブジェクトの JSON 文字列は配列必須の明示エラー
+	// 2.12e. layout_tree モード: オブジェクト入力は配列必須の明示エラー
 	// =================================================================
-	// ネイティブ object は 1 要素配列として受理するが、オブジェクト文字列は
-	// 比較側が配列しか受け付けないため「配列が必要」と分かる文言にする。
-	// かつては []json.RawMessage 向け Unmarshal の内部型名エラーだった。
-	t.Run("LayoutTree_JSONObjectStringRejected", func(t *testing.T) {
+	// ネイティブ object / オブジェクト文字列はいずれも配列しか受け付けないため
+	// 「配列が必要」と分かる文言にする。かつては []json.RawMessage 向け
+	// Unmarshal の内部型名エラー、または 1 要素配列への包み込みだった。
+	t.Run("LayoutTree_JSONObjectRejected", func(t *testing.T) {
 		webOK := `[{"selector":"#c","x":0,"y":0,"w":10,"h":10}]`
 		figmaOK := `[{"id":"1","name":"c","x":0,"y":0,"w":10,"h":10}]`
 
@@ -1988,6 +1992,24 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				},
 				want: "web_layout must be a JSON array of node objects",
 			},
+			{
+				name: "native_figma_object",
+				args: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": map[string]any{"id": "1", "name": "c", "x": 0, "y": 0, "w": 10, "h": 10},
+					"web_layout":   webOK,
+				},
+				want: "figma_layout must be a JSON array of node objects",
+			},
+			{
+				name: "native_web_object",
+				args: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaOK,
+					"web_layout":   map[string]any{"selector": "#c", "x": 0, "y": 0, "w": 10, "h": 10},
+				},
+				want: "web_layout must be a JSON array of node objects",
+			},
 		}
 		for _, c := range cases {
 			t.Run(c.name, func(t *testing.T) {
@@ -1998,7 +2020,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 					t.Fatalf("handler failed: %v", err)
 				}
 				if !res.IsError {
-					t.Fatal("expected IsError for JSON object string layout input")
+					t.Fatal("expected IsError for JSON object layout input")
 				}
 				got := res.Content[0].(mcp.TextContent).Text
 				if !strings.Contains(got, c.want) {
@@ -2566,6 +2588,48 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			gotBad := resBadType.Content[0].(mcp.TextContent).Text
 			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array/object") {
 				t.Errorf("got %q", gotBad)
+			}
+		})
+
+		// ネイティブ object / オブジェクト文字列は layout_tree と同じく配列必須エラー。
+		t.Run("LayoutIntegrity_JSONObjectRejected", func(t *testing.T) {
+			cases := []struct {
+				name string
+				web  any
+			}{
+				{
+					name: "native_object",
+					web:  map[string]any{"selector": "#page", "x": 0, "y": 0, "w": 768, "h": 200},
+				},
+				{
+					name: "string_object",
+					web:  `{"selector":"#page","x":0,"y":0,"w":768,"h":200}`,
+				},
+			}
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					res, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{
+						Params: mcp.CallToolParams{
+							Arguments: map[string]any{
+								"mode":       "layout_integrity",
+								"web_layout": c.web,
+							},
+						},
+					})
+					if err != nil {
+						t.Fatalf("handler failed: %v", err)
+					}
+					if !res.IsError {
+						t.Fatal("expected IsError for JSON object web_layout")
+					}
+					got := res.Content[0].(mcp.TextContent).Text
+					if !strings.Contains(got, "web_layout") || !strings.Contains(got, "array") {
+						t.Errorf("got %q", got)
+					}
+					if strings.Contains(got, "[]json.RawMessage") || strings.Contains(got, "cannot unmarshal") {
+						t.Errorf("error should not expose Go internal type name: %q", got)
+					}
+				})
 			}
 		})
 
