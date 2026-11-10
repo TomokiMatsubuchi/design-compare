@@ -1048,6 +1048,12 @@ func TestLayoutTree_SelfReferentialParentNoFalseMatch(t *testing.T) {
 	if result.Status == "success" {
 		t.Errorf("Expected status not 'success' (false match), got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
 	}
+	// 自己参照は相対化不能のため unresolved_parent_refs にも載せる（誤用検出）。
+	if len(result.UnresolvedParentRefs) != 2 ||
+		result.UnresolvedParentRefs[0] != "Figma: '1'" ||
+		result.UnresolvedParentRefs[1] != "Web: 'A'" {
+		t.Errorf("Expected unresolved_parent_refs=[Figma: '1' Web: 'A'], got %v", result.UnresolvedParentRefs)
+	}
 }
 
 // TestLayoutTree_NegativeWidthHeightIsError verifies that a node with negative

@@ -768,9 +768,11 @@ func getWebParent(node WebNode, bySelector map[string]*WebNode) *WebNode {
 	return bySelector[node.Parent]
 }
 
-// collectUnresolvedParentRefs は parent が空でないのにインデックスから解決できない
-// 参照を列挙する（タイポ・余分な空白など）。合否や座標空間は変えず、
+// collectUnresolvedParentRefs は parent が空でないのに有効な親として使えない
+// 参照を列挙する（タイポ・余分な空白・自己参照など）。合否や座標空間は変えず、
 // unmatched_ignores と同種の誤入力通知に使う。同一ラベルは先勝ちで重複しない。
+// 自己参照はインデックス上は自分自身に当たるが、相対化すると常に一致扱い／
+// parent_overflow が常に無発火になるため、解決不能と同じく報告する。
 func collectUnresolvedParentRefs(fNodes []FigmaNode, wNodes []WebNode, figmaByID map[string]*FigmaNode, webBySelector map[string]*WebNode) []string {
 	var refs []string
 	seen := make(map[string]bool)
@@ -782,12 +784,20 @@ func collectUnresolvedParentRefs(fNodes []FigmaNode, wNodes []WebNode, figmaByID
 		refs = append(refs, label)
 	}
 	for _, fn := range fNodes {
-		if fn.Parent != "" && figmaByID[fn.Parent] == nil {
+		if fn.Parent == "" {
+			continue
+		}
+		// 自己参照は getFigmaParent と同様に無効（相対化すると常に (0,0,1,1)）。
+		if fn.Parent == fn.ID || figmaByID[fn.Parent] == nil {
 			appendRef(fmt.Sprintf("Figma: '%s'", fn.Parent))
 		}
 	}
 	for _, wn := range wNodes {
-		if wn.Parent != "" && webBySelector[wn.Parent] == nil {
+		if wn.Parent == "" {
+			continue
+		}
+		// 自己参照は getWebParent と同様に無効（parent_overflow も常に無発火）。
+		if wn.Parent == wn.Selector || webBySelector[wn.Parent] == nil {
 			appendRef(fmt.Sprintf("Web: '%s'", wn.Parent))
 		}
 	}

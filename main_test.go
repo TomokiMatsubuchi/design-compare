@@ -2433,6 +2433,37 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
+		// Issue #606: 自己参照 parent も unresolved_parent_refs に載せ、非空時のみ応答キーを出す。
+		t.Run("SelfReferentialParentUnresolved", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": `[{"selector":"#self","x":0,"y":0,"w":100,"h":50,"parent":"#self"}]`,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("status must stay success, got %#v", result)
+			}
+			refs, ok := result["unresolved_parent_refs"].([]interface{})
+			if !ok || len(refs) != 1 || refs[0] != "Web: '#self'" {
+				t.Errorf("Expected unresolved_parent_refs=[Web: '#self'], got %v", result["unresolved_parent_refs"])
+			}
+			if result["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", result["parent_checked_nodes"])
+			}
+		})
+
 		// Issue #435: 親の w/h が 0 のとき status は success のまま件数で可視化する。
 		t.Run("ParentOverflowSkippedZeroGeom", func(t *testing.T) {
 			req := mcp.CallToolRequest{
