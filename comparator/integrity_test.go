@@ -238,6 +238,27 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 	})
 
+	t.Run("self_referential_parent_reported", func(t *testing.T) {
+		// parent が自分自身だと包含検査が常に無発火になるため、未解決と同じく報告する。
+		web := `[{"selector":"#self","x":0,"y":0,"w":100,"h":50,"parent":"#self"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IssueCount != 0 {
+			t.Fatalf("got %#v", res)
+		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
+		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#self'" {
+			t.Fatalf("unresolved_parent_refs=%v, want [Web: '#self']", res.UnresolvedParentRefs)
+		}
+		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "1 unresolved parent ref") {
+			t.Fatalf("details should mention unresolved self-ref, got %v", res.Details)
+		}
+	})
+
 	t.Run("no_parent_refs_reports_parent_checked_zero", func(t *testing.T) {
 		// 親キーを持たないフラットな DOM。viewport 内で崩れが無くても parent_overflow は未適用。
 		web := `[{"selector":"#a","x":0,"y":0,"w":768,"h":100},{"selector":"#b","x":10,"y":10,"w":100,"h":50}]`

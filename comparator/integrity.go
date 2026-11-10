@@ -70,8 +70,8 @@ type LayoutIntegrityResult struct {
 	IgnoredNodes           []string `json:"ignored_nodes,omitempty"`
 	UnmatchedIgnores       []string `json:"unmatched_ignores,omitempty"`
 	UnmatchedIgnoreRegions []string `json:"unmatched_ignore_regions,omitempty"`
-	// UnresolvedParentRefs は parent が空でないのに元リスト上のどの selector にも
-	// 一致しない参照。合否は変えず、layout_tree と同形式（Web: '…'）で通知する。
+	// UnresolvedParentRefs は parent が空でないのに有効な親として使えない参照
+	// （入力欠落・自己参照）。合否は変えず、layout_tree と同形式（Web: '…'）で通知する。
 	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
 	// ParentOverflowSkippedZeroGeom は親ノードは入力にあるが w/h が 0 以下のため
 	// parent_overflow をスキップした checkable 子の件数（status は変えない）。
@@ -263,6 +263,12 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 			issues = append(issues, issue)
 		}
 		if wn.Parent == "" {
+			continue
+		}
+		// 自己参照は親解決できても検査が常に無発火になるため、未解決と同じくスキップ
+		// （unresolved_parent_refs へは collectUnresolvedParentRefs が載せる）。
+		if wn.Parent == wn.Selector {
+			skippedUnresolved++
 			continue
 		}
 		if bySelector[wn.Parent] != nil {
