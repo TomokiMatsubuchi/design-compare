@@ -6350,10 +6350,71 @@ func TestResolveImageInput_FileSizeLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected resolveLayoutInput to reject oversized path before read")
 	}
-	wantLayout := fmt.Sprintf("figma_layout_path is too large (%d bytes; limit %d bytes)", overLimit, comparator.MaxInputFileBytes)
+	// レイアウト path は画像の MaxInputFileBytes より先に maxLayoutJSONBytes で弾く (Issue #621)。
+	wantLayout := fmt.Sprintf("figma_layout_path is %d bytes; maximum is %d bytes", overLimit, maxLayoutJSONBytes)
 	if got := err.Error(); got != wantLayout {
 		t.Errorf("layout error: got %q want %q", got, wantLayout)
 	}
+}
+
+// TestResolveLayoutInput_SizeLimit は layout JSON のインライン文字列長と
+// パスファイルサイズが maxLayoutJSONBytes を超えると読み込み前に拒否されることを検証する (Issue #621)。
+func TestResolveLayoutInput_SizeLimit(t *testing.T) {
+	t.Run("oversized_inline", func(t *testing.T) {
+		over := strings.Repeat("x", maxLayoutJSONBytes+1)
+		want := fmt.Sprintf("web_layout is %d bytes; maximum is %d bytes", len(over), maxLayoutJSONBytes)
+		_, err := resolveLayoutInput(over, "", "web_layout", "web_layout_path")
+		if err == nil {
+			t.Fatal("expected resolveLayoutInput to reject oversized inline JSON")
+		}
+		if got := err.Error(); got != want {
+			t.Errorf("error: got %q want %q", got, want)
+		}
+	})
+
+	t.Run("exact_limit_inline_ok", func(t *testing.T) {
+		exact := strings.Repeat("y", maxLayoutJSONBytes)
+		got, err := resolveLayoutInput(exact, "", "figma_layout", "figma_layout_path")
+		if err != nil {
+			t.Fatalf("exact limit should be accepted: %v", err)
+		}
+		if got != exact {
+			t.Fatalf("returned length: got %d want %d", len(got), len(exact))
+		}
+	})
+
+	t.Run("oversized_sparse_file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		bigPath := filepath.Join(tmpDir, "big_layout.json")
+		const overLimit = int64(maxLayoutJSONBytes) + 1
+		f, err := os.Create(bigPath)
+		if err != nil {
+			t.Fatalf("create sparse file: %v", err)
+		}
+		if err := f.Truncate(overLimit); err != nil {
+			f.Close()
+			t.Fatalf("truncate sparse file: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close sparse file: %v", err)
+		}
+		info, err := os.Stat(bigPath)
+		if err != nil {
+			t.Fatalf("stat sparse file: %v", err)
+		}
+		if info.Size() != overLimit {
+			t.Fatalf("sparse file size: got %d want %d", info.Size(), overLimit)
+		}
+
+		want := fmt.Sprintf("web_layout_path is %d bytes; maximum is %d bytes", overLimit, maxLayoutJSONBytes)
+		_, err = resolveLayoutInput("", bigPath, "web_layout", "web_layout_path")
+		if err == nil {
+			t.Fatal("expected resolveLayoutInput to reject oversized path before read")
+		}
+		if got := err.Error(); got != want {
+			t.Errorf("error: got %q want %q", got, want)
+		}
+	})
 }
 
 // TestResolveImageInput_RejectsNonRegularPaths は FIFO やデバイスのように終端が
