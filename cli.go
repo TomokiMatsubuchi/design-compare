@@ -71,6 +71,13 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return exitError
 	}
+	// 必須入力欠落を handler 到達前に CLI フラグ名で案内する。
+	// MCP パラメータ名のまま出すと CLI では直し方が分からないため。
+	mode, _ := toolArgs["mode"].(string)
+	if err := validateCLIRequiredFlags(mode, toolArgs); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitError
+	}
 
 	res, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{Arguments: toolArgs},
@@ -92,6 +99,41 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, text)
 	return exitCodeFromResultJSON(text)
+}
+
+// cliStringArgPresent は parseCLIArgs が map に載せた非空文字列引数の有無を返す。
+func cliStringArgPresent(args map[string]any, key string) bool {
+	v, ok := args[key]
+	if !ok {
+		return false
+	}
+	s, ok := v.(string)
+	return ok && s != ""
+}
+
+// validateCLIRequiredFlags はモードごとの必須入力を CLI フラグ名で案内する。
+// MCP ツール側の "either image_path_a or …" 文面は変えず、CLI 経路だけを置き換える。
+// 未知モードは handler の Unknown comparison mode 案内に委ねる。
+func validateCLIRequiredFlags(mode string, args map[string]any) error {
+	switch mode {
+	case "perceptual", "strict":
+		hasA := cliStringArgPresent(args, "image_path_a") || cliStringArgPresent(args, "image_a_base64")
+		hasB := cliStringArgPresent(args, "image_path_b") || cliStringArgPresent(args, "image_b_base64")
+		if !hasA || !hasB {
+			return fmt.Errorf("%s mode requires --image-a and --image-b (or --image-a-base64 / --image-b-base64)", mode)
+		}
+	case "layout_tree":
+		hasFigma := cliStringArgPresent(args, "figma_layout") || cliStringArgPresent(args, "figma_layout_path")
+		hasWeb := cliStringArgPresent(args, "web_layout") || cliStringArgPresent(args, "web_layout_path")
+		if !hasFigma || !hasWeb {
+			return fmt.Errorf("layout_tree mode requires --figma-layout-file and --web-layout-file (or --figma-layout / --web-layout)")
+		}
+	case "layout_integrity":
+		if !cliStringArgPresent(args, "web_layout") && !cliStringArgPresent(args, "web_layout_path") {
+			return fmt.Errorf("layout_integrity mode requires --web-layout-file (or --web-layout)")
+		}
+	}
+	return nil
 }
 
 // writeCLIParamHints はエラー本文に MCP パラメータ名が含まれるときだけ、
