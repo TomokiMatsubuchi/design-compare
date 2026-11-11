@@ -366,8 +366,29 @@ func TestRunCLIErrorExit(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "Strict mode input error: either image_path_a or image_a_base64 is required") {
-		t.Errorf("expected error text on stderr, got %q", stderr.String())
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "strict mode requires --image-a and --image-b (or --image-a-base64 / --image-b-base64)") {
+		t.Errorf("expected CLI flag required error on stderr, got %q", errOut)
+	}
+	if strings.Contains(errOut, "image_path_a") || strings.Contains(errOut, "image_a_base64") {
+		t.Errorf("CLI required-input error must not use MCP parameter names, got %q", errOut)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLIWithIO([]string{"--mode", "layout_integrity"}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("layout_integrity without web layout: expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	errOut = stderr.String()
+	if !strings.Contains(errOut, "layout_integrity mode requires --web-layout-file (or --web-layout)") {
+		t.Errorf("expected layout_integrity CLI flag error, got %q", errOut)
+	}
+	if strings.Contains(errOut, "web_layout_path") || strings.Contains(errOut, "either web_layout") {
+		t.Errorf("CLI required-input error must not use MCP parameter names, got %q", errOut)
 	}
 
 	stdout.Reset()
@@ -379,7 +400,7 @@ func TestRunCLIErrorExit(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("stdout must stay empty when --mode is missing, got %s", stdout.String())
 	}
-	errOut := stderr.String()
+	errOut = stderr.String()
 	if !strings.Contains(errOut, "--mode is required") {
 		t.Errorf("stderr should say --mode is required, got %q", errOut)
 	}
@@ -394,38 +415,96 @@ func TestRunCLIErrorExit(t *testing.T) {
 	}
 }
 
+func TestValidateCLIRequiredFlags(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		args    map[string]any
+		wantErr string
+	}{
+		{
+			name:    "strict missing both",
+			mode:    "strict",
+			args:    map[string]any{"mode": "strict"},
+			wantErr: "strict mode requires --image-a and --image-b (or --image-a-base64 / --image-b-base64)",
+		},
+		{
+			name: "perceptual accepts base64",
+			mode: "perceptual",
+			args: map[string]any{
+				"mode":           "perceptual",
+				"image_a_base64": "aaa",
+				"image_b_base64": "bbb",
+			},
+		},
+		{
+			name:    "layout_tree missing both",
+			mode:    "layout_tree",
+			args:    map[string]any{"mode": "layout_tree"},
+			wantErr: "layout_tree mode requires --figma-layout-file and --web-layout-file (or --figma-layout / --web-layout)",
+		},
+		{
+			name: "layout_tree accepts inline",
+			mode: "layout_tree",
+			args: map[string]any{
+				"mode":         "layout_tree",
+				"figma_layout": "[]",
+				"web_layout":   "[]",
+			},
+		},
+		{
+			name:    "layout_integrity missing web",
+			mode:    "layout_integrity",
+			args:    map[string]any{"mode": "layout_integrity"},
+			wantErr: "layout_integrity mode requires --web-layout-file (or --web-layout)",
+		},
+		{
+			name: "unknown mode deferred",
+			mode: "nope",
+			args: map[string]any{"mode": "nope"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateCLIRequiredFlags(tc.mode, tc.args)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("got %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestRunCLIParamHints はツールエラー本文の MCP パラメータ名に対し、
 // 対応する CLI フラグの hint 行が stderr に付くことを確認する (Issue #589)。
+// 必須入力欠落は validateCLIRequiredFlags が先に止めるため、hint 対象は
+// 必須入力を満たしたうえでの別エラー (未対応パラメータ等) に限る。
 func TestRunCLIParamHints(t *testing.T) {
 	tmp := t.TempDir()
-	pathA := saveTempImage(t, tmp, "a.png", generateSolidImage(8, 8, color.White))
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+	figmaPath := filepath.Join(tmp, "figma.json")
+	webPath := filepath.Join(tmp, "web.json")
+	if err := os.WriteFile(figmaPath, []byte(figma), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(webPath, []byte(web), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{
-		"--mode", "strict",
-		"--image-a", pathA,
-	}, &stdout, &stderr)
-	if code != exitError {
-		t.Fatalf("strict without image-b: expected exit 1, got %d stderr=%s", code, stderr.String())
-	}
-	if stdout.Len() != 0 {
-		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
-	}
-	errOut := stderr.String()
-	if !strings.Contains(errOut, "either image_path_b or image_b_base64 is required") {
-		t.Errorf("expected missing image-b error, got %q", errOut)
-	}
-	if !strings.Contains(errOut, "hint: CLI flag is --image-b") {
-		t.Errorf("expected --image-b hint, got %q", errOut)
-	}
-	if !strings.Contains(errOut, "hint: CLI flag is --image-b-base64") {
-		t.Errorf("expected --image-b-base64 hint, got %q", errOut)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = runCLIWithIO([]string{
 		"--mode", "layout_tree",
+		"--figma-layout-file", figmaPath,
+		"--web-layout-file", webPath,
 		"--min-match", "90",
 	}, &stdout, &stderr)
 	if code != exitError {
@@ -434,7 +513,7 @@ func TestRunCLIParamHints(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
 	}
-	errOut = stderr.String()
+	errOut := stderr.String()
 	if !strings.Contains(errOut, "parameter 'min_match' is not supported in mode 'layout_tree'") {
 		t.Errorf("expected min_match unsupported error, got %q", errOut)
 	}
