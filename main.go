@@ -270,16 +270,32 @@ func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 	}
 }
 
+// maxLayoutJSONBytes は layout JSON（インライン文字列・パスファイル）のバイト上限 (32 MiB)。
+// 画像 path の MaxInputFileBytes (512 MiB) より厳しく、巨大な中間 JSON を
+// Unmarshal 前に弾いて stdio サーバーの OOM を防ぐ (Issue #621)。
+const maxLayoutJSONBytes = 32 << 20
+
 // resolveLayoutInput returns the layout JSON from either an inline JSON string or
 // a local file path (exactly one must be provided, mirroring resolveImageInput).
-// パス入力は readLocalFile で通常ファイルかつ MaxInputFileBytes 以内に制限する。
+// インラインは文字列バイト長、パスは os.Stat のサイズを maxLayoutJSONBytes で検査する。
+// パスは続けて readLocalFile で通常ファイル判定も行う。
 func resolveLayoutInput(inlineValue, pathValue, inlineParam, pathParam string) (string, error) {
 	switch {
 	case inlineValue != "" && pathValue != "":
 		return "", fmt.Errorf("only one of %s and %s can be specified", inlineParam, pathParam)
 	case inlineValue != "":
+		if len(inlineValue) > maxLayoutJSONBytes {
+			return "", fmt.Errorf("%s is %d bytes; maximum is %d bytes", inlineParam, len(inlineValue), maxLayoutJSONBytes)
+		}
 		return inlineValue, nil
 	case pathValue != "":
+		info, err := os.Stat(pathValue)
+		if err != nil {
+			return "", fmt.Errorf("failed to read %s: %w", pathParam, err)
+		}
+		if info.Size() > maxLayoutJSONBytes {
+			return "", fmt.Errorf("%s is %d bytes; maximum is %d bytes", pathParam, info.Size(), maxLayoutJSONBytes)
+		}
 		data, err := readLocalFile(pathValue, pathParam)
 		if err != nil {
 			return "", err
