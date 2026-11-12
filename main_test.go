@@ -2806,7 +2806,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
-		// Issue #527: max_details で issues / details を切り詰める（issue_count は実件数のまま）
+		// Issue #629: max_details で details のみ切り詰め（issues / issue_count は実件数のまま）
 		t.Run("MaxDetails", func(t *testing.T) {
 			manyOverflow := `[
 				{"selector":"#a","x":0,"y":0,"w":900,"h":50},
@@ -2890,9 +2890,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected details array, got %v", resultCap["details"])
 			}
-			// summary + 2 kept issue details + omit line
-			if len(detailsCap) != 4 {
-				t.Fatalf("Expected summary + 2 issues + omit line, got %d: %v", len(detailsCap), detailsCap)
+			// layout_tree と同じ LimitLayoutTreeDetails: 先頭 max_details 件 + omit 行
+			if len(detailsCap) != 3 {
+				t.Fatalf("Expected 2 kept details + omit line, got %d: %v", len(detailsCap), detailsCap)
 			}
 			summary, _ := detailsCap[0].(string)
 			if !strings.Contains(summary, "Found 3 layout issues") {
@@ -2906,16 +2906,16 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Errorf("Expected the first issue detail to survive truncation, got %q", kept)
 			}
 			omit, _ := detailsCap[len(detailsCap)-1].(string)
-			if omit != "... and 1 more issues omitted (max_details=2)" {
+			if omit != "... and 2 more details omitted (max_details=2)" {
 				t.Errorf("Expected omit line, got %q", omit)
 			}
-			// issue_count は実件数のまま（合否判定は変えない）
+			// issue_count / issues は実件数のまま（合否判定は変えない）
 			if resultCap["issue_count"] != float64(3) {
 				t.Errorf("issue_count should remain full, got %v", resultCap["issue_count"])
 			}
 			issues, _ := resultCap["issues"].([]interface{})
-			if len(issues) != 2 {
-				t.Errorf("issues should be truncated to max_details, got %d", len(issues))
+			if len(issues) != 3 {
+				t.Errorf("issues should remain complete, got %d", len(issues))
 			}
 		})
 	})

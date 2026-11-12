@@ -120,7 +120,7 @@ func newCompareDesignTool() mcp.Tool {
 		),
 		mcp.WithNumber("max_details",
 			mcp.Min(0),
-			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines / issues / structured array entries to return (default 0 = unlimited). When greater than 0, the summary line is kept first, remaining details are truncated to this count, and a final omit line is appended ('... and N more details omitted' in layout_tree; '... and N more issues omitted' in layout_integrity). In 'layout_tree', mismatched_pairs / mismatched_nodes / extra_web_nodes are truncated to the same cap with mismatched_pairs_omitted / extra_web_nodes_omitted reporting how many were dropped (ignored_nodes is not truncated so it stays aligned with ignored_count). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'issues' is truncated to the same cap while 'issue_count' stays the full count so pass/fail is unchanged."),
+			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines to return (default 0 = unlimited). When greater than 0, the leading lines (summary first) are kept up to this count and a final omit line is appended ('... and N more details omitted'). In 'layout_tree', mismatched_pairs / mismatched_nodes / extra_web_nodes are also truncated to the same cap with mismatched_pairs_omitted / extra_web_nodes_omitted reporting how many were dropped (ignored_nodes is not truncated so it stays aligned with ignored_count). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', only 'details' is truncated; 'issues' stays complete and 'issue_count' stays the full count so pass/fail is unchanged."),
 		),
 		mcp.WithNumber("threshold",
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
@@ -1248,9 +1248,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity check failed: %v", err)), nil
 		}
-		// issues / details を max_details で切り詰める（issue_count は実件数のまま）。
-		// CheckLayoutIntegrity の引数は増やさず、応答マップ組み立て前に適用する (Issue #527)。
-		limitIntegrityOutput(integrityResult, maxDetails)
+		// details のみ max_details で切り詰める（issues / issue_count は実件数のまま）。
+		// layout_tree と同じ LimitLayoutTreeDetails を使い、応答マップ組み立て前に適用する (Issue #629)。
+		integrityResult.Details = comparator.LimitLayoutTreeDetails(integrityResult.Details, maxDetails)
 
 		responseMap = map[string]interface{}{
 			"status":               integrityResult.Status,
@@ -1341,26 +1341,6 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 	}
 	return mcp.NewToolResultStructured(responseMap, string(responseJSON)), nil
-}
-
-// limitIntegrityOutput は layout_integrity の issues / details を maxDetails 件に
-// 切り詰める。maxDetails <= 0 または件数以内なら無変更。issue_count は実件数のまま
-// 残し、合否（issue_count == 0）は変えない。details は先頭の summary 行と
-// 切り詰め後の issue.Detail から再構築し、末尾に省略行を付ける (Issue #527)。
-func limitIntegrityOutput(result *comparator.LayoutIntegrityResult, maxDetails int) {
-	if maxDetails <= 0 || len(result.Issues) <= maxDetails {
-		return
-	}
-	omitted := len(result.Issues) - maxDetails
-	result.Issues = result.Issues[:maxDetails]
-	details := make([]string, 0, maxDetails+2)
-	if len(result.Details) > 0 {
-		details = append(details, result.Details[0]) // 先頭は summary 行
-	}
-	for _, issue := range result.Issues {
-		details = append(details, issue.Detail)
-	}
-	result.Details = append(details, fmt.Sprintf("... and %d more issues omitted (max_details=%d)", omitted, maxDetails))
 }
 
 // pngPayloadFromDiffImage は JSON の diff_image (PNG data URI) から

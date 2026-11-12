@@ -527,9 +527,9 @@ func limitMaxKeep(n, maxDetails int) (keep, omitted int) {
 	return maxDetails, n - maxDetails
 }
 
-// LimitLayoutTreeDetails は layout_tree の details を maxDetails 件に切り詰める。
-// maxDetails <= 0 のときは無制限（現行どおり全件）。件数を超える場合は
-// summary 行を先頭に残したまま先頭 maxDetails 件を残し、末尾に省略行を付ける。
+// LimitLayoutTreeDetails は layout_tree / layout_integrity の details を
+// maxDetails 件に切り詰める。maxDetails <= 0 のときは無制限（現行どおり全件）。
+// 件数を超える場合は先頭 maxDetails 件を残し、末尾に省略行を付ける。
 func LimitLayoutTreeDetails(details []string, maxDetails int) []string {
 	keep, omitted := limitMaxKeep(len(details), maxDetails)
 	if omitted == 0 {
