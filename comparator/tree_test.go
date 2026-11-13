@@ -972,6 +972,116 @@ func TestLayoutTree_RequiredFieldsValidation(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_DuplicateIdentifiers verifies that repeated Figma id /
+// Web selector values are listed in DuplicateIdentifiers without changing
+// first-wins parent resolution or match_rate / status.
+func TestLayoutTree_DuplicateIdentifiers(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	t.Run("duplicate_figma_id_reported_match_rate_unchanged", func(t *testing.T) {
+		// 先勝ち: parent "1" は最初の header（1000x100）を使う。
+		// 2 件目の同 id は親として使われないが、比較対象としては残る。
+		figmaDup := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"1","name":"header-dup","x":500,"y":500,"w":10,"h":10},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"},
+			{"selector":".orphan","x":500,"y":500,"w":10,"h":10}
+		]`
+		// 対照: 重複 id をユニークな id に置き換えただけ（幾何・順序は同じ）。
+		figmaUnique := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"1b","name":"header-dup","x":500,"y":500,"w":10,"h":10},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"}
+		]`
+
+		dup, err := CompareLayoutTrees(figmaDup, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (dup) failed: %v", err)
+		}
+		unique, err := CompareLayoutTrees(figmaUnique, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (unique) failed: %v", err)
+		}
+		if len(dup.DuplicateIdentifiers) != 1 || dup.DuplicateIdentifiers[0] != "Figma: '1'" {
+			t.Errorf("Expected duplicate_node_identifiers=[Figma: '1'], got %v", dup.DuplicateIdentifiers)
+		}
+		if len(unique.DuplicateIdentifiers) != 0 {
+			t.Errorf("Expected no duplicate_node_identifiers for unique ids, got %v", unique.DuplicateIdentifiers)
+		}
+		if dup.MatchRate != unique.MatchRate {
+			t.Errorf("Expected match_rate unchanged by duplicate warning (dup=%.2f unique=%.2f)", dup.MatchRate, unique.MatchRate)
+		}
+		if dup.Status != unique.Status {
+			t.Errorf("Expected status unchanged (dup=%s unique=%s)", dup.Status, unique.Status)
+		}
+	})
+
+	t.Run("duplicate_web_selector_reported_match_rate_unchanged", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"},
+			{"id":"3","name":"orphan","x":500,"y":500,"w":10,"h":10}
+		]`
+		webDup := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":"#header","x":500,"y":500,"w":10,"h":10},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"}
+		]`
+		webUnique := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":"#header-dup","x":500,"y":500,"w":10,"h":10},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"}
+		]`
+
+		dup, err := CompareLayoutTrees(figmaJSON, webDup, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (dup) failed: %v", err)
+		}
+		unique, err := CompareLayoutTrees(figmaJSON, webUnique, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (unique) failed: %v", err)
+		}
+		if len(dup.DuplicateIdentifiers) != 1 || dup.DuplicateIdentifiers[0] != "Web: '#header'" {
+			t.Errorf("Expected duplicate_node_identifiers=[Web: '#header'], got %v", dup.DuplicateIdentifiers)
+		}
+		if len(unique.DuplicateIdentifiers) != 0 {
+			t.Errorf("Expected no duplicate_node_identifiers for unique selectors, got %v", unique.DuplicateIdentifiers)
+		}
+		if dup.MatchRate != unique.MatchRate {
+			t.Errorf("Expected match_rate unchanged by duplicate warning (dup=%.2f unique=%.2f)", dup.MatchRate, unique.MatchRate)
+		}
+		if dup.Status != unique.Status {
+			t.Errorf("Expected status unchanged (dup=%s unique=%s)", dup.Status, unique.Status)
+		}
+	})
+
+	t.Run("both_sides_and_triplicate_deduped", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"a","x":0,"y":0,"w":50,"h":50},
+			{"id":"1","name":"b","x":0,"y":0,"w":50,"h":50},
+			{"id":"1","name":"c","x":0,"y":0,"w":50,"h":50}
+		]`
+		webJSON := `[
+			{"selector":".x","x":0,"y":0,"w":50,"h":50},
+			{"selector":".x","x":0,"y":0,"w":50,"h":50}
+		]`
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if len(result.DuplicateIdentifiers) != 2 ||
+			result.DuplicateIdentifiers[0] != "Figma: '1'" ||
+			result.DuplicateIdentifiers[1] != "Web: '.x'" {
+			t.Errorf("Expected [Figma: '1' Web: '.x'], got %v", result.DuplicateIdentifiers)
+		}
+	})
+}
+
 // TestLayoutTree_UnresolvedParentRefs verifies that a non-empty parent that
 // matches no id / selector is reported in UnresolvedParentRefs without
 // changing match status (still falls back to absolute coordinates).

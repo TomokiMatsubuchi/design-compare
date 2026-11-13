@@ -783,6 +783,45 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !ok || len(refs) != 2 || refs[0] != "Figma: '999'" || refs[1] != "Web: '.foo'" {
 			t.Errorf("Expected unresolved_parent_refs=[Figma: '999' Web: '.foo'], got %v", result["unresolved_parent_refs"])
 		}
+		if _, ok := result["duplicate_node_identifiers"]; ok {
+			t.Errorf("duplicate_node_identifiers should be omitted when empty: %v", result["duplicate_node_identifiers"])
+		}
+	})
+
+	// =================================================================
+	// 2.4.3. layout_tree モード: 重複 id / selector の通知
+	// =================================================================
+	t.Run("LayoutTree_DuplicateNodeIdentifiers", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "1", "name": "header-dup", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".item", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".item", "x": 200, "y": 200, "w": 50, "h": 50}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		dups, ok := result["duplicate_node_identifiers"].([]interface{})
+		if !ok || len(dups) != 2 || dups[0] != "Figma: '1'" || dups[1] != "Web: '.item'" {
+			t.Errorf("Expected duplicate_node_identifiers=[Figma: '1' Web: '.item'], got %v", result["duplicate_node_identifiers"])
+		}
 	})
 
 	// =================================================================

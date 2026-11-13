@@ -81,6 +81,7 @@ type LayoutTreeResult struct {
 	MatchedPairs           []MatchedPair    `json:"matched_pairs,omitempty"`
 	ZeroGeometryWarning    string           `json:"zero_geometry_warning,omitempty"`
 	UnresolvedParentRefs   []string         `json:"unresolved_parent_refs,omitempty"`
+	DuplicateIdentifiers   []string         `json:"duplicate_node_identifiers,omitempty"`
 	AbsoluteModePairs      int              `json:"absolute_mode_pairs"`
 }
 
@@ -156,6 +157,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 「最初に見つかったノード」を返していた従来挙動を維持する。
 	figmaByID := indexFigmaNodesByID(fNodes)
 	webBySelector := indexWebNodesBySelector(wNodes)
+	// 親インデックス元のリストで重複を検出し、先勝ちで黙って解釈しないよう通知する。
+	// 合否・座標解決は変えず、unresolved_parent_refs と同種の誤用検出。
+	duplicateIdentifiers := collectDuplicateIdentifiers(fNodes, wNodes)
 
 	// フィルタ後に片側が空でも、元から空だった側と全件除外を取り違えないよう
 	// ignore_nodes / ignore_region 適用前の件数を残す。
@@ -282,6 +286,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 				ZeroGeometryWarning:    zeroGeometryWarning,
 				UnresolvedParentRefs:   unresolvedParentRefs,
+				DuplicateIdentifiers:   duplicateIdentifiers,
 			}, nil
 		}
 		// 両側とも元から非空で、ignore により比較対象が無くなった場合のみ
@@ -304,6 +309,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 				ZeroGeometryWarning:    zeroGeometryWarning,
 				UnresolvedParentRefs:   unresolvedParentRefs,
+				DuplicateIdentifiers:   duplicateIdentifiers,
 			}, nil
 		}
 		// どちら側の入力が空かを明示する。
@@ -326,6 +332,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 			ZeroGeometryWarning:    zeroGeometryWarning,
 			UnresolvedParentRefs:   unresolvedParentRefs,
+			DuplicateIdentifiers:   duplicateIdentifiers,
 		}, nil
 	}
 
@@ -514,6 +521,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		MatchedPairs:           matchedPairs,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		DuplicateIdentifiers:   duplicateIdentifiers,
 		AbsoluteModePairs:      absoluteModePairs,
 	}, nil
 }
@@ -766,6 +774,39 @@ func getWebParent(node WebNode, bySelector map[string]*WebNode) *WebNode {
 		return nil
 	}
 	return bySelector[node.Parent]
+}
+
+// collectDuplicateIdentifiers は Figma id / Web selector が入力内で 2 回以上
+// 出現する識別子を列挙する。親参照インデックスは先勝ちのため、2 件目以降は
+// 親として解決されず相対座標がずれることがある。合否や解決挙動は変えず、
+// unresolved_parent_refs と同種の誤入力通知に使う。同一ラベルは先勝ちで 1 回だけ出す。
+func collectDuplicateIdentifiers(fNodes []FigmaNode, wNodes []WebNode) []string {
+	var refs []string
+	seenLabel := make(map[string]bool)
+	appendOnce := func(label string) {
+		if seenLabel[label] {
+			return
+		}
+		seenLabel[label] = true
+		refs = append(refs, label)
+	}
+	figmaSeen := make(map[string]bool)
+	for _, fn := range fNodes {
+		if figmaSeen[fn.ID] {
+			appendOnce(fmt.Sprintf("Figma: '%s'", fn.ID))
+			continue
+		}
+		figmaSeen[fn.ID] = true
+	}
+	webSeen := make(map[string]bool)
+	for _, wn := range wNodes {
+		if webSeen[wn.Selector] {
+			appendOnce(fmt.Sprintf("Web: '%s'", wn.Selector))
+			continue
+		}
+		webSeen[wn.Selector] = true
+	}
+	return refs
 }
 
 // collectUnresolvedParentRefs は parent が空でないのに有効な親として使えない
