@@ -423,6 +423,56 @@ func TestLayoutTree_MatchedPairs(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_MismatchPartnerNotCountedAsExtra verifies that a Web node
+// chosen as the closest match for a Figma node that exceeds tolerance is
+// marked used: it must not appear as an extra_web element, and with
+// count_extra_web=true the denominator stays Figma-side only (1/2 = 50%).
+func TestLayoutTree_MismatchPartnerNotCountedAsExtra(t *testing.T) {
+	// Figma 2 / Web 2: header matches; card is closest to #card but exceeds
+	// default-ish tolerance so the pair is a mismatch, not an extra Web node.
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"2","name":"card","x":0,"y":200,"w":100,"h":100}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":"#card","x":50,"y":200,"w":100,"h":100}
+	]`
+	const tolerance = 0.05
+	const passRate = 98.0
+
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, true, nil)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if result.MatchedNodes != 1 {
+		t.Errorf("MatchedNodes=%d, want 1", result.MatchedNodes)
+	}
+	if result.TotalNodes != 2 {
+		t.Errorf("TotalNodes=%d, want 2 (mismatch partner must not inflate denominator)", result.TotalNodes)
+	}
+	if result.ExtraWebCount != 0 {
+		t.Errorf("ExtraWebCount=%d, want 0", result.ExtraWebCount)
+	}
+	if len(result.ExtraWebNodes) != 0 {
+		t.Errorf("ExtraWebNodes=%v, want empty", result.ExtraWebNodes)
+	}
+	if got := fmt.Sprintf("%.2f", result.MatchRate); got != "50.00" {
+		t.Errorf("MatchRate=%.2f, want 50.00", result.MatchRate)
+	}
+	if len(result.MismatchedPairs) != 1 {
+		t.Fatalf("MismatchedPairs=%d, want 1", len(result.MismatchedPairs))
+	}
+	if result.MismatchedPairs[0].WebSelector != "#card" {
+		t.Errorf("mismatch partner=%q, want #card", result.MismatchedPairs[0].WebSelector)
+	}
+	for _, d := range result.Details {
+		if strings.Contains(d, "extra element") {
+			t.Errorf("details must not report mismatch partner as extra: %q", d)
+		}
+	}
+}
+
 // TestLayoutTree_DetailsOrderPutsFailuresFirst verifies that after the
 // summary line, mismatch and extra-Web rows come before matched pairs so
 // failures are not buried behind hundreds of "Matched: …" lines.
