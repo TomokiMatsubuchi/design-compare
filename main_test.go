@@ -3899,6 +3899,39 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// Issue #647: details の Minimum required は合否に使う min_match を %.2f で表示する
+	// (%.1f だと 98.55 が 98.5% になり、表示上は閾値を満たしているように見えるが mismatch になり得る)
+	t.Run("Perceptual_MinMatch_DetailsTwoDecimals", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathA,
+					"min_match":    98.55,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected success for identical images, got status=%v", result["status"])
+		}
+		details, ok := result["details"].([]interface{})
+		if !ok || len(details) == 0 {
+			t.Fatalf("Expected non-empty details, got %v", result["details"])
+		}
+		detail0, _ := details[0].(string)
+		const want = "Minimum required: 98.55%"
+		if !strings.Contains(detail0, want) {
+			t.Errorf("Expected details to contain %q, got %q", want, detail0)
+		}
+	})
+
 	t.Run("Perceptual_MinMatch_AcceptsLowValue", func(t *testing.T) {
 		// min_match は 0.0-100.0 を許容する (threshold と異なり 1.0 未満でもエラーにしない)
 		req := mcp.CallToolRequest{
