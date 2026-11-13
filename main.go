@@ -513,6 +513,11 @@ func intArg(request mcp.CallToolRequest, key string, def int) (int, error) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return 0, fmt.Errorf("argument '%s' must be a finite number", key)
 		}
+		// JSON 数値は float64 になるため整数値（例: 10.0）は受け付けるが、
+		// 小数は切り捨てず明示エラーにする（負の小数が 0 に落ちて範囲検証をすり抜けるのを防ぐ）。
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("argument '%s' must be an integer", key)
+		}
 		return int(v), nil
 	case string:
 		s := strings.TrimSpace(v)
