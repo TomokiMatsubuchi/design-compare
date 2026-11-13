@@ -349,6 +349,10 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
 	usedWeb := make(map[int]bool)
+	// tolerance 超過で報告した相手 Web ノード。一致時の usedWeb とは別に持ち、
+	// 不一致相手を extra に二重計上しない（Issue #642）。一致時だけ used にする既存
+	// の貪欲再マッチ（後続 Figma が同じ Web を拾う）は維持する。
+	mismatchPartnerWeb := make(map[int]bool)
 
 	// 各Figmaノードと、Webの対応する要素を探して比較
 	// 簡単のため、Figmaの各要素と、Web側で最も「幾何学的位置（相対位置）が近いもの」を対応付ける
@@ -432,6 +436,8 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		} else {
 			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
+			// 不一致の相手側は実装側の余分要素ではない（Issue #642）。usedWeb には載せない。
+			mismatchPartnerWeb[bestMatchIdx] = true
 			bestWeb := wNodes[bestMatchIdx]
 			space := "relative"
 			unit := "ratio"
@@ -466,9 +472,10 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 1対1マッチング後に使用されなかったWebノード（実装側の余分な要素）を報告する。
 	// details の free-text に加え、クライアントが文字列パースなしで対象を特定できる
 	// ようセレクタを構造化フィールド (ExtraWebCount / ExtraWebNodes) 用にも収集する。
+	// tolerance 超過の不一致相手はここに含めない（不一致として既に計上済み）。
 	var extraWebSelectors []string
 	for wi, wn := range wNodes {
-		if !usedWeb[wi] {
+		if !usedWeb[wi] && !mismatchPartnerWeb[wi] {
 			extraWebDetails = append(extraWebDetails, fmt.Sprintf("Web Node '%s' did not match any Figma node (extra element in implementation)", wn.Selector))
 			extraWebSelectors = append(extraWebSelectors, wn.Selector)
 		}
@@ -478,7 +485,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 分母 (totalCompared) に加算し、余分な要素が一致率に反映されるようにする。
 	if countExtraWeb {
 		for wi := range wNodes {
-			if !usedWeb[wi] {
+			if !usedWeb[wi] && !mismatchPartnerWeb[wi] {
 				totalCompared++
 			}
 		}
