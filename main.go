@@ -950,7 +950,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// diff_pixels / total_pixels と同様に数量として応答へ含める。aHash は
 		// 256 段階の離散値のため、一致率だけよりも差分セル数の方が min_match の
 		// 調整や差分の解釈が容易になる (Issue #141)。
-		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
+		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.2f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
 		if diffRegion != "" {
 			details = append(details, fmt.Sprintf("Differing blocks cluster near (%s) on image A.", diffRegion))
 		}
