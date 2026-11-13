@@ -273,9 +273,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		}
 		if bySelector[wn.Parent] != nil {
 			parentChecked++
-			if issue, ok := parentOverflow(wn, bySelector); ok {
-				issues = append(issues, issue)
-			}
+			issues = append(issues, parentOverflow(wn, bySelector)...)
 			continue
 		}
 		// 親が bySelector に無い: 入力欠落は unresolved_parent_refs、ゼロ幾何は件数のみ。
@@ -369,38 +367,51 @@ func viewportOverflowX(wn WebNode, viewportW float64) (LayoutIssue, bool) {
 	}
 }
 
-func parentOverflow(wn WebNode, bySelector map[string]*WebNode) (LayoutIssue, bool) {
+// parentOverflow は子が親からのはみ出しを辺ごとに検出し、該当した辺すべてを返す
+// （左右同時など複数辺ではみ出す場合も 1 件に潰さない。Issue #641）。
+func parentOverflow(wn WebNode, bySelector map[string]*WebNode) []LayoutIssue {
 	if wn.Parent == "" {
-		return LayoutIssue{}, false
+		return nil
 	}
 	parent := bySelector[wn.Parent]
 	if parent == nil {
-		return LayoutIssue{}, false
+		return nil
 	}
 	pLeft, pTop := parent.X, parent.Y
 	pRight, pBottom := parent.X+parent.W, parent.Y+parent.H
 	cLeft, cTop := wn.X, wn.Y
 	cRight, cBottom := wn.X+wn.W, wn.Y+wn.H
 
-	var side string
-	var childEdge, parentEdge, overflowPx float64
-	switch {
-	case cLeft < pLeft-layoutSlopPx:
-		side, childEdge, parentEdge, overflowPx = "left", cLeft, pLeft, pLeft-cLeft
-	case cRight > pRight+layoutSlopPx:
-		side, childEdge, parentEdge, overflowPx = "right", cRight, pRight, cRight-pRight
-	case cTop < pTop-layoutSlopPx:
-		side, childEdge, parentEdge, overflowPx = "top", cTop, pTop, pTop-cTop
-	case cBottom > pBottom+layoutSlopPx:
-		side, childEdge, parentEdge, overflowPx = "bottom", cBottom, pBottom, cBottom-pBottom
-	default:
-		return LayoutIssue{}, false
+	type edgeHit struct {
+		side                  string
+		childEdge, parentEdge float64
+		overflowPx            float64
 	}
-	detail := fmt.Sprintf("selector %q overflows its parent %q on the %s (child=%.2f, parent=%.2f)",
-		wn.Selector, parent.Selector, side, childEdge, parentEdge)
-	return LayoutIssue{
-		Type: "parent_overflow", Selector: wn.Selector, Detail: detail,
-		Edge: side, OverflowPx: overflowPx, Node: layoutIssueNode(wn),
-		ParentSelector: parent.Selector,
-	}, true
+	var hits []edgeHit
+	if cLeft < pLeft-layoutSlopPx {
+		hits = append(hits, edgeHit{"left", cLeft, pLeft, pLeft - cLeft})
+	}
+	if cRight > pRight+layoutSlopPx {
+		hits = append(hits, edgeHit{"right", cRight, pRight, cRight - pRight})
+	}
+	if cTop < pTop-layoutSlopPx {
+		hits = append(hits, edgeHit{"top", cTop, pTop, pTop - cTop})
+	}
+	if cBottom > pBottom+layoutSlopPx {
+		hits = append(hits, edgeHit{"bottom", cBottom, pBottom, cBottom - pBottom})
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	out := make([]LayoutIssue, 0, len(hits))
+	for _, h := range hits {
+		detail := fmt.Sprintf("selector %q overflows its parent %q on the %s (child=%.2f, parent=%.2f)",
+			wn.Selector, parent.Selector, h.side, h.childEdge, h.parentEdge)
+		out = append(out, LayoutIssue{
+			Type: "parent_overflow", Selector: wn.Selector, Detail: detail,
+			Edge: h.side, OverflowPx: h.overflowPx, Node: layoutIssueNode(wn),
+			ParentSelector: parent.Selector,
+		})
+	}
+	return out
 }

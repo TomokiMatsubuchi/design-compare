@@ -188,6 +188,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if len(res.UnresolvedParentRefs) != 0 {
 			t.Errorf("unresolved_parent_refs=%v", res.UnresolvedParentRefs)
 		}
+		if res.IssueCount != 1 {
+			t.Errorf("issue_count=%d, want 1 (single-edge overflow)", res.IssueCount)
+		}
 		found := false
 		for _, issue := range res.Issues {
 			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
@@ -209,6 +212,60 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("missing parent_overflow: %#v", res.Issues)
+		}
+	})
+
+	// Issue #641: 左右同時はみ出しは辺ごとに 2 件返す（最初の辺だけに潰さない）。
+	t.Run("parent_overflow_both_horizontal_edges", func(t *testing.T) {
+		// 親より幅広の子が左右両方ではみ出す。ビューポート内に収め、parent_overflow だけを数える。
+		// 親 x=100,w=200 / 子 x=50,w=300 → left 50px・right 50px。
+		web := `[{"selector":"#card","x":100,"y":0,"w":200,"h":200},{"selector":"#child","x":50,"y":0,"w":300,"h":50,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" {
+			t.Fatalf("status=%s", res.Status)
+		}
+		if res.ParentCheckedNodes != 1 {
+			t.Errorf("parent_checked_nodes=%d, want 1", res.ParentCheckedNodes)
+		}
+		if res.IssueCount != 2 {
+			t.Fatalf("issue_count=%d, want 2; issues=%#v", res.IssueCount, res.Issues)
+		}
+		var parentIssues []LayoutIssue
+		for _, issue := range res.Issues {
+			if issue.Type == "viewport_overflow_x" {
+				t.Errorf("unexpected viewport overflow: %#v", issue)
+			}
+			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
+				parentIssues = append(parentIssues, issue)
+			}
+		}
+		if len(parentIssues) != 2 {
+			t.Fatalf("parent_overflow count=%d, want 2 (left+right); issues=%#v", len(parentIssues), res.Issues)
+		}
+		byEdge := map[string]LayoutIssue{}
+		for _, issue := range parentIssues {
+			byEdge[issue.Edge] = issue
+		}
+		left, okLeft := byEdge["left"]
+		right, okRight := byEdge["right"]
+		if !okLeft || !okRight {
+			t.Fatalf("edges=%v, want left and right", byEdge)
+		}
+		if left.OverflowPx != 50 {
+			t.Errorf("left overflow_px=%g, want 50", left.OverflowPx)
+		}
+		if right.OverflowPx != 50 { // (50+300) - (100+200) = 50
+			t.Errorf("right overflow_px=%g, want 50", right.OverflowPx)
+		}
+		if left.ParentSelector != "#card" || right.ParentSelector != "#card" {
+			t.Errorf("parent_selector left=%q right=%q, want #card", left.ParentSelector, right.ParentSelector)
+		}
+		// 報告順は left → right → top → bottom。
+		if parentIssues[0].Edge != "left" || parentIssues[1].Edge != "right" {
+			t.Errorf("edge order=%q,%q, want left,right", parentIssues[0].Edge, parentIssues[1].Edge)
 		}
 	})
 
