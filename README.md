@@ -136,7 +136,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 | フィールド | 型 | 必須 | 説明 |
 | :--- | :--- | :--- | :--- |
-| `id` | string | ○ | Figma ノード ID。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。 |
+| `id` | string | ○ | Figma ノード ID。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。同一 `id` が複数ある場合、親参照インデックスは先勝ち（最初のノード）を使い、応答に `duplicate_node_identifiers` が付く（`status` / `match_rate` は変えない）。 |
 | `name` | string | ○ | Figma ノード名。details 出力、および `ignore_nodes` の除外対象としても使用される。 |
 | `x` / `y` / `w` / `h` | number | ○ | ノードの BoundingBox（Figma キャンバス上の絶対座標とサイズ）。 |
 | `parent` | string | — | 親ノードの `id`。省略時は親なしとして扱われる。入力内のどの `id` にも一致しない場合は絶対座標比較へフォールバックし、応答に `unresolved_parent_refs` が付く。 |
@@ -145,7 +145,7 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 
 | フィールド | 型 | 必須 | 説明 |
 | :--- | :--- | :--- | :--- |
-| `selector` | string | ○ | 要素識別子（CSS セレクタ等）。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。 |
+| `selector` | string | ○ | 要素識別子（CSS セレクタ等）。`parent` の参照先、および `ignore_nodes` の除外対象としても使用される。同一 `selector` が複数ある場合、親参照インデックスは先勝ち（最初のノード）を使い、応答に `duplicate_node_identifiers` が付く（`status` / `match_rate` は変えない）。 |
 | `x` / `y` / `w` / `h` | number | ○ | 要素の BoundingBox（**絶対 CSS px**。ドキュメント／ページ共通の座標空間。キー名は `w` / `h` であり `width` / `height` ではない）。 |
 | `parent` | string | — | 親要素の `selector`。省略時は親なしとして扱われる。入力内のどの `selector` にも一致しない場合は絶対座標比較へフォールバックし、応答に `unresolved_parent_refs` が付く。 |
 
@@ -169,7 +169,7 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 ]
 ```
 
-`parent` を持つノードは「親の BoundingBox に対する相対的な位置・サイズ（比率 0–1）」で比較され、レスポンシブなスケール差が吸収されます。親を持たないノード（および幅・高さが 0 の親を持つノード、解決できない `parent`）は絶対座標のまま比較され、比較ペアの片側でも絶対座標なら両側を生ピクセルにそろえます。このとき `threshold`（0.0–1.0、既定 0.15）は比率ではなく **px 差分** に対して適用されます。実比較されたペアのうち絶対座標空間で比較された件数は応答の `absolute_mode_pairs` に入り、`details` にも 1 行注記されます。`parent` が空でないのに解決できない参照、および自己参照（`parent` がそのノード自身）は `status` を変えず `unresolved_parent_refs`（例: `Figma: '999'` / `Web: '.foo'`）として応答されます（`unmatched_ignores` と同様の誤用検出）。
+`parent` を持つノードは「親の BoundingBox に対する相対的な位置・サイズ（比率 0–1）」で比較され、レスポンシブなスケール差が吸収されます。親を持たないノード（および幅・高さが 0 の親を持つノード、解決できない `parent`）は絶対座標のまま比較され、比較ペアの片側でも絶対座標なら両側を生ピクセルにそろえます。このとき `threshold`（0.0–1.0、既定 0.15）は比率ではなく **px 差分** に対して適用されます。実比較されたペアのうち絶対座標空間で比較された件数は応答の `absolute_mode_pairs` に入り、`details` にも 1 行注記されます。`parent` が空でないのに解決できない参照、および自己参照（`parent` がそのノード自身）は `status` を変えず `unresolved_parent_refs`（例: `Figma: '999'` / `Web: '.foo'`）として応答されます（`unmatched_ignores` と同様の誤用検出）。同一 Figma `id` / Web `selector` が複数ある場合も `status` / `match_rate` は変えず、親参照は先勝ちのまま `duplicate_node_identifiers`（例: `Figma: '1:23'` / `Web: '.item'`）で通知します。
 
 `id` / `name`（Figma）と `selector`（Web）は空文字を拒否します。`x` / `y` / `w` / `h` はキー欠落を拒否します（明示的な `0` は許可）。欠落や空識別子はツール実行エラーになり、メッセージにノードインデックスとフィールド名が含まれます（例: `Figma layout node at index 1 is missing required field 'w'`）。
 
@@ -226,6 +226,7 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 | `matched_pairs` | object[] | 非空時のみ | 一致ペア。`figma_name` / `web_selector`（details の `Matched: '…' ↔ '…'` と同じ対応）。 |
 | `zero_geometry_warning` | string | 非空時のみ | 過半数ノードの `w`/`h` が 0 のときの誤用検出。 |
 | `unresolved_parent_refs` | string[] | 非空時のみ | 解決できない、または自己参照の `parent`。 |
+| `duplicate_node_identifiers` | string[] | 非空時のみ | 入力内で重複した Figma `id` / Web `selector`（例: `Figma: '1:23'` / `Web: '.item'`）。親参照インデックスは先勝ちのまま。`status` / `match_rate` は変えない。 |
 
 ### `perceptual`
 

@@ -816,6 +816,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(treeResult.UnresolvedParentRefs) > 0 {
 			responseMap["unresolved_parent_refs"] = treeResult.UnresolvedParentRefs
 		}
+		// 同一 Figma id / Web selector が複数あるとき（親インデックスは先勝ち）。
+		// 解決挙動・status / match_rate は変えず、誤用検出のみ載せる。
+		if len(treeResult.DuplicateIdentifiers) > 0 {
+			responseMap["duplicate_node_identifiers"] = treeResult.DuplicateIdentifiers
+		}
 
 	case "perceptual":
 		// =================================================================
