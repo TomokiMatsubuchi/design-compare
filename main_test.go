@@ -6615,6 +6615,8 @@ func TestTypedArgHelpers(t *testing.T) {
 			{"threshold", "abc"},
 			{"threshold", nil},
 			{"max_diff_pixels", "abc"},
+			{"max_diff_pixels", -0.5},
+			{"max_diff_pixels", 2.9},
 			{"generate_diff", "abc"},
 			{"count_extra_web", ""},
 		}
@@ -6631,6 +6633,37 @@ func TestTypedArgHelpers(t *testing.T) {
 			}
 			if err == nil {
 				t.Errorf("expected error for %s=%#v", tc.key, tc.val)
+			}
+		}
+	})
+
+	// Issue #638: float64 の小数は切り捨てず integer エラーにする。整数値の float64 と数字文字列は現状維持。
+	t.Run("intArg rejects non-integer floats", func(t *testing.T) {
+		for _, val := range []any{-0.5, 2.9, 1.1, -2.7} {
+			req := reqWithArgs(map[string]any{"max_diff_pixels": val})
+			_, err := intArg(req, "max_diff_pixels", 0)
+			if err == nil {
+				t.Errorf("expected error for max_diff_pixels=%#v", val)
+				continue
+			}
+			if !strings.Contains(err.Error(), "argument 'max_diff_pixels' must be an integer") {
+				t.Errorf("max_diff_pixels=%#v: got %q", val, err.Error())
+			}
+		}
+		for _, tc := range []struct {
+			val  any
+			want int
+		}{
+			{float64(10), 10},
+			{float64(0), 0},
+			{float64(-3), -3},
+			{"3", 3},
+			{" 7 ", 7},
+		} {
+			req := reqWithArgs(map[string]any{"max_diff_pixels": tc.val})
+			got, err := intArg(req, "max_diff_pixels", 0)
+			if err != nil || got != tc.want {
+				t.Errorf("intArg(%#v): got %v, %v; want %d, nil", tc.val, got, err, tc.want)
 			}
 		}
 	})
@@ -6880,6 +6913,24 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			name: "max_diff_pixels abc",
 			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": "abc"},
 			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			// Issue #638: 負の小数を 0 に切り捨てて範囲検証をすり抜けない
+			name: "max_diff_pixels -0.5",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": -0.5},
+			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			// Issue #638: 正の小数も切り捨てず拒否する
+			name: "max_diff_pixels 2.9",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": 2.9},
+			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			// Issue #638: max_details の負の小数も同様に拒否する
+			name: "max_details -0.5",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "max_details": -0.5},
+			want: "argument 'max_details' must be an integer",
 		},
 		{
 			name: "threshold NaN",
