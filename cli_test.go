@@ -228,8 +228,26 @@ func TestParseCLIArgsHelp(t *testing.T) {
 	if !strings.Contains(help, "Positional arguments are not accepted") {
 		t.Errorf("help output missing positional-args hint: %q", help)
 	}
+	if !strings.Contains(help, "design-compare --version") {
+		t.Errorf("help output missing --version usage line: %q", help)
+	}
 	if stderr.Len() != 0 {
 		t.Errorf("explicit help must not write Usage to stderr, got %q", stderr.String())
+	}
+}
+
+func TestParseCLIArgsVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	_, err := parseCLIArgs([]string{"--version"}, &stdout, &stderr)
+	if err != errShowVersion {
+		t.Fatalf("expected errShowVersion, got %v", err)
+	}
+	want := "design-compare " + version + "\n"
+	if stdout.String() != want {
+		t.Errorf("stdout=%q, want %q", stdout.String(), want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("--version must leave stderr empty, got %q", stderr.String())
 	}
 }
 
@@ -564,6 +582,25 @@ func TestRunCLIHelpStdout(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Errorf("--help must leave stderr empty, got %q", stderr.String())
 	}
+}
+
+// TestRunCLIVersion は --version が比較を実行せず版番号だけを stdout に出し、
+// 終了コード 0・stderr 空であることを固定する (Issue #657)。
+func TestRunCLIVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{"--version"}, &stdout, &stderr)
+	if code != exitSuccess {
+		t.Fatalf("expected exit 0 for --version, got %d stderr=%s", code, stderr.String())
+	}
+	want := "design-compare " + version + "\n"
+	if stdout.String() != want {
+		t.Errorf("stdout=%q, want %q", stdout.String(), want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("--version must leave stderr empty, got %q", stderr.String())
+	}
+	// 比較経路に入ると必須入力欠落で exit 1 になるため、exit 0 は
+	// compareDesignHandler 未到達の証拠になる。
 }
 
 func TestRunCLIUnknownFlagOnce(t *testing.T) {
