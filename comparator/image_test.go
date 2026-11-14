@@ -2,6 +2,7 @@ package comparator
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -14,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orisano/pixelmatch"
 )
 
 func encodePNGBytes(t *testing.T, img image.Image) []byte {
@@ -393,21 +396,117 @@ func TestRunPixelMatch_ImageSize(t *testing.T) {
 
 // TestRunPixelMatch_IdenticalGenerateDiff は同一画像でも generateDiff=true なら
 // 差分 PNG を返すこと。pixelmatch の同一画像 fast path は WriteTo を差し替えない
-// ため、事前確保をやめたあと nil で Encode しないことを回帰防止する。
+// ため、nil 時は image A の薄いグレースケール (不透明) を自前生成する (Issue #659)。
 func TestRunPixelMatch_IdenticalGenerateDiff(t *testing.T) {
+	solid := color.RGBA{200, 200, 200, 255}
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
-	draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{200, 200, 200, 255}}, image.Point{}, draw.Src)
+	draw.Draw(img, img.Bounds(), &image.Uniform{solid}, image.Point{}, draw.Src)
 	pngBytes := encodePNGBytes(t, img)
 
-	_, _, diffCount, diffURI, _, _, _, _, _, err := RunPixelMatch(pngBytes, pngBytes, 0.1, true, false, nil)
+	_, _, diffCount, diffURI, _, _, regions, regionsTotal, _, err := RunPixelMatch(pngBytes, pngBytes, 0.1, true, false, nil)
 	if err != nil {
 		t.Fatalf("RunPixelMatch failed: %v", err)
 	}
 	if diffCount != 0 {
 		t.Errorf("Expected diffCount=0 for identical images, got %d", diffCount)
 	}
+	if len(regions) != 0 || regionsTotal != 0 {
+		t.Errorf("Expected no diff_regions for identical images, got regions=%v total=%d", regions, regionsTotal)
+	}
 	if !strings.HasPrefix(diffURI, "data:image/png;base64,") {
-		t.Errorf("Expected PNG data URI for generateDiff=true, got %q", diffURI)
+		t.Fatalf("Expected PNG data URI for generateDiff=true, got %q", diffURI)
+	}
+
+	raw, ok := strings.CutPrefix(diffURI, "data:image/png;base64,")
+	if !ok {
+		t.Fatalf("Expected data URI prefix, got %q", diffURI)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("Failed to decode diff_image base64: %v", err)
+	}
+	diffImg, err := png.Decode(bytes.NewReader(decoded))
+	if err != nil {
+		t.Fatalf("Failed to decode diff_image PNG: %v", err)
+	}
+
+	// 単色 RGB(200,200,200) → pixelmatch 既定 alpha=0.1 に不透明ピクセルのアルファ
+	// (16-bit 展開で ≒256) を掛けた実効係数 (~0.1) で v=249 の不透明グレー。
+	const wantV uint8 = 249
+	bounds := diffImg.Bounds()
+	if bounds.Dx() != 16 || bounds.Dy() != 16 {
+		t.Errorf("Expected 16x16 diff image, got %dx%d", bounds.Dx(), bounds.Dy())
+	}
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := diffImg.At(x, y).RGBA()
+			r8, g8, b8, a8 := uint8(r>>8), uint8(g>>8), uint8(b>>8), uint8(a>>8)
+			if a8 != 255 {
+				t.Fatalf("Expected opaque alpha=255 at (%d,%d), got %d", x, y, a8)
+			}
+			if r8 != wantV || g8 != wantV || b8 != wantV {
+				t.Fatalf("Expected solid gray (%d,%d,%d) at (%d,%d), got (%d,%d,%d)",
+					wantV, wantV, wantV, x, y, r8, g8, b8)
+			}
+		}
+	}
+}
+
+// TestFadedGrayscaleFromImage_MatchesPixelmatch は fadedGrayscaleFromImage が
+// pixelmatch の一致ピクセル描画と同じ式であることを、WriteTo が返す実際の一致
+// ピクセルと突き合わせて固定する (Issue #659)。不透明だけでなく半透明・完全透明も
+// 含める。pixelmatch は一致ピクセルを blend(y, (alpha/255)*a) で描くため、
+// 不透明ピクセルの実効係数は alpha/255 ではなく約 0.1 になる。
+func TestFadedGrayscaleFromImage_MatchesPixelmatch(t *testing.T) {
+	cases := []struct {
+		name string
+		c    color.NRGBA
+	}{
+		{"opaque_gray", color.NRGBA{R: 200, G: 200, B: 200, A: 255}},
+		{"opaque_black", color.NRGBA{R: 0, G: 0, B: 0, A: 255}},
+		{"opaque_saturated", color.NRGBA{R: 12, G: 240, B: 33, A: 255}},
+		{"semi_transparent", color.NRGBA{R: 12, G: 240, B: 33, A: 128}},
+		{"fully_transparent", color.NRGBA{R: 0, G: 0, B: 0, A: 0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+			draw.Draw(img, img.Bounds(), &image.Uniform{tc.c}, image.Point{}, draw.Src)
+
+			// 1 ピクセルだけ変えて isIdentical の fast path を外し、pixelmatch に
+			// 一致ピクセルを描かせる。
+			other := image.NewNRGBA(img.Bounds())
+			draw.Draw(other, other.Bounds(), &image.Uniform{tc.c}, image.Point{}, draw.Src)
+			other.SetNRGBA(0, 0, color.NRGBA{R: 255 - tc.c.R, G: tc.c.G, B: tc.c.B, A: 255})
+
+			var want image.Image
+			if _, err := pixelmatch.MatchPixel(img, other, pixelmatch.WriteTo(&want)); err != nil {
+				t.Fatalf("pixelmatch.MatchPixel failed: %v", err)
+			}
+			if want == nil {
+				t.Fatal("Expected pixelmatch to fill the diff image")
+			}
+
+			got := fadedGrayscaleFromImage(img)
+			bounds := got.Bounds()
+			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					if x == 0 && y == 0 {
+						continue // 差分ピクセルは pixelmatch が赤で描く
+					}
+					gr, gg, gb, ga := got.At(x, y).RGBA()
+					wr, wg, wb, wa := want.At(x, y).RGBA()
+					if gr != wr || gg != wg || gb != wb {
+						t.Fatalf("pixel (%d,%d): faded = (%d,%d,%d), pixelmatch = (%d,%d,%d)",
+							x, y, gr>>8, gg>>8, gb>>8, wr>>8, wg>>8, wb>>8)
+					}
+					if ga != 0xffff || wa != 0xffff {
+						t.Fatalf("pixel (%d,%d): expected opaque match, got faded a=%d pixelmatch a=%d",
+							x, y, ga>>8, wa>>8)
+					}
+				}
+			}
+		})
 	}
 }
 
