@@ -603,6 +603,25 @@ func TestRunCLIVersion(t *testing.T) {
 	// compareDesignHandler 未到達の証拠になる。
 }
 
+// TestVersionMatchesPackageJSON は --version と MCP serverInfo が返す version 定数が
+// package.json の版番号とずれていないことを固定する。release.yml はリリース時に
+// 両方を同じ値へ更新するため、ここがずれると版番号の更新手順が壊れている。
+func TestVersionMatchesPackageJSON(t *testing.T) {
+	data, err := os.ReadFile("package.json")
+	if err != nil {
+		t.Fatalf("read package.json: %v", err)
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		t.Fatalf("parse package.json: %v", err)
+	}
+	if version != pkg.Version {
+		t.Errorf("version=%q, want package.json version %q", version, pkg.Version)
+	}
+}
+
 func TestRunCLIUnknownFlagOnce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{"--bogus"}, &stdout, &stderr)

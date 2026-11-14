@@ -37,7 +37,8 @@ func main() {
 }
 
 // version は MCP serverInfo と CLI --version の共通の版番号。
-const version = "1.0.0"
+// release.yml がリリース時に package.json と同じ値へ書き換える。
+const version = "1.0.7"
 
 // mcpInstructions は initialize 応答の instructions に載せ、ツール説明だけを
 // 読むクライアントが strict でサイズ不一致エラーを起こしにくいようにする。
