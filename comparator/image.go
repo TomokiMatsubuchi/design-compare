@@ -308,9 +308,10 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 
 	// pixelmatch は差分描画用に内部で NewRGBA し WriteTo へ差し替えるが、同一画像の
 	// fast path では差し替えずに return する。事前確保をやめたためその場合は nil。
-	// 旧実装は空の RGBA をエンコードしていたので同等にする。
+	// nil のときは pixelmatch の一致ピクセル描画と同じ薄いグレースケールを自前生成し、
+	// README の「差分がなかった箇所は image A の輝度を白寄りに薄める」説明と揃える (Issue #659)。
 	if diffImg == nil {
-		diffImg = image.NewRGBA(bounds)
+		diffImg = fadedGrayscaleFromImage(normA)
 	}
 
 	// 差分があるとき赤ピクセルの連結成分を返す (generate_diff に依らない)。
@@ -333,6 +334,34 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
 	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, regionsTotal, warnings, nil
+}
+
+// pixelmatchDiffAlpha は pixelmatch 既定の alpha（一致ピクセルを白寄りに薄める係数）。
+const pixelmatchDiffAlpha = 0.1
+
+// fadedGrayscaleFromImage は pixelmatch の一致ピクセル描画と同じ式で、img の輝度を
+// グレースケール化して白寄りに薄めた不透明 RGBA を返す。WriteTo が nil のまま返る
+// 同一画像 fast path を README 記載の見た目に揃える (Issue #659)。
+func fadedGrayscaleFromImage(img image.Image) *image.RGBA {
+	bounds := img.Bounds()
+	out := image.NewRGBA(bounds)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			// RGBA() は 16-bit。>>8 で 8-bit に落とし、pixelmatch 既定 alpha=0.1 で薄める。
+			rf := float64(r >> 8)
+			gf := float64(g >> 8)
+			bf := float64(b >> 8)
+			yVal := rf*0.29889531 + gf*0.58662247 + bf*0.11448223
+			v := uint8(255 + (yVal-255)*pixelmatchDiffAlpha)
+			i := out.PixOffset(x, y)
+			out.Pix[i+0] = v
+			out.Pix[i+1] = v
+			out.Pix[i+2] = v
+			out.Pix[i+3] = 255
+		}
+	}
+	return out
 }
 
 // collectDiffRegions は差分画像の赤ピクセルを 4 近傍連結成分に分割し、

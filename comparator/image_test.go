@@ -2,6 +2,7 @@ package comparator
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -393,21 +394,58 @@ func TestRunPixelMatch_ImageSize(t *testing.T) {
 
 // TestRunPixelMatch_IdenticalGenerateDiff は同一画像でも generateDiff=true なら
 // 差分 PNG を返すこと。pixelmatch の同一画像 fast path は WriteTo を差し替えない
-// ため、事前確保をやめたあと nil で Encode しないことを回帰防止する。
+// ため、nil 時は image A の薄いグレースケール (不透明) を自前生成する (Issue #659)。
 func TestRunPixelMatch_IdenticalGenerateDiff(t *testing.T) {
+	solid := color.RGBA{200, 200, 200, 255}
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
-	draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{200, 200, 200, 255}}, image.Point{}, draw.Src)
+	draw.Draw(img, img.Bounds(), &image.Uniform{solid}, image.Point{}, draw.Src)
 	pngBytes := encodePNGBytes(t, img)
 
-	_, _, diffCount, diffURI, _, _, _, _, _, err := RunPixelMatch(pngBytes, pngBytes, 0.1, true, false, nil)
+	_, _, diffCount, diffURI, _, _, regions, regionsTotal, _, err := RunPixelMatch(pngBytes, pngBytes, 0.1, true, false, nil)
 	if err != nil {
 		t.Fatalf("RunPixelMatch failed: %v", err)
 	}
 	if diffCount != 0 {
 		t.Errorf("Expected diffCount=0 for identical images, got %d", diffCount)
 	}
+	if len(regions) != 0 || regionsTotal != 0 {
+		t.Errorf("Expected no diff_regions for identical images, got regions=%v total=%d", regions, regionsTotal)
+	}
 	if !strings.HasPrefix(diffURI, "data:image/png;base64,") {
-		t.Errorf("Expected PNG data URI for generateDiff=true, got %q", diffURI)
+		t.Fatalf("Expected PNG data URI for generateDiff=true, got %q", diffURI)
+	}
+
+	raw, ok := strings.CutPrefix(diffURI, "data:image/png;base64,")
+	if !ok {
+		t.Fatalf("Expected data URI prefix, got %q", diffURI)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("Failed to decode diff_image base64: %v", err)
+	}
+	diffImg, err := png.Decode(bytes.NewReader(decoded))
+	if err != nil {
+		t.Fatalf("Failed to decode diff_image PNG: %v", err)
+	}
+
+	// 単色 RGB(200,200,200) → pixelmatch 既定 alpha=0.1 で v=249 の不透明グレー。
+	const wantV uint8 = 249
+	bounds := diffImg.Bounds()
+	if bounds.Dx() != 16 || bounds.Dy() != 16 {
+		t.Errorf("Expected 16x16 diff image, got %dx%d", bounds.Dx(), bounds.Dy())
+	}
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := diffImg.At(x, y).RGBA()
+			r8, g8, b8, a8 := uint8(r>>8), uint8(g>>8), uint8(b>>8), uint8(a>>8)
+			if a8 != 255 {
+				t.Fatalf("Expected opaque alpha=255 at (%d,%d), got %d", x, y, a8)
+			}
+			if r8 != wantV || g8 != wantV || b8 != wantV {
+				t.Fatalf("Expected solid gray (%d,%d,%d) at (%d,%d), got (%d,%d,%d)",
+					wantV, wantV, wantV, x, y, r8, g8, b8)
+			}
+		}
 	}
 }
 
