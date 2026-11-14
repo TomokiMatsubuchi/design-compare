@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// errShowVersion は --version 指定時に parseCLIArgs が返す。
+// runCLIWithIO は比較をせず終了コード 0 で返す。
+var errShowVersion = errors.New("show version")
 
 // mcpParamToCLIFlag は compare_design の MCP パラメータ名と CLI フラグの対応表。
 // ツールエラー本文が MCP 名のまま出るとき、stderr へ CLI 側の直し方を追記する。
@@ -62,8 +67,8 @@ func runCLI(args []string) int {
 func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 	toolArgs, err := parseCLIArgs(args, stdout, stderr)
 	if err != nil {
-		if err == flag.ErrHelp {
-			// 明示ヘルプの Usage は parseCLIArgs が stdout へ書き済み。
+		if err == flag.ErrHelp || err == errShowVersion {
+			// 明示ヘルプ／--version の出力は parseCLIArgs が stdout へ書き済み。
 			return exitSuccess
 		}
 		// parseCLIArgs は flag の自動出力を Discard しているため、ここが
@@ -158,6 +163,7 @@ func writeCLIParamHints(w io.Writer, msg string) {
 // writeUsage は CLI の使い方を w へ書く。明示ヘルプは stdout、パース／検証エラーは stderr。
 func writeUsage(fs *flag.FlagSet, w io.Writer) {
 	fmt.Fprintf(w, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
+	fmt.Fprintf(w, "       design-compare --version  (print version and exit)\n")
 	fmt.Fprintf(w, "       design-compare          (no args: start stdio MCP server)\n")
 	fmt.Fprintf(w, "Positional arguments are not accepted; specify images with --image-a / --image-b.\n\n")
 	prev := fs.Output()
@@ -176,6 +182,7 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, erro
 	usageStderr := func() { writeUsage(fs, stderr) }
 	fs.Usage = usageStderr
 
+	showVersion := fs.Bool("version", false, "Print version and exit")
 	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")
 	imageA := fs.String("image-a", "", "Path to reference image A (maps to image_path_a)")
 	imageB := fs.String("image-b", "", "Path to target image B (maps to image_path_b)")
@@ -214,6 +221,10 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, erro
 	fs.Usage = usageStderr
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected non-flag argument(s): %s (positional arguments are not accepted; specify images with --image-a / --image-b; boolean flags need the --flag=value form)", strings.Join(fs.Args(), " "))
+	}
+	if *showVersion {
+		fmt.Fprintf(stdout, "design-compare %s\n", version)
+		return nil, errShowVersion
 	}
 
 	toolArgs := make(map[string]any)
