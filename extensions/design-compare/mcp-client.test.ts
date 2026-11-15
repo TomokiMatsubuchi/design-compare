@@ -258,6 +258,30 @@ test("resolves a matching layout_tree comparison against the real binary", async
   assert.match(text, /"match_rate": "100.00%"/);
 });
 
+// Pi schema accepts native arrays (not only JSON strings); mcp-client forwards
+// args verbatim, so this pins the same path the extension execute() uses.
+const figmaLayoutNative = [
+  { id: "0", name: "root", x: 0, y: 0, w: 100, h: 100 },
+  { id: "1", name: "hero", parent: "0", x: 0, y: 0, w: 50, h: 50 },
+];
+const matchingWebLayoutNative = [
+  { selector: "body", x: 0, y: 0, w: 100, h: 100 },
+  { selector: ".hero", parent: "body", x: 0, y: 0, w: 50, h: 50 },
+];
+
+test("resolves layout_tree when figma_layout/web_layout are native JSON arrays", async () => {
+  const result = await callCompareDesign({
+    binaryPath: realBinary,
+    args: { mode: "layout_tree", figma_layout: figmaLayoutNative, web_layout: matchingWebLayoutNative },
+    cwd: workDir,
+    timeoutMs: 30_000,
+  });
+
+  const text = (result.content ?? []).map((c) => c.text ?? "").join("");
+  assert.match(text, /"status": "success"/);
+  assert.match(text, /"match_rate": "100.00%"/);
+});
+
 test("reports a mismatch instead of silently passing", async () => {
   const result = await callCompareDesign({
     binaryPath: realBinary,

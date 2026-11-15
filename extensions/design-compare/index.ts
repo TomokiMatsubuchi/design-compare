@@ -90,15 +90,22 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
         }),
       ),
       figma_layout: Type.Optional(
-        Type.String({
-          description: "Inline JSON Figma node list for layout_tree; mutually exclusive with figma_layout_path",
-        }),
+        Type.Union(
+          [Type.String(), Type.Array(Type.Record(Type.String(), Type.Any()))],
+          {
+            description:
+              "Inline JSON Figma node list for layout_tree; mutually exclusive with figma_layout_path. A native JSON array is also accepted and marshaled to the same string form. A single JSON object is not accepted; wrap the nodes in [...]",
+          },
+        ),
       ),
       web_layout: Type.Optional(
-        Type.String({
-          description:
-            "Inline JSON Web DOM node list for layout_tree and layout_integrity; mutually exclusive with web_layout_path",
-        }),
+        Type.Union(
+          [Type.String(), Type.Array(Type.Record(Type.String(), Type.Any()))],
+          {
+            description:
+              "Inline JSON Web DOM node list for layout_tree and layout_integrity; mutually exclusive with web_layout_path. A native JSON array is also accepted and marshaled to the same string form. A single JSON object is not accepted; wrap the nodes in [...]",
+          },
+        ),
       ),
       figma_layout_path: Type.Optional(
         Type.String({
