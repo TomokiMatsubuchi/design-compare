@@ -132,6 +132,9 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	// フィルタ後リストから作ると、除外された親を持つ子が親解決に失敗し
 	// parent_overflow を無言でスキップする（layout_tree の親インデックスと同方針）。
 	allWebNodes := wNodes
+	// フィルタ後に空でも、元から空だった場合と全件除外・幾何欠落を取り違えないよう
+	// ignore 適用前の件数を残す（layout_tree の origWebCount と同方針。Issue #671）。
+	totalNodes := len(wNodes)
 
 	var ignoredCount int
 	var ignoredNodes []string
@@ -219,26 +222,27 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	if len(checkable) == 0 {
-		// 幾何 0 のノードが残っている場合は、ignore 件数があっても「全件除外」と
-		// 誤報しない（layout_tree の #238 と同方針）。キー名ミス (width/height 等)
-		// や非表示要素の計測が主因なので、ゼロ幾何の mismatch を先に返す。
-		if len(wNodes) > 0 {
+		// layout_tree の origFigmaCount / origWebCount 判定と同じ順:
+		// 1) 入力が元から空 2) 元は非空で ignore により全件除外 3) 残りが全て幾何 0。
+		if totalNodes == 0 {
 			result.Status = "mismatch"
-			detail := fmt.Sprintf("no Web nodes have non-zero geometry (%d nodes parsed); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}", len(wNodes))
-			if ignoredCount > 0 {
-				detail += fmt.Sprintf(" (and %s by ignore_nodes / ignore_region)", ignoredNodesWerePhrase(ignoredCount))
-			}
-			result.Details = []string{detail}
+			result.Details = []string{"Web layout node data is empty"}
 			return result, nil
 		}
-		// ignore で全ノードが除外され検査対象が無くなった場合のみ skipped。
-		if ignoredCount > 0 {
+		// 元の入力が非空かつ、幾何有効ノードが ignore で全て消えた場合のみ skipped。
+		// 除外と幾何欠落の混在はここに落とさず、下の mismatch で幾何欠落を主因とする（Issue #671）。
+		if len(wNodes) == 0 && ignoredCount > 0 {
 			result.Status = "skipped"
-			result.Details = []string{fmt.Sprintf("All Web nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", ignoredCount)}
+			result.Details = []string{fmt.Sprintf("All Web nodes were excluded by ignore_nodes / ignore_region (%s); no comparison pairs left", ignoredNodesInTotalPhrase(ignoredCount))}
 			return result, nil
 		}
+		// 残りノードの幾何が全て 0（一部 ignore されていても「全件除外」と誤報しない）。
 		result.Status = "mismatch"
-		result.Details = []string{"Web layout node data is empty"}
+		detail := fmt.Sprintf("no Web nodes have non-zero geometry (%d nodes parsed); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}", totalNodes)
+		if ignoredCount > 0 {
+			detail += fmt.Sprintf(" (and %s by ignore_nodes / ignore_region)", ignoredNodesWerePhrase(ignoredCount))
+		}
+		result.Details = []string{detail}
 		return result, nil
 	}
 

@@ -551,6 +551,12 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "skipped" {
 			t.Fatalf("got %#v", res)
 		}
+		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "1 node ignored in total") {
+			t.Fatalf("singular ignore phrasing expected, got %v", res.Details)
+		}
+		if strings.Contains(res.Details[0], "1 nodes ignored in total") {
+			t.Errorf("must not use plural for 1 ignored node: %q", res.Details[0])
+		}
 	})
 
 	t.Run("invalid_json", func(t *testing.T) {
@@ -754,9 +760,10 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 
 	t.Run("partial_ignore_remaining_zero_geometry_is_mismatch", func(t *testing.T) {
 		// ignore で一部だけ除外し、残りがすべて幾何 0 のとき「全件除外」の
-		// skipped と誤報せず、ゼロ幾何の mismatch にする（Issue #475）。
-		web := `[{"selector":"#a","x":0,"y":0,"w":0,"h":0},{"selector":"#b","x":0,"y":0,"w":10,"h":10}]`
-		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#b"}, nil)
+		// skipped と誤報せず、ゼロ幾何の mismatch にする（Issue #475 / #671）。
+		// 件数は ignore 適用前の入力件数（totalNodes）を出す。
+		web := `[{"selector":"#wide","x":0,"y":0,"w":900,"h":50},{"selector":"#a","x":0,"y":0,"w":0,"h":0}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#wide"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -768,6 +775,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "no Web nodes have non-zero geometry") {
 			t.Fatalf("details should report zero geometry, got %v", res.Details)
+		}
+		if !strings.Contains(res.Details[0], "2 nodes parsed") {
+			t.Errorf("geometry message must use pre-ignore totalNodes, got %q", res.Details[0])
 		}
 		if strings.Contains(res.Details[0], "All Web nodes were excluded") {
 			t.Errorf("must not report all-excluded when a zero-geometry node remains: %q", res.Details[0])
