@@ -7466,6 +7466,42 @@ func assertBoolPtr(t *testing.T, name string, got *bool, want bool) {
 	}
 }
 
+// TestModeParamSupportMatchesToolSchema は newCompareDesignTool の
+// InputSchema.Properties（mode を除く）と modeParamSupport のキー集合が
+// 一致することを確認する (Issue #685)。片方だけ更新すると、スキーマにだけ
+// あるパラメータは全モードで "not recognized" になり、マップにだけある
+// パラメータはクライアントから送れない。あわせて mode が Required である
+// ことも確認する。
+func TestModeParamSupportMatchesToolSchema(t *testing.T) {
+	tool := newCompareDesignTool()
+	props := tool.InputSchema.Properties
+
+	hasModeRequired := false
+	for _, name := range tool.InputSchema.Required {
+		if name == "mode" {
+			hasModeRequired = true
+			break
+		}
+	}
+	if !hasModeRequired {
+		t.Errorf("InputSchema.Required missing %q; got %v", "mode", tool.InputSchema.Required)
+	}
+
+	for key := range props {
+		if key == "mode" {
+			continue
+		}
+		if _, ok := modeParamSupport[key]; !ok {
+			t.Errorf("schema property %q is not in modeParamSupport", key)
+		}
+	}
+	for key := range modeParamSupport {
+		if _, ok := props[key]; !ok {
+			t.Errorf("modeParamSupport key %q is not in tool schema Properties", key)
+		}
+	}
+}
+
 // TestMCPInitializeIncludesModeInstructions は initialize 応答の instructions に
 // モード使い分け指針が含まれることを確認する (Issue #243)。
 func TestMCPInitializeIncludesModeInstructions(t *testing.T) {
