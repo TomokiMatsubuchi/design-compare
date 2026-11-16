@@ -2845,7 +2845,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
-		// Issue #629: max_details で details のみ切り詰め（issues / issue_count は実件数のまま）
+		// Issue #629 / #679: max_details で details と issues を切り詰め（issue_count は実件数のまま）
 		t.Run("MaxDetails", func(t *testing.T) {
 			manyOverflow := `[
 				{"selector":"#a","x":0,"y":0,"w":900,"h":50},
@@ -2948,13 +2948,19 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if omit != "... and 2 more details omitted (max_details=2)" {
 				t.Errorf("Expected omit line, got %q", omit)
 			}
-			// issue_count / issues は実件数のまま（合否判定は変えない）
+			// issue_count は総数のまま、issues は同じ max_details で打ち切り（Issue #679）
 			if resultCap["issue_count"] != float64(3) {
 				t.Errorf("issue_count should remain full, got %v", resultCap["issue_count"])
 			}
 			issues, _ := resultCap["issues"].([]interface{})
-			if len(issues) != 3 {
-				t.Errorf("issues should remain complete, got %d", len(issues))
+			if len(issues) != 2 {
+				t.Errorf("issues should truncate to max_details=2, got %d", len(issues))
+			}
+			if len(issues) >= 1 {
+				first, _ := issues[0].(map[string]interface{})
+				if first["selector"] != "#a" {
+					t.Errorf("expected first kept issue #a, got %#v", first)
+				}
 			}
 		})
 	})

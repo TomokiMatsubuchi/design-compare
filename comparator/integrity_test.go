@@ -949,3 +949,56 @@ func TestLayoutIntegrity_RequiredKeys(t *testing.T) {
 		}
 	})
 }
+
+func TestLimitLayoutIntegrityIssues(t *testing.T) {
+	issues := []LayoutIssue{
+		{Type: "viewport_overflow_x", Selector: "#a", Edge: "right"},
+		{Type: "viewport_overflow_x", Selector: "#b", Edge: "right"},
+		{Type: "viewport_overflow_x", Selector: "#c", Edge: "right"},
+		{Type: "parent_overflow", Selector: "#d", Edge: "left"},
+	}
+
+	t.Run("max_details_2_truncates", func(t *testing.T) {
+		got := LimitLayoutIntegrityIssues(issues, 2)
+		if len(got) != 2 {
+			t.Fatalf("len=%d, want 2", len(got))
+		}
+		if got[0].Selector != "#a" || got[1].Selector != "#b" {
+			t.Errorf("expected first two kept, got %#v", got)
+		}
+	})
+
+	t.Run("unspecified_or_zero_keeps_all", func(t *testing.T) {
+		got := LimitLayoutIntegrityIssues(issues, 0)
+		if len(got) != len(issues) {
+			t.Fatalf("len=%d, want %d", len(got), len(issues))
+		}
+		for i := range issues {
+			if got[i].Selector != issues[i].Selector {
+				t.Errorf("got[%d]=%q, want %q", i, got[i].Selector, issues[i].Selector)
+			}
+		}
+	})
+
+	t.Run("cap_at_or_above_len_keeps_all", func(t *testing.T) {
+		got := LimitLayoutIntegrityIssues(issues, len(issues))
+		if len(got) != len(issues) {
+			t.Fatalf("len=%d, want %d", len(got), len(issues))
+		}
+		got = LimitLayoutIntegrityIssues(issues, len(issues)+1)
+		if len(got) != len(issues) {
+			t.Fatalf("over-cap len=%d, want %d", len(got), len(issues))
+		}
+	})
+
+	t.Run("nil_or_empty_unchanged", func(t *testing.T) {
+		if got := LimitLayoutIntegrityIssues(nil, 2); got != nil {
+			t.Errorf("nil input: got %#v", got)
+		}
+		empty := []LayoutIssue{}
+		got := LimitLayoutIntegrityIssues(empty, 2)
+		if len(got) != 0 {
+			t.Errorf("empty input: got %#v", got)
+		}
+	})
+}

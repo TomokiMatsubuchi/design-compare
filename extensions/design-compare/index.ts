@@ -156,7 +156,7 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
       max_details: Type.Optional(
         Type.Number({
           description:
-            "Maximum detail lines for layout_tree and layout_integrity; default 0 means unlimited. In layout_tree also caps mismatched_pairs / mismatched_nodes / extra_web_nodes. In layout_integrity only details are truncated; issues stay complete",
+            "Maximum detail lines for layout_tree and layout_integrity; default 0 means unlimited. In layout_tree also caps mismatched_pairs / mismatched_nodes / extra_web_nodes. In layout_integrity also caps issues; issue_count stays the full count",
         }),
       ),
       threshold: Type.Optional(
