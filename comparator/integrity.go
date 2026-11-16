@@ -419,3 +419,14 @@ func parentOverflow(wn WebNode, bySelector map[string]*WebNode) []LayoutIssue {
 	}
 	return out
 }
+
+// LimitLayoutIntegrityIssues は layout_integrity の issues を maxDetails 件に切り詰める。
+// maxDetails <= 0 のときは無制限（現行どおり全件）。issue_count は触らない
+// （呼び出し側が総数を残し、表示が一部だと分かるようにする。Issue #679）。
+func LimitLayoutIntegrityIssues(issues []LayoutIssue, maxDetails int) []LayoutIssue {
+	keep, omitted := limitMaxKeep(len(issues), maxDetails)
+	if omitted == 0 {
+		return issues
+	}
+	return issues[:keep]
+}
