@@ -262,6 +262,10 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 
 	var issues []LayoutIssue
 	var parentChecked, skippedUnresolved, skippedZeroGeom int
+	// ゼロ幾何親で parent_overflow をスキップした親セレクタ（出現順・重複なし）。
+	// details の代表表示用（件数は skippedZeroGeom。Issue #696）。
+	var zeroGeomParentSelectors []string
+	seenZeroGeomParent := make(map[string]bool)
 	for _, wn := range checkable {
 		if issue, ok := viewportOverflowX(wn, viewportW); ok {
 			issues = append(issues, issue)
@@ -280,9 +284,13 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 			issues = append(issues, parentOverflow(wn, bySelector)...)
 			continue
 		}
-		// 親が bySelector に無い: 入力欠落は unresolved_parent_refs、ゼロ幾何は件数のみ。
+		// 親が bySelector に無い: 入力欠落は unresolved_parent_refs、ゼロ幾何は件数+代表セレクタ。
 		if presentSelectors[wn.Parent] {
 			skippedZeroGeom++
+			if !seenZeroGeomParent[wn.Parent] {
+				seenZeroGeomParent[wn.Parent] = true
+				zeroGeomParentSelectors = append(zeroGeomParentSelectors, wn.Parent)
+			}
 			continue
 		}
 		skippedUnresolved++
@@ -319,6 +327,17 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		details = append(details, fmt.Sprintf(
 			"%d Web nodes were skipped because w/h is <= 0 (hidden elements or a key-name mismatch)",
 			skippedZeroGeometry))
+	}
+	// 親が入力にあるが w/h=0 のため parent_overflow をスキップしたとき、件数と代表セレクタを
+	// 独立行で知らせる（status は非破壊。要約行の件数に加えどの親かを特定できるようにする。Issue #696）。
+	if skippedZeroGeom > 0 {
+		quoted := make([]string, len(zeroGeomParentSelectors))
+		for i, sel := range zeroGeomParentSelectors {
+			quoted[i] = fmt.Sprintf("'%s'", sel)
+		}
+		details = append(details, fmt.Sprintf(
+			"parent_overflow check skipped for %d children whose parent has zero width/height: %s",
+			skippedZeroGeom, strings.Join(quoted, ", ")))
 	}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)
