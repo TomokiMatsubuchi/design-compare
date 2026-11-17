@@ -380,6 +380,47 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if !strings.Contains(res.Details[0], "parent_checked_nodes=0") {
 			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
 		}
+		wantSkip := "parent_overflow check skipped for 1 children whose parent has zero width/height: '#card'"
+		foundSkip := false
+		for _, d := range res.Details {
+			if d == wantSkip {
+				foundSkip = true
+				break
+			}
+		}
+		if !foundSkip {
+			t.Errorf("expected details line %q, got %v", wantSkip, res.Details)
+		}
+	})
+
+	t.Run("zero_height_parent_skip_detail_lists_selector", func(t *testing.T) {
+		// Issue #696: h=0 の親と、親ボックスを超える子がいても parent_overflow は無言にせず
+		// details に件数+代表セレクタを出し、status は従来どおり（viewport 内なら success）。
+		web := `[{"selector":"#card","x":0,"y":0,"w":400,"h":0},{"selector":"#child-a","x":0,"y":0,"w":500,"h":50,"parent":"#card"},{"selector":"#child-b","x":10,"y":10,"w":450,"h":40,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IssueCount != 0 {
+			t.Fatalf("status/issues must stay non-failing for zero-geom parent skip, got %#v", res)
+		}
+		if res.ParentOverflowSkippedZeroGeom != 2 {
+			t.Fatalf("parent_overflow_skipped_zero_geom=%d, want 2", res.ParentOverflowSkippedZeroGeom)
+		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
+		wantSkip := "parent_overflow check skipped for 2 children whose parent has zero width/height: '#card'"
+		foundSkip := false
+		for _, d := range res.Details {
+			if d == wantSkip {
+				foundSkip = true
+				break
+			}
+		}
+		if !foundSkip {
+			t.Errorf("expected details line %q, got %v", wantSkip, res.Details)
+		}
 	})
 
 	t.Run("ignored_parent_with_zero_geometry_reports_skip", func(t *testing.T) {
