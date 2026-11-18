@@ -1000,9 +1000,12 @@ func TestLimitLayoutIntegrityIssues(t *testing.T) {
 	}
 
 	t.Run("max_details_2_truncates", func(t *testing.T) {
-		got := LimitLayoutIntegrityIssues(issues, 2)
+		got, omitted := LimitLayoutIntegrityIssues(issues, 2)
 		if len(got) != 2 {
 			t.Fatalf("len=%d, want 2", len(got))
+		}
+		if omitted != 2 {
+			t.Fatalf("omitted=%d, want 2", omitted)
 		}
 		if got[0].Selector != "#a" || got[1].Selector != "#b" {
 			t.Errorf("expected first two kept, got %#v", got)
@@ -1010,9 +1013,12 @@ func TestLimitLayoutIntegrityIssues(t *testing.T) {
 	})
 
 	t.Run("unspecified_or_zero_keeps_all", func(t *testing.T) {
-		got := LimitLayoutIntegrityIssues(issues, 0)
+		got, omitted := LimitLayoutIntegrityIssues(issues, 0)
 		if len(got) != len(issues) {
 			t.Fatalf("len=%d, want %d", len(got), len(issues))
+		}
+		if omitted != 0 {
+			t.Fatalf("omitted=%d, want 0", omitted)
 		}
 		for i := range issues {
 			if got[i].Selector != issues[i].Selector {
@@ -1022,24 +1028,37 @@ func TestLimitLayoutIntegrityIssues(t *testing.T) {
 	})
 
 	t.Run("cap_at_or_above_len_keeps_all", func(t *testing.T) {
-		got := LimitLayoutIntegrityIssues(issues, len(issues))
+		got, omitted := LimitLayoutIntegrityIssues(issues, len(issues))
 		if len(got) != len(issues) {
 			t.Fatalf("len=%d, want %d", len(got), len(issues))
 		}
-		got = LimitLayoutIntegrityIssues(issues, len(issues)+1)
+		if omitted != 0 {
+			t.Fatalf("omitted=%d, want 0", omitted)
+		}
+		got, omitted = LimitLayoutIntegrityIssues(issues, len(issues)+1)
 		if len(got) != len(issues) {
 			t.Fatalf("over-cap len=%d, want %d", len(got), len(issues))
+		}
+		if omitted != 0 {
+			t.Fatalf("over-cap omitted=%d, want 0", omitted)
 		}
 	})
 
 	t.Run("nil_or_empty_unchanged", func(t *testing.T) {
-		if got := LimitLayoutIntegrityIssues(nil, 2); got != nil {
+		got, omitted := LimitLayoutIntegrityIssues(nil, 2)
+		if got != nil {
 			t.Errorf("nil input: got %#v", got)
 		}
+		if omitted != 0 {
+			t.Fatalf("nil omitted=%d, want 0", omitted)
+		}
 		empty := []LayoutIssue{}
-		got := LimitLayoutIntegrityIssues(empty, 2)
+		got, omitted = LimitLayoutIntegrityIssues(empty, 2)
 		if len(got) != 0 {
 			t.Errorf("empty input: got %#v", got)
+		}
+		if omitted != 0 {
+			t.Fatalf("empty omitted=%d, want 0", omitted)
 		}
 	})
 }

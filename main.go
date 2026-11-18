@@ -124,7 +124,7 @@ func newCompareDesignTool() mcp.Tool {
 		),
 		mcp.WithNumber("max_details",
 			mcp.Min(0),
-			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines to return (default 0 = unlimited). When greater than 0, the leading lines (summary first) are kept up to this count and a final omit line is appended ('... and N more details omitted'). In 'layout_tree', mismatched_pairs / mismatched_nodes / extra_web_nodes are also truncated to the same cap with mismatched_pairs_omitted / extra_web_nodes_omitted reporting how many were dropped (ignored_nodes is not truncated so it stays aligned with ignored_count). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'details' and 'issues' are truncated to the same cap; 'issue_count' stays the full count so pass/fail and total size remain visible."),
+			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines to return (default 0 = unlimited). When greater than 0, the leading lines (summary first) are kept up to this count and a final omit line is appended ('... and N more details omitted'). In 'layout_tree', mismatched_pairs / mismatched_nodes / extra_web_nodes are also truncated to the same cap with mismatched_pairs_omitted / extra_web_nodes_omitted reporting how many were dropped (ignored_nodes is not truncated so it stays aligned with ignored_count). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'details' and 'issues' are truncated to the same cap with issues_omitted reporting how many issues were dropped; 'issue_count' stays the full count so pass/fail and total size remain visible."),
 		),
 		mcp.WithNumber("threshold",
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
@@ -1264,9 +1264,10 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		// details / issues を同じ max_details で切り詰める（issue_count は総数のまま）。
 		// details は layout_tree と同じ LimitLayoutTreeDetails（Issue #629）。
-		// issues も打ち切り、応答肥大を抑えつつ件数把握は残す (Issue #679)。
+		// issues も打ち切り、省略数は issues_omitted で返す (Issue #679 / #698)。
 		integrityResult.Details = comparator.LimitLayoutTreeDetails(integrityResult.Details, maxDetails)
-		integrityResult.Issues = comparator.LimitLayoutIntegrityIssues(integrityResult.Issues, maxDetails)
+		var issuesOmitted int
+		integrityResult.Issues, issuesOmitted = comparator.LimitLayoutIntegrityIssues(integrityResult.Issues, maxDetails)
 
 		responseMap = map[string]interface{}{
 			"status":               integrityResult.Status,
@@ -1289,6 +1290,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		if integrityResult.IssueCount > 0 {
 			responseMap["issues"] = integrityResult.Issues
+		}
+		if issuesOmitted > 0 {
+			responseMap["issues_omitted"] = issuesOmitted
 		}
 		if len(integrityResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = integrityResult.UnmatchedIgnores
