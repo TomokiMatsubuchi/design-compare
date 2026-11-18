@@ -373,6 +373,60 @@ func TestRunCLILayoutTree(t *testing.T) {
 	}
 }
 
+// TestRunCLILayoutTreeInline は一時ファイルなしで --figma-layout / --web-layout の
+// インライン JSON が layout_tree 比較に通り、exit 0 になることを固定する (Issue #704)。
+func TestRunCLILayoutTreeInline(t *testing.T) {
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "layout_tree",
+		"--figma-layout", figma,
+		"--web-layout", web,
+	}, &stdout, &stderr)
+	if code != exitSuccess {
+		t.Fatalf("inline layout exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "success" || result["mode"] != "layout_tree" {
+		t.Errorf("unexpected result: %v", result)
+	}
+}
+
+// TestRunCLILayoutInlineAndFileConflict は --figma-layout と --figma-layout-file の
+// 併用が resolveLayoutInput の排他エラーで exit 1 になることを固定する (Issue #704)。
+func TestRunCLILayoutInlineAndFileConflict(t *testing.T) {
+	tmp := t.TempDir()
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+	figmaPath := filepath.Join(tmp, "figma.json")
+	if err := os.WriteFile(figmaPath, []byte(figma), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "layout_tree",
+		"--figma-layout", figma,
+		"--figma-layout-file", figmaPath,
+		"--web-layout", web,
+	}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("expected exit 1 for inline+file, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "only one of figma_layout and figma_layout_path can be specified") {
+		t.Errorf("expected mutual-exclusion error, got %q", errOut)
+	}
+}
+
 func TestRunCLIErrorExit(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{"--mode", "strict"}, &stdout, &stderr)
