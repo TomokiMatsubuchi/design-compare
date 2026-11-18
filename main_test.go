@@ -2845,7 +2845,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
-		// Issue #629 / #679: max_details で details と issues を切り詰め（issue_count は実件数のまま）
+		// Issue #629 / #679 / #698: max_details で details と issues を切り詰め
+		// （issue_count は実件数のまま、省略数は issues_omitted）
 		t.Run("MaxDetails", func(t *testing.T) {
 			manyOverflow := `[
 				{"selector":"#a","x":0,"y":0,"w":900,"h":50},
@@ -2882,6 +2883,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if len(issuesAll) != 3 {
 				t.Fatalf("issues=%d when max_details omitted, want 3", len(issuesAll))
 			}
+			if _, ok := resultAll["issues_omitted"]; ok {
+				t.Errorf("issues_omitted should be absent without cap, got %v", resultAll["issues_omitted"])
+			}
 			if resultAll["parent_checked_nodes"] != float64(0) {
 				t.Errorf("parent_checked_nodes=%v, want 0", resultAll["parent_checked_nodes"])
 			}
@@ -2908,6 +2912,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			issuesZero, _ := resultZero["issues"].([]interface{})
 			if len(issuesZero) != 3 {
 				t.Fatalf("issues=%d when max_details=0, want 3", len(issuesZero))
+			}
+			if _, ok := resultZero["issues_omitted"]; ok {
+				t.Errorf("issues_omitted should be absent when max_details=0, got %v", resultZero["issues_omitted"])
 			}
 
 			reqCap := mcp.CallToolRequest{
@@ -2961,6 +2968,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				if first["selector"] != "#a" {
 					t.Errorf("expected first kept issue #a, got %#v", first)
 				}
+			}
+			// 省略件数は issues_omitted（非空時のみ。Issue #698）
+			if got := resultCap["issues_omitted"]; got != float64(1) {
+				t.Errorf("issues_omitted=%v, want 1", got)
 			}
 		})
 	})
