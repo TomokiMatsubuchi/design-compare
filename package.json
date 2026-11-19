@@ -32,7 +32,7 @@
     ]
   },
   "scripts": {
-    "test": "go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts",
+    "test": "go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts .github/scripts/release-notes.test.mjs",
     "test:ext": "node --test extensions/design-compare/mcp-client.test.ts"
   },
   "peerDependencies": {
