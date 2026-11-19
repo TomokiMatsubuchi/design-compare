@@ -124,6 +124,25 @@ jobs:
           ' "$next"
           echo "Next release version: $next"
 
+      - name: Generate the release notes
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 本文はタグ以降のコミット件名から作る。件名の type だけで節を決め、件名は書き換えない。
+          # 公開より前に走らせ、本文の生成に失敗したら npm へ出さないようにする。
+          git fetch --tags --force --quiet
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          node .github/scripts/release-notes.mjs \
+            --from "$last_tag" \
+            --to HEAD \
+            --current "v${VERSION}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --out "$RUNNER_TEMP/release-notes.md"
+          echo "----- release notes -----"
+          cat "$RUNNER_TEMP/release-notes.md"
+
       - name: Publish to npm
         if: steps.version.outputs.version != ''
         env:
@@ -159,4 +178,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes
+        run: |
+          set -euo pipefail
+          # 差分行から自動生成する一覧ではなく、公開前に作った本文を使う。
+          gh release create "v${VERSION}" --title "v${VERSION}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

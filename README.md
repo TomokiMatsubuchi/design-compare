@@ -340,6 +340,7 @@ npm test
 - **件数の数え方:** 直近の `v*` タグ以降のコミット数。`v*` タグがまだ無いリポジトリでは初回コミット以降の全コミットを数えます。CI 完了からリリース処理までの間に `main` が進んでいた場合は公開せずスキップし、最新の `main` の CI 完了時に改めて判定します。
 - **版番号:** `package.json` と npm の最新公開版のうち大きい方のパッチを 1 つ上げ、`plugin.yaml`、`.codex-plugin/plugin.json`、各 `marketplace.json` の `plugins[].version`、`main.go` の `version` 定数（`--version` と MCP serverInfo が返す値）も同じ値に揃えます（marketplace 最上位の `version` は形式の版なので更新しません）。
 - **処理順:** 公開が成功してから `chore: release vX.Y.Z [skip ci]` を `main` にコミットし、`vX.Y.Z` タグと GitHub リリースを作成します（レジストリとタグのずれを避けるため）。
+- **リリースノート:** GitHub リリースの本文は「前回の `v*` タグ以降のコミット件名」から `.github/scripts/release-notes.mjs` で組み立てます。件名先頭の `<type>` だけで節を決め、`feat` は「新機能」、`fix` は「不具合修正」、それ以外は「その他」に並べます。件名は書き換えず、前回タグ以降の比較リンク（Full Changelog）を末尾に付けます。リリース用コミット（`chore: release vX.Y.Z [skip ci]`）は本文に入りません。本文は npm へ公開する前に生成するため、生成に失敗したリリースは公開されません。PR のタイトル（squash 後のコミット件名）を `<type> #issue: 内容 (#PR)` の形で書いておくと、そのまま読みやすいノートになります。
 - **必要な設定:** リポジトリシークレット `NPM_TOKEN`（npm の automation token）。未設定のときは公開だけをスキップし、実行ログに警告を出します。`main` に PR 必須のブランチ保護をかけている場合は、`github-actions[bot]` からの直接 push が拒否されるため、リリース用の bypass を許可するか保護の対象外にしてください。
 
 ---
