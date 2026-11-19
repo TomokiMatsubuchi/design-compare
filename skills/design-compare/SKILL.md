@@ -35,14 +35,32 @@ Example layout for one run (`RUN=/tmp/design-compare-<unique-suffix>`):
 ### Step 1: Gather Figma Design Data
 Use the **Figma MCP server** to fetch:
 - Node image: Save to `$RUN/figma.png` (e.g. `/tmp/design-compare-20261029-a1b2/figma.png`).
-- Node metadata: Extract the layout bounding boxes and structural details.
+- Node metadata: Extract the layout bounding boxes into a **FigmaNode** JSON array for `figma_layout` / `figma_layout_path`.
+
+**FigmaNode schema** (required keys: `id`, `name`, `x`, `y`, `w`, `h`; optional `parent` = parent node's `id`):
+
+```json
+[
+  {"id": "1", "name": "Card", "x": 0, "y": 0, "w": 400, "h": 300},
+  {"id": "2", "name": "Button", "x": 100, "y": 100, "w": 200, "h": 50, "parent": "1"}
+]
+```
+
+Keys are `w` / `h` — **not** `width` / `height`. Save the array to `$RUN/figma_layout.json` (or pass it inline as `figma_layout`).
 
 ### Step 2: Gather Web Implementation Data
 Use your browser automation MCP tools (chrome-devtools-mcp or playwright-cli):
 - Capture page screenshot: Save to `$RUN/web.png` (e.g. `/tmp/design-compare-20261029-a1b2/web.png`).
 - Extract DOM bounding boxes into a **WebNode** JSON array for `web_layout` / `web_layout_path`.
 
-**WebNode schema** (same JSON for `layout_tree` and `layout_integrity`):
+**WebNode schema** (same JSON for `layout_tree` and `layout_integrity`; required keys: `selector`, `x`, `y`, `w`, `h`; optional `parent` = parent node's `selector`):
+
+```json
+[
+  {"selector": "#card", "x": 0, "y": 0, "w": 400, "h": 300},
+  {"selector": "#card button.primary", "x": 100, "y": 100, "w": 200, "h": 50, "parent": "#card"}
+]
+```
 
 | Field | Required | Meaning |
 | :--- | :--- | :--- |
@@ -78,7 +96,7 @@ JSON.stringify(extractWebLayout([
 ]));
 ```
 
-Pass the resulting array as `web_layout` (or write it to a file and use `web_layout_path`). Reuse the same shape for Step 5 `layout_integrity` (recapture after resizing the viewport).
+Pass the resulting array as `web_layout` (or write it to a file and use `web_layout_path`). For Step 5 `layout_integrity`, resize the viewport to **768×1024** (portrait) or **1024×768** (landscape), then recapture DOM boxes in this same WebNode shape — do not reuse coordinates from a different viewport size.
 
 ### Step 3: Run the Comparison
 Call the `compare_design` tool from **design-compare** using the appropriate mode:
