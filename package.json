@@ -1,6 +1,6 @@
 {
   "name": "design-compare",
-  "version": "1.0.4",
+  "version": "1.0.8",
   "description": "Design comparison MCP server and Pi extension with structural, perceptual, strict, and iPad layout-integrity modes",
   "type": "module",
   "keywords": [
@@ -32,7 +32,7 @@
     ]
   },
   "scripts": {
-    "test": "go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts",
+    "test": "go build -o design-compare . && node --test extensions/design-compare/mcp-client.test.ts .github/scripts/release-notes.test.mjs",
     "test:ext": "node --test extensions/design-compare/mcp-client.test.ts"
   },
   "peerDependencies": {

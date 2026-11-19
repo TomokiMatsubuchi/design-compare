@@ -156,8 +156,11 @@ export function callCompareDesign(options: CallOptions): Promise<McpCallResult> 
         } catch {
           continue; // Ignore anything that is not a JSON-RPC frame.
         }
-        if (message.id !== 2) continue;
+        // Reject any JSON-RPC error frame immediately (e.g. initialize id=1, or
+        // parse/invalid-request errors that omit id). Filtering on id first would
+        // discard them and wait until the call timeout.
         if (message.error) return finish(new Error(message.error.message ?? "Unknown JSON-RPC error"));
+        if (message.id !== 2) continue;
         return finish(undefined, message.result ?? {});
       }
     });

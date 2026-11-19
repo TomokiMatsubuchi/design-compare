@@ -29,11 +29,26 @@ const (
 // 0.5px 程度のはみ出しは描画ノイズであり、1.0px を超えたものだけを崩れとみなす。
 const layoutSlopPx = 1.0
 
+// LayoutIssueNode は崩れを起こした Web ノードの Bounding Box（CSS px）。
+// detail 文面をパースせず座標を読めるようにする（Issue #603）。
+type LayoutIssueNode struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
 // LayoutIssue は検出した 1 件の崩れ。Type は viewport_overflow_x または parent_overflow。
+// Edge / OverflowPx は修正量を文字列パースなしで読めるよう数値で返す（Issue #578）。
+// Node は対象ノードの x/y/w/h（Issue #603）。ParentSelector は parent_overflow のときのみ。
 type LayoutIssue struct {
-	Type     string `json:"type"`
-	Selector string `json:"selector"`
-	Detail   string `json:"detail"`
+	Type           string          `json:"type"`
+	Selector       string          `json:"selector"`
+	Detail         string          `json:"detail"`
+	Edge           string          `json:"edge"`                      // left | right | top | bottom
+	OverflowPx     float64         `json:"overflow_px"`               // はみ出し量（正の px）
+	Node           LayoutIssueNode `json:"node"`                      // 対象ノードの Bounding Box
+	ParentSelector string          `json:"parent_selector,omitempty"` // parent_overflow のみ
 }
 
 type LayoutIntegrityResult struct {
@@ -55,12 +70,15 @@ type LayoutIntegrityResult struct {
 	IgnoredNodes           []string `json:"ignored_nodes,omitempty"`
 	UnmatchedIgnores       []string `json:"unmatched_ignores,omitempty"`
 	UnmatchedIgnoreRegions []string `json:"unmatched_ignore_regions,omitempty"`
-	// UnresolvedParentRefs は parent が空でないのに元リスト上のどの selector にも
-	// 一致しない参照。合否は変えず、layout_tree と同形式（Web: '…'）で通知する。
+	// UnresolvedParentRefs は parent が空でないのに有効な親として使えない参照
+	// （入力欠落・自己参照）。合否は変えず、layout_tree と同形式（Web: '…'）で通知する。
 	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
 	// ParentOverflowSkippedZeroGeom は親ノードは入力にあるが w/h が 0 以下のため
 	// parent_overflow をスキップした checkable 子の件数（status は変えない）。
 	ParentOverflowSkippedZeroGeom int `json:"parent_overflow_skipped_zero_geom,omitempty"`
+	// SkippedZeroGeometry は w/h が 0 以下のため checkable から外したノード数。
+	// 一部だけ零サイズのときも件数を返し、success を「全要素検査済み」と誤認させない（Issue #555）。
+	SkippedZeroGeometry int `json:"skipped_zero_geometry,omitempty"`
 	// ZeroGeometryWarning は ignore 後の Web ノードのうち過半数が明示的な w=h=0 のとき
 	// 付ける誤用検出（status / issue_count は変えない。layout_tree の同名フィールドと同方針。Issue #498）。
 	ZeroGeometryWarning string `json:"zero_geometry_warning,omitempty"`
@@ -114,22 +132,15 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	// フィルタ後リストから作ると、除外された親を持つ子が親解決に失敗し
 	// parent_overflow を無言でスキップする（layout_tree の親インデックスと同方針）。
 	allWebNodes := wNodes
+	// フィルタ後に空でも、元から空だった場合と全件除外・幾何欠落を取り違えないよう
+	// ignore 適用前の件数を残す（layout_tree の origWebCount と同方針。Issue #671）。
+	totalNodes := len(wNodes)
 
 	var ignoredCount int
 	var ignoredNodes []string
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
-		ignoreMap := make(map[string]bool)
-		var wildcardPrefixes []string
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				prefix := strings.TrimSuffix(item, "*")
-				wildcardPrefixes = append(wildcardPrefixes, prefix, cleanNodeName(prefix))
-				continue
-			}
-			ignoreMap[item] = true
-			ignoreMap[cleanNodeName(item)] = true
-		}
+		matcher := newIgnoreMatcher(ignoreList)
 
 		nodeValues := make(map[string]bool)
 		for _, wn := range wNodes {
@@ -139,7 +150,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 
 		var filtered []WebNode
 		for _, wn := range wNodes {
-			if isNodeValueIgnored(wn.Selector, ignoreMap, wildcardPrefixes) {
+			if matcher.matches(wn.Selector) {
 				ignoredCount++
 				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
@@ -148,17 +159,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		}
 		wNodes = filtered
 
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				if !anyNodeValueHasPrefix(nodeValues, strings.TrimSuffix(item, "*")) {
-					unmatchedIgnores = append(unmatchedIgnores, item)
-				}
-				continue
-			}
-			if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
-				unmatchedIgnores = append(unmatchedIgnores, item)
-			}
-		}
+		unmatchedIgnores = matcher.unmatched(nodeValues)
 	}
 
 	// ignore_region のうちどのノード中心とも重ならない領域 (座標ミス等)。
@@ -186,8 +187,10 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	}
 
 	var checkable []WebNode
+	var skippedZeroGeometry int
 	for _, wn := range wNodes {
 		if wn.W <= 0 || wn.H <= 0 {
+			skippedZeroGeometry++
 			continue
 		}
 		checkable = append(checkable, wn)
@@ -214,30 +217,32 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		UnmatchedIgnores:       unmatchedIgnores,
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		SkippedZeroGeometry:    skippedZeroGeometry,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 	}
 
 	if len(checkable) == 0 {
-		// 幾何 0 のノードが残っている場合は、ignore 件数があっても「全件除外」と
-		// 誤報しない（layout_tree の #238 と同方針）。キー名ミス (width/height 等)
-		// や非表示要素の計測が主因なので、ゼロ幾何の mismatch を先に返す。
-		if len(wNodes) > 0 {
+		// layout_tree の origFigmaCount / origWebCount 判定と同じ順:
+		// 1) 入力が元から空 2) 元は非空で ignore により全件除外 3) 残りが全て幾何 0。
+		if totalNodes == 0 {
 			result.Status = "mismatch"
-			detail := fmt.Sprintf("no Web nodes have non-zero geometry (%d nodes parsed); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}", len(wNodes))
-			if ignoredCount > 0 {
-				detail += fmt.Sprintf(" (and %s by ignore_nodes / ignore_region)", ignoredNodesWerePhrase(ignoredCount))
-			}
-			result.Details = []string{detail}
+			result.Details = []string{"Web layout node data is empty"}
 			return result, nil
 		}
-		// ignore で全ノードが除外され検査対象が無くなった場合のみ skipped。
-		if ignoredCount > 0 {
+		// 元の入力が非空かつ、幾何有効ノードが ignore で全て消えた場合のみ skipped。
+		// 除外と幾何欠落の混在はここに落とさず、下の mismatch で幾何欠落を主因とする（Issue #671）。
+		if len(wNodes) == 0 && ignoredCount > 0 {
 			result.Status = "skipped"
-			result.Details = []string{fmt.Sprintf("All Web nodes were excluded by ignore_nodes / ignore_region (%d nodes ignored in total); no comparison pairs left", ignoredCount)}
+			result.Details = []string{fmt.Sprintf("All Web nodes were excluded by ignore_nodes / ignore_region (%s); no comparison pairs left", ignoredNodesInTotalPhrase(ignoredCount))}
 			return result, nil
 		}
+		// 残りノードの幾何が全て 0（一部 ignore されていても「全件除外」と誤報しない）。
 		result.Status = "mismatch"
-		result.Details = []string{"Web layout node data is empty"}
+		detail := fmt.Sprintf("no Web nodes have non-zero geometry (%d nodes parsed); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}", totalNodes)
+		if ignoredCount > 0 {
+			detail += fmt.Sprintf(" (and %s by ignore_nodes / ignore_region)", ignoredNodesWerePhrase(ignoredCount))
+		}
+		result.Details = []string{detail}
 		return result, nil
 	}
 
@@ -257,6 +262,10 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 
 	var issues []LayoutIssue
 	var parentChecked, skippedUnresolved, skippedZeroGeom int
+	// ゼロ幾何親で parent_overflow をスキップした親セレクタ（出現順・重複なし）。
+	// details の代表表示用（件数は skippedZeroGeom。Issue #696）。
+	var zeroGeomParentSelectors []string
+	seenZeroGeomParent := make(map[string]bool)
 	for _, wn := range checkable {
 		if issue, ok := viewportOverflowX(wn, viewportW); ok {
 			issues = append(issues, issue)
@@ -264,16 +273,24 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		if wn.Parent == "" {
 			continue
 		}
-		if bySelector[wn.Parent] != nil {
-			parentChecked++
-			if issue, ok := parentOverflow(wn, bySelector); ok {
-				issues = append(issues, issue)
-			}
+		// 自己参照は親解決できても検査が常に無発火になるため、未解決と同じくスキップ
+		// （unresolved_parent_refs へは collectUnresolvedParentRefs が載せる）。
+		if wn.Parent == wn.Selector {
+			skippedUnresolved++
 			continue
 		}
-		// 親が bySelector に無い: 入力欠落は unresolved_parent_refs、ゼロ幾何は件数のみ。
+		if bySelector[wn.Parent] != nil {
+			parentChecked++
+			issues = append(issues, parentOverflow(wn, bySelector)...)
+			continue
+		}
+		// 親が bySelector に無い: 入力欠落は unresolved_parent_refs、ゼロ幾何は件数+代表セレクタ。
 		if presentSelectors[wn.Parent] {
 			skippedZeroGeom++
+			if !seenZeroGeomParent[wn.Parent] {
+				seenZeroGeomParent[wn.Parent] = true
+				zeroGeomParentSelectors = append(zeroGeomParentSelectors, wn.Parent)
+			}
 			continue
 		}
 		skippedUnresolved++
@@ -305,6 +322,22 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		details = append(details, fmt.Sprintf(
 			"%d of %d Web nodes have zero width/height and were excluded from checks (checked_nodes=%d); check the layout JSON keys are {\"selector\",\"x\",\"y\",\"w\",\"h\",\"parent\"}",
 			zeroExcluded, len(wNodes), len(checkable)))
+	} else if skippedZeroGeometry > 0 {
+		// 少数でも零サイズ除外は無言にしない（過半数警告が無いときだけ。Issue #555）。
+		details = append(details, fmt.Sprintf(
+			"%d Web nodes were skipped because w/h is <= 0 (hidden elements or a key-name mismatch)",
+			skippedZeroGeometry))
+	}
+	// 親が入力にあるが w/h=0 のため parent_overflow をスキップしたとき、件数と代表セレクタを
+	// 独立行で知らせる（status は非破壊。要約行の件数に加えどの親かを特定できるようにする。Issue #696）。
+	if skippedZeroGeom > 0 {
+		quoted := make([]string, len(zeroGeomParentSelectors))
+		for i, sel := range zeroGeomParentSelectors {
+			quoted[i] = fmt.Sprintf("'%s'", sel)
+		}
+		details = append(details, fmt.Sprintf(
+			"parent_overflow check skipped for %d children whose parent has zero width/height: %s",
+			skippedZeroGeom, strings.Join(quoted, ", ")))
 	}
 	for _, issue := range issues {
 		details = append(details, issue.Detail)
@@ -332,49 +365,88 @@ func viewportPresetNote(viewportW, viewportH float64) string {
 	return ""
 }
 
+func layoutIssueNode(wn WebNode) LayoutIssueNode {
+	return LayoutIssueNode{X: wn.X, Y: wn.Y, W: wn.W, H: wn.H}
+}
+
 func viewportOverflowX(wn WebNode, viewportW float64) (LayoutIssue, bool) {
 	left := wn.X
 	right := wn.X + wn.W
 	switch {
 	case left < -layoutSlopPx:
 		detail := fmt.Sprintf("selector %q overflows the left edge of the viewport (x=%.2f, viewport_width=%.0f)", wn.Selector, left, viewportW)
-		return LayoutIssue{Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail}, true
+		return LayoutIssue{
+			Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail,
+			Edge: "left", OverflowPx: -left, Node: layoutIssueNode(wn),
+		}, true
 	case right > viewportW+layoutSlopPx:
 		detail := fmt.Sprintf("selector %q overflows the right edge of the viewport (right=%.2f, viewport_width=%.0f)", wn.Selector, right, viewportW)
-		return LayoutIssue{Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail}, true
+		return LayoutIssue{
+			Type: "viewport_overflow_x", Selector: wn.Selector, Detail: detail,
+			Edge: "right", OverflowPx: right - viewportW, Node: layoutIssueNode(wn),
+		}, true
 	default:
 		return LayoutIssue{}, false
 	}
 }
 
-func parentOverflow(wn WebNode, bySelector map[string]*WebNode) (LayoutIssue, bool) {
+// parentOverflow は子が親からのはみ出しを辺ごとに検出し、該当した辺すべてを返す
+// （左右同時など複数辺ではみ出す場合も 1 件に潰さない。Issue #641）。
+func parentOverflow(wn WebNode, bySelector map[string]*WebNode) []LayoutIssue {
 	if wn.Parent == "" {
-		return LayoutIssue{}, false
+		return nil
 	}
 	parent := bySelector[wn.Parent]
 	if parent == nil {
-		return LayoutIssue{}, false
+		return nil
 	}
 	pLeft, pTop := parent.X, parent.Y
 	pRight, pBottom := parent.X+parent.W, parent.Y+parent.H
 	cLeft, cTop := wn.X, wn.Y
 	cRight, cBottom := wn.X+wn.W, wn.Y+wn.H
 
-	var side string
-	var childEdge, parentEdge float64
-	switch {
-	case cLeft < pLeft-layoutSlopPx:
-		side, childEdge, parentEdge = "left", cLeft, pLeft
-	case cRight > pRight+layoutSlopPx:
-		side, childEdge, parentEdge = "right", cRight, pRight
-	case cTop < pTop-layoutSlopPx:
-		side, childEdge, parentEdge = "top", cTop, pTop
-	case cBottom > pBottom+layoutSlopPx:
-		side, childEdge, parentEdge = "bottom", cBottom, pBottom
-	default:
-		return LayoutIssue{}, false
+	type edgeHit struct {
+		side                  string
+		childEdge, parentEdge float64
+		overflowPx            float64
 	}
-	detail := fmt.Sprintf("selector %q overflows its parent %q on the %s (child=%.2f, parent=%.2f)",
-		wn.Selector, parent.Selector, side, childEdge, parentEdge)
-	return LayoutIssue{Type: "parent_overflow", Selector: wn.Selector, Detail: detail}, true
+	var hits []edgeHit
+	if cLeft < pLeft-layoutSlopPx {
+		hits = append(hits, edgeHit{"left", cLeft, pLeft, pLeft - cLeft})
+	}
+	if cRight > pRight+layoutSlopPx {
+		hits = append(hits, edgeHit{"right", cRight, pRight, cRight - pRight})
+	}
+	if cTop < pTop-layoutSlopPx {
+		hits = append(hits, edgeHit{"top", cTop, pTop, pTop - cTop})
+	}
+	if cBottom > pBottom+layoutSlopPx {
+		hits = append(hits, edgeHit{"bottom", cBottom, pBottom, cBottom - pBottom})
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	out := make([]LayoutIssue, 0, len(hits))
+	for _, h := range hits {
+		detail := fmt.Sprintf("selector %q overflows its parent %q on the %s (child=%.2f, parent=%.2f)",
+			wn.Selector, parent.Selector, h.side, h.childEdge, h.parentEdge)
+		out = append(out, LayoutIssue{
+			Type: "parent_overflow", Selector: wn.Selector, Detail: detail,
+			Edge: h.side, OverflowPx: h.overflowPx, Node: layoutIssueNode(wn),
+			ParentSelector: parent.Selector,
+		})
+	}
+	return out
+}
+
+// LimitLayoutIntegrityIssues は layout_integrity の issues を maxDetails 件に切り詰める。
+// maxDetails <= 0 のときは無制限（現行どおり全件）。issue_count は触らない
+// （呼び出し側が総数を残し、表示が一部だと分かるようにする。Issue #679）。
+// 省略件数は omitted（0 のときは応答に issues_omitted を載せる必要なし。Issue #698）。
+func LimitLayoutIntegrityIssues(issues []LayoutIssue, maxDetails int) (limited []LayoutIssue, omitted int) {
+	keep, omitted := limitMaxKeep(len(issues), maxDetails)
+	if omitted == 0 {
+		return issues, 0
+	}
+	return issues[:keep], omitted
 }

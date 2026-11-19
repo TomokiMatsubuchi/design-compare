@@ -270,6 +270,25 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := resultMatch["mismatched_pairs"]; ok {
 			t.Errorf("Expected no mismatched_pairs when all pairs match, got %v", resultMatch["mismatched_pairs"])
 		}
+		// 一致ペアが matched_pairs に構造化されることの検証（figma_name / web_selector）
+		matchedPairs, ok := resultMatch["matched_pairs"].([]interface{})
+		if !ok || len(matchedPairs) != 3 {
+			t.Fatalf("Expected 3 matched_pairs, got %v", resultMatch["matched_pairs"])
+		}
+		wantMatched := []struct{ name, sel string }{
+			{"header", "#header"},
+			{"logo", ".logo"},
+			{"nav", ".nav"},
+		}
+		for i, want := range wantMatched {
+			mp, ok := matchedPairs[i].(map[string]interface{})
+			if !ok {
+				t.Fatalf("Expected matched_pairs[%d] object, got %v", i, matchedPairs[i])
+			}
+			if mp["figma_name"] != want.name || mp["web_selector"] != want.sel {
+				t.Errorf("matched_pairs[%d]=%v, want figma_name=%s web_selector=%s", i, mp, want.name, want.sel)
+			}
+		}
 		// 一致ペアが details に出力されることの検証
 		detailsMatch, ok := resultMatch["details"].([]interface{})
 		if !ok {
@@ -313,6 +332,11 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := resultMismatch["total_nodes"]; got != float64(3) {
 			t.Errorf("Expected total_nodes=3, got %v", got)
 		}
+		// 不一致でも一致した 2 ペアは matched_pairs に残る
+		matchedOnMismatch, ok := resultMismatch["matched_pairs"].([]interface{})
+		if !ok || len(matchedOnMismatch) != 2 {
+			t.Fatalf("Expected 2 matched_pairs on partial match, got %v", resultMismatch["matched_pairs"])
+		}
 		mismatched, ok := resultMismatch["mismatched_nodes"].([]interface{})
 		if !ok || len(mismatched) != 1 {
 			t.Fatalf("Expected 1 mismatched_nodes entry, got %v", resultMismatch["mismatched_nodes"])
@@ -333,7 +357,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		dw, _ := mn["dw"].(float64)
 		dh, _ := mn["dh"].(float64)
 		diff, _ := mn["diff"].(float64)
-		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (relative to the parent box; dx/dw are ratios: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (relative: figma (px): x=%g y=%g w=%g h=%g / web (px): x=%g y=%g w=%g h=%g; dx: %.2f (ratio), dy: %.2f (ratio), dw: %.2f (ratio), dh: %.2f (ratio))",
 			diff, 0.15, 600.0, 10.0, 380.0, 80.0, 200.0, 10.0, 380.0, 80.0, dx, dy, dw, dh)
 		detailsMismatch, _ := resultMismatch["details"].([]interface{})
 		foundGeom := false
@@ -759,6 +783,45 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if !ok || len(refs) != 2 || refs[0] != "Figma: '999'" || refs[1] != "Web: '.foo'" {
 			t.Errorf("Expected unresolved_parent_refs=[Figma: '999' Web: '.foo'], got %v", result["unresolved_parent_refs"])
 		}
+		if _, ok := result["duplicate_node_identifiers"]; ok {
+			t.Errorf("duplicate_node_identifiers should be omitted when empty: %v", result["duplicate_node_identifiers"])
+		}
+	})
+
+	// =================================================================
+	// 2.4.3. layout_tree モード: 重複 id / selector の通知
+	// =================================================================
+	t.Run("LayoutTree_DuplicateNodeIdentifiers", func(t *testing.T) {
+		figmaLayout := `[
+			{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "1", "name": "header-dup", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"id": "2", "name": "logo", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "1"}
+		]`
+		webLayout := `[
+			{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+			{"selector": ".item", "x": 10, "y": 10, "w": 100, "h": 80, "parent": "#header"},
+			{"selector": ".item", "x": 200, "y": 200, "w": 50, "h": 50}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaLayout,
+					"web_layout":   webLayout,
+					"threshold":    0.15,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		dups, ok := result["duplicate_node_identifiers"].([]interface{})
+		if !ok || len(dups) != 2 || dups[0] != "Figma: '1'" || dups[1] != "Web: '.item'" {
+			t.Errorf("Expected duplicate_node_identifiers=[Figma: '1' Web: '.item'], got %v", result["duplicate_node_identifiers"])
+		}
 	})
 
 	// =================================================================
@@ -1143,6 +1206,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if got := result2["matched_nodes"]; got != float64(0) {
 			t.Errorf("Expected matched_nodes=0, got %v", got)
 		}
+		if _, ok := result2["matched_pairs"]; ok {
+			t.Errorf("Expected no matched_pairs when matched_nodes=0, got %v", result2["matched_pairs"])
+		}
 
 		// ケース3: Figma側だけサイズ0の親（絶対座標モード）、Web側は通常の親。
 		// 子の絶対座標が同じなら一致ペアが作られる（0x0のcollapsed自体は不一致のまま）。
@@ -1399,6 +1465,145 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if omit != "... and 3 more details omitted (max_details=2)" {
 			t.Errorf("Expected omit line, got %q", omit)
 		}
+	})
+
+	// =================================================================
+	// 2.10c. layout_tree モード: max_details で mismatched_pairs 等も切り詰める
+	// =================================================================
+	t.Run("LayoutTree_MaxDetails_StructuredArrays", func(t *testing.T) {
+		// exceeds_tolerance のペアは usedWeb に入らないため、ずれノードだけでは
+		// extra_web_nodes が膨れる。pairs と extras は別フィクスチャで検証する。
+		t.Run("mismatched_pairs", func(t *testing.T) {
+			figmaLayout := `[
+				{"id": "1", "name": "a", "x": 0, "y": 0, "w": 100, "h": 40},
+				{"id": "2", "name": "b", "x": 0, "y": 50, "w": 100, "h": 40},
+				{"id": "3", "name": "c", "x": 0, "y": 100, "w": 100, "h": 40},
+				{"id": "4", "name": "d", "x": 0, "y": 150, "w": 100, "h": 40}
+			]`
+			webLayout := `[
+				{"selector": "#a", "x": 80, "y": 0, "w": 100, "h": 40},
+				{"selector": "#b", "x": 80, "y": 50, "w": 100, "h": 40},
+				{"selector": "#c", "x": 80, "y": 100, "w": 100, "h": 40},
+				{"selector": "#d", "x": 80, "y": 150, "w": 100, "h": 40}
+			]`
+
+			reqAll := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.01,
+					},
+				},
+			}
+			resAll, err := compareDesignHandler(context.Background(), reqAll)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultAll map[string]interface{}
+			json.Unmarshal([]byte(resAll.Content[0].(mcp.TextContent).Text), &resultAll)
+			pairsAll, ok := resultAll["mismatched_pairs"].([]interface{})
+			if !ok || len(pairsAll) != 4 {
+				t.Fatalf("Expected 4 mismatched_pairs without cap, got %v", resultAll["mismatched_pairs"])
+			}
+			if _, ok := resultAll["mismatched_pairs_omitted"]; ok {
+				t.Errorf("mismatched_pairs_omitted should be absent without cap, got %v", resultAll["mismatched_pairs_omitted"])
+			}
+
+			reqCap := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.01,
+						"max_details":  2.0,
+					},
+				},
+			}
+			resCap, err := compareDesignHandler(context.Background(), reqCap)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultCap map[string]interface{}
+			json.Unmarshal([]byte(resCap.Content[0].(mcp.TextContent).Text), &resultCap)
+
+			pairsCap, ok := resultCap["mismatched_pairs"].([]interface{})
+			if !ok || len(pairsCap) != 2 {
+				t.Fatalf("Expected 2 mismatched_pairs with max_details=2, got %v", resultCap["mismatched_pairs"])
+			}
+			if got := resultCap["mismatched_pairs_omitted"]; got != float64(2) {
+				t.Errorf("mismatched_pairs_omitted=%v, want 2", got)
+			}
+			nodesCap, ok := resultCap["mismatched_nodes"].([]interface{})
+			if !ok || len(nodesCap) != 2 {
+				t.Fatalf("Expected 2 mismatched_nodes with max_details=2, got %v", resultCap["mismatched_nodes"])
+			}
+		})
+
+		t.Run("extra_web_nodes", func(t *testing.T) {
+			// 全ペア一致 + 余分 Web 3 件 → extra_web_nodes だけが切り詰め対象
+			figmaLayout := `[
+				{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100}
+			]`
+			webLayout := `[
+				{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100},
+				{"selector": ".extra1", "x": 0, "y": 200, "w": 10, "h": 10},
+				{"selector": ".extra2", "x": 20, "y": 200, "w": 10, "h": 10},
+				{"selector": ".extra3", "x": 40, "y": 200, "w": 10, "h": 10}
+			]`
+
+			reqAll := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.15,
+					},
+				},
+			}
+			resAll, err := compareDesignHandler(context.Background(), reqAll)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultAll map[string]interface{}
+			json.Unmarshal([]byte(resAll.Content[0].(mcp.TextContent).Text), &resultAll)
+			extraAll, ok := resultAll["extra_web_nodes"].([]interface{})
+			if !ok || len(extraAll) != 3 {
+				t.Fatalf("Expected 3 extra_web_nodes without cap, got %v", resultAll["extra_web_nodes"])
+			}
+
+			reqCap := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":         "layout_tree",
+						"figma_layout": figmaLayout,
+						"web_layout":   webLayout,
+						"threshold":    0.15,
+						"max_details":  2.0,
+					},
+				},
+			}
+			resCap, err := compareDesignHandler(context.Background(), reqCap)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			var resultCap map[string]interface{}
+			json.Unmarshal([]byte(resCap.Content[0].(mcp.TextContent).Text), &resultCap)
+
+			extraCap, ok := resultCap["extra_web_nodes"].([]interface{})
+			if !ok || len(extraCap) != 2 {
+				t.Fatalf("Expected 2 extra_web_nodes with max_details=2, got %v", resultCap["extra_web_nodes"])
+			}
+			if got := resultCap["extra_web_nodes_omitted"]; got != float64(1) {
+				t.Errorf("extra_web_nodes_omitted=%v, want 1", got)
+			}
+			if got := resultCap["extra_web_count"]; got != float64(3) {
+				t.Errorf("extra_web_count=%v, want 3 (full count)", got)
+			}
+		})
 	})
 
 	// =================================================================
@@ -1731,12 +1936,41 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatal("expected IsError when figma_layout is a number")
 		}
 		gotBad := resBadType.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array") {
+		if !strings.Contains(gotBad, "figma_layout must be a JSON-encoded string or a JSON array/object") {
 			t.Errorf("got %q", gotBad)
 		}
 
-		// 比較側は JSON 配列しか受け付けないため、ネイティブ object は明示エラーにする
-		// (Marshal して後段の cannot unmarshal object に落とさない)。
+		// ネイティブ単一オブジェクトは配列必須の明示エラーにする
+		// ({"nodes":[...]} のような API レスポンス全体との曖昧さを避け、
+		// かつては 1 要素配列へ包んでいたが明示拒否に揃えた)。
+		figmaOne := map[string]any{"id": "1", "name": "header", "x": 0, "y": 0, "w": 1000, "h": 100}
+		webOne := map[string]any{"selector": "#header", "x": 0, "y": 0, "w": 1000, "h": 100}
+		reqNativeObj := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figmaOne,
+					"web_layout":   webOne,
+				},
+			},
+		}
+		resNativeObj, err := compareDesignHandler(context.Background(), reqNativeObj)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !resNativeObj.IsError {
+			t.Fatal("expected IsError when figma_layout/web_layout are native JSON objects")
+		}
+		gotNativeObj := resNativeObj.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(gotNativeObj, "figma_layout") || !strings.Contains(gotNativeObj, "array") {
+			t.Errorf("got %q", gotNativeObj)
+		}
+		if strings.Contains(gotNativeObj, "cannot unmarshal") || strings.Contains(gotNativeObj, "[]json.RawMessage") {
+			t.Errorf("error should not expose Go internal type name: %q", gotNativeObj)
+		}
+
+		// {"nodes":[...]} のようなラッパー object も同様に配列必須エラー
+		// (1 要素配列へ包んだうえで後段のキー検証に落とさない)。
 		reqObject := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
@@ -1753,23 +1987,23 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			t.Fatalf("handler failed: %v", err)
 		}
 		if !resObject.IsError {
-			t.Fatal("expected IsError when figma_layout is a JSON object")
+			t.Fatal("expected IsError when figma_layout is a wrapper object")
 		}
 		gotObject := resObject.Content[0].(mcp.TextContent).Text
-		if !strings.Contains(gotObject, "figma_layout must be a JSON array of node objects (a JSON object is not supported); pass the nodes as an array") {
+		if !strings.Contains(gotObject, "figma_layout") || !strings.Contains(gotObject, "array") {
 			t.Errorf("got %q", gotObject)
 		}
-		if strings.Contains(gotObject, "cannot unmarshal") {
-			t.Errorf("expected explicit object rejection, not Go unmarshal error: %q", gotObject)
+		if strings.Contains(gotObject, "cannot unmarshal") || strings.Contains(gotObject, "missing required field") {
+			t.Errorf("expected array-required error, not unwrap/unmarshal path: %q", gotObject)
 		}
 	})
 
 	// =================================================================
-	// 2.12e. layout_tree モード: 単一 JSON オブジェクトは配列必須の明示エラー
+	// 2.12e. layout_tree モード: オブジェクト入力は配列必須の明示エラー
 	// =================================================================
-	// ツール説明の "array/object" 表記に従ってオブジェクトを渡すと、かつては
-	// []json.RawMessage 向け Unmarshal の内部型名エラーになった。ネイティブ
-	// オブジェクト・オブジェクト文字列のどちらも「配列が必要」と分かる文言にする。
+	// ネイティブ object / オブジェクト文字列はいずれも配列しか受け付けないため
+	// 「配列が必要」と分かる文言にする。かつては []json.RawMessage 向け
+	// Unmarshal の内部型名エラー、または 1 要素配列への包み込みだった。
 	t.Run("LayoutTree_JSONObjectRejected", func(t *testing.T) {
 		webOK := `[{"selector":"#c","x":0,"y":0,"w":10,"h":10}]`
 		figmaOK := `[{"id":"1","name":"c","x":0,"y":0,"w":10,"h":10}]`
@@ -1780,19 +2014,28 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			want string
 		}{
 			{
-				name: "native_figma_object",
+				name: "string_figma_object",
 				args: map[string]any{
 					"mode":         "layout_tree",
-					"figma_layout": map[string]any{"id": "1", "name": "c", "x": 0, "y": 0, "w": 10, "h": 10},
+					"figma_layout": `{"id":"1","name":"c","x":0,"y":0,"w":10,"h":10}`,
 					"web_layout":   webOK,
 				},
 				want: "figma_layout must be a JSON array of node objects",
 			},
 			{
-				name: "string_figma_object",
+				name: "string_web_object",
 				args: map[string]any{
 					"mode":         "layout_tree",
-					"figma_layout": `{"id":"1","name":"c","x":0,"y":0,"w":10,"h":10}`,
+					"figma_layout": figmaOK,
+					"web_layout":   `{"selector":"#c","x":0,"y":0,"w":10,"h":10}`,
+				},
+				want: "web_layout must be a JSON array of node objects",
+			},
+			{
+				name: "native_figma_object",
+				args: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": map[string]any{"id": "1", "name": "c", "x": 0, "y": 0, "w": 10, "h": 10},
 					"web_layout":   webOK,
 				},
 				want: "figma_layout must be a JSON array of node objects",
@@ -1806,15 +2049,6 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				},
 				want: "web_layout must be a JSON array of node objects",
 			},
-			{
-				name: "string_web_object",
-				args: map[string]any{
-					"mode":         "layout_tree",
-					"figma_layout": figmaOK,
-					"web_layout":   `{"selector":"#c","x":0,"y":0,"w":10,"h":10}`,
-				},
-				want: "web_layout must be a JSON array of node objects",
-			},
 		}
 		for _, c := range cases {
 			t.Run(c.name, func(t *testing.T) {
@@ -1825,7 +2059,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 					t.Fatalf("handler failed: %v", err)
 				}
 				if !res.IsError {
-					t.Fatal("expected IsError for single JSON object layout input")
+					t.Fatal("expected IsError for JSON object layout input")
 				}
 				got := res.Content[0].(mcp.TextContent).Text
 				if !strings.Contains(got, c.want) {
@@ -2238,6 +2472,37 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
+		// Issue #606: 自己参照 parent も unresolved_parent_refs に載せ、非空時のみ応答キーを出す。
+		t.Run("SelfReferentialParentUnresolved", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":       "layout_integrity",
+						"web_layout": `[{"selector":"#self","x":0,"y":0,"w":100,"h":50,"parent":"#self"}]`,
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", res.Content[0].(mcp.TextContent).Text)
+			}
+			var result map[string]interface{}
+			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+			if result["status"] != "success" {
+				t.Fatalf("status must stay success, got %#v", result)
+			}
+			refs, ok := result["unresolved_parent_refs"].([]interface{})
+			if !ok || len(refs) != 1 || refs[0] != "Web: '#self'" {
+				t.Errorf("Expected unresolved_parent_refs=[Web: '#self'], got %v", result["unresolved_parent_refs"])
+			}
+			if result["parent_checked_nodes"] != float64(0) {
+				t.Errorf("parent_checked_nodes=%v, want 0", result["parent_checked_nodes"])
+			}
+		})
+
 		// Issue #435: 親の w/h が 0 のとき status は success のまま件数で可視化する。
 		t.Run("ParentOverflowSkippedZeroGeom", func(t *testing.T) {
 			req := mcp.CallToolRequest{
@@ -2391,8 +2656,50 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatal("expected IsError when web_layout is a number")
 			}
 			gotBad := resBadType.Content[0].(mcp.TextContent).Text
-			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array") {
+			if !strings.Contains(gotBad, "web_layout must be a JSON-encoded string or a JSON array/object") {
 				t.Errorf("got %q", gotBad)
+			}
+		})
+
+		// ネイティブ object / オブジェクト文字列は layout_tree と同じく配列必須エラー。
+		t.Run("LayoutIntegrity_JSONObjectRejected", func(t *testing.T) {
+			cases := []struct {
+				name string
+				web  any
+			}{
+				{
+					name: "native_object",
+					web:  map[string]any{"selector": "#page", "x": 0, "y": 0, "w": 768, "h": 200},
+				},
+				{
+					name: "string_object",
+					web:  `{"selector":"#page","x":0,"y":0,"w":768,"h":200}`,
+				},
+			}
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					res, err := compareDesignHandler(context.Background(), mcp.CallToolRequest{
+						Params: mcp.CallToolParams{
+							Arguments: map[string]any{
+								"mode":       "layout_integrity",
+								"web_layout": c.web,
+							},
+						},
+					})
+					if err != nil {
+						t.Fatalf("handler failed: %v", err)
+					}
+					if !res.IsError {
+						t.Fatal("expected IsError for JSON object web_layout")
+					}
+					got := res.Content[0].(mcp.TextContent).Text
+					if !strings.Contains(got, "web_layout") || !strings.Contains(got, "array") {
+						t.Errorf("got %q", got)
+					}
+					if strings.Contains(got, "[]json.RawMessage") || strings.Contains(got, "cannot unmarshal") {
+						t.Errorf("error should not expose Go internal type name: %q", got)
+					}
+				})
 			}
 		})
 
@@ -2538,7 +2845,8 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			}
 		})
 
-		// Issue #527: max_details で issues / details を切り詰める（issue_count は実件数のまま）
+		// Issue #629 / #679 / #698: max_details で details と issues を切り詰め
+		// （issue_count は実件数のまま、省略数は issues_omitted）
 		t.Run("MaxDetails", func(t *testing.T) {
 			manyOverflow := `[
 				{"selector":"#a","x":0,"y":0,"w":900,"h":50},
@@ -2575,6 +2883,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if len(issuesAll) != 3 {
 				t.Fatalf("issues=%d when max_details omitted, want 3", len(issuesAll))
 			}
+			if _, ok := resultAll["issues_omitted"]; ok {
+				t.Errorf("issues_omitted should be absent without cap, got %v", resultAll["issues_omitted"])
+			}
 			if resultAll["parent_checked_nodes"] != float64(0) {
 				t.Errorf("parent_checked_nodes=%v, want 0", resultAll["parent_checked_nodes"])
 			}
@@ -2602,6 +2913,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if len(issuesZero) != 3 {
 				t.Fatalf("issues=%d when max_details=0, want 3", len(issuesZero))
 			}
+			if _, ok := resultZero["issues_omitted"]; ok {
+				t.Errorf("issues_omitted should be absent when max_details=0, got %v", resultZero["issues_omitted"])
+			}
 
 			reqCap := mcp.CallToolRequest{
 				Params: mcp.CallToolParams{
@@ -2622,9 +2936,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected details array, got %v", resultCap["details"])
 			}
-			// summary + 2 kept issue details + omit line
-			if len(detailsCap) != 4 {
-				t.Fatalf("Expected summary + 2 issues + omit line, got %d: %v", len(detailsCap), detailsCap)
+			// layout_tree と同じ LimitLayoutTreeDetails: 先頭 max_details 件 + omit 行
+			if len(detailsCap) != 3 {
+				t.Fatalf("Expected 2 kept details + omit line, got %d: %v", len(detailsCap), detailsCap)
 			}
 			summary, _ := detailsCap[0].(string)
 			if !strings.Contains(summary, "Found 3 layout issues") {
@@ -2638,16 +2952,26 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Errorf("Expected the first issue detail to survive truncation, got %q", kept)
 			}
 			omit, _ := detailsCap[len(detailsCap)-1].(string)
-			if omit != "... and 1 more issues omitted (max_details=2)" {
+			if omit != "... and 2 more details omitted (max_details=2)" {
 				t.Errorf("Expected omit line, got %q", omit)
 			}
-			// issue_count は実件数のまま（合否判定は変えない）
+			// issue_count は総数のまま、issues は同じ max_details で打ち切り（Issue #679）
 			if resultCap["issue_count"] != float64(3) {
 				t.Errorf("issue_count should remain full, got %v", resultCap["issue_count"])
 			}
 			issues, _ := resultCap["issues"].([]interface{})
 			if len(issues) != 2 {
-				t.Errorf("issues should be truncated to max_details, got %d", len(issues))
+				t.Errorf("issues should truncate to max_details=2, got %d", len(issues))
+			}
+			if len(issues) >= 1 {
+				first, _ := issues[0].(map[string]interface{})
+				if first["selector"] != "#a" {
+					t.Errorf("expected first kept issue #a, got %#v", first)
+				}
+			}
+			// 省略件数は issues_omitted（非空時のみ。Issue #698）
+			if got := resultCap["issues_omitted"]; got != float64(1) {
+				t.Errorf("issues_omitted=%v, want 1", got)
 			}
 		})
 	})
@@ -3592,6 +3916,39 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 	})
 
+	// Issue #647: details の Minimum required は合否に使う min_match を %.2f で表示する
+	// (%.1f だと 98.55 が 98.5% になり、表示上は閾値を満たしているように見えるが mismatch になり得る)
+	t.Run("Perceptual_MinMatch_DetailsTwoDecimals", func(t *testing.T) {
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "perceptual",
+					"image_path_a": pathA,
+					"image_path_b": pathA,
+					"min_match":    98.55,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Errorf("Expected success for identical images, got status=%v", result["status"])
+		}
+		details, ok := result["details"].([]interface{})
+		if !ok || len(details) == 0 {
+			t.Fatalf("Expected non-empty details, got %v", result["details"])
+		}
+		detail0, _ := details[0].(string)
+		const want = "Minimum required: 98.55%"
+		if !strings.Contains(detail0, want) {
+			t.Errorf("Expected details to contain %q, got %q", want, detail0)
+		}
+	})
+
 	t.Run("Perceptual_MinMatch_AcceptsLowValue", func(t *testing.T) {
 		// min_match は 0.0-100.0 を許容する (threshold と異なり 1.0 未満でもエラーにしない)
 		req := mcp.CallToolRequest{
@@ -4187,6 +4544,48 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		}
 		if regionOff["diff_pixels"] != float64(10000) {
 			t.Errorf("Expected diff_pixels=10000 with generate_diff=false, got %v", regionOff["diff_pixels"])
+		}
+		if _, ok := result["diff_regions_total"]; ok {
+			t.Errorf("diff_regions_total should be omitted when not truncated, got %v", result["diff_regions_total"])
+		}
+	})
+
+	// Issue #573: 11 連結成分の差分は diff_regions を 10 件に切り詰め、
+	// 切り詰め前総数を diff_regions_total で通知する。
+	t.Run("StrictMode_DiffRegionsTotal_WhenTruncated", func(t *testing.T) {
+		white := color.RGBA{255, 255, 255, 255}
+		black := color.RGBA{0, 0, 0, 255}
+		imgWhite := generateSolidImage(40, 4, white)
+		imgDots := image.NewRGBA(image.Rect(0, 0, 40, 4))
+		draw.Draw(imgDots, imgDots.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+		for i := 0; i < 11; i++ {
+			imgDots.SetRGBA(i*2, 0, black)
+		}
+		pathWhite := saveTempImage(t, tmpDir, "diff-regions-total-white.png", imgWhite)
+		pathDots := saveTempImage(t, tmpDir, "diff-regions-total-dots.png", imgDots)
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "strict",
+					"image_path_a":  pathWhite,
+					"image_path_b":  pathDots,
+					"generate_diff": false,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		raw, ok := result["diff_regions"].([]interface{})
+		if !ok || len(raw) != 10 {
+			t.Fatalf("Expected 10 diff_regions after cap, got %v", result["diff_regions"])
+		}
+		if got := result["diff_regions_total"]; got != float64(11) {
+			t.Errorf("diff_regions_total=%v, want 11", got)
 		}
 	})
 
@@ -5583,7 +5982,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatalf("Expected decode error for text image A, got content=%v", res.Content[0].(mcp.TextContent).Text)
 			}
 			got := res.Content[0].(mcp.TextContent).Text
-			if !strings.Contains(got, "Failed to decode image A") {
+			if !strings.Contains(got, "failed to decode image A") {
 				t.Errorf("Expected image A decode error, got %q", got)
 			}
 			if !strings.Contains(got, formatsHint) {
@@ -5639,7 +6038,7 @@ func TestVRTUnifiedCompare(t *testing.T) {
 				t.Fatalf("Expected decode error for empty image B, got content=%v", res.Content[0].(mcp.TextContent).Text)
 			}
 			got := res.Content[0].(mcp.TextContent).Text
-			if !strings.Contains(got, "Failed to decode image B") {
+			if !strings.Contains(got, "failed to decode image B") {
 				t.Errorf("Expected image B decode error, got %q", got)
 			}
 			if !strings.Contains(got, formatsHint) {
@@ -6040,10 +6439,71 @@ func TestResolveImageInput_FileSizeLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected resolveLayoutInput to reject oversized path before read")
 	}
-	wantLayout := fmt.Sprintf("figma_layout_path is too large (%d bytes; limit %d bytes)", overLimit, comparator.MaxInputFileBytes)
+	// レイアウト path は画像の MaxInputFileBytes より先に maxLayoutJSONBytes で弾く (Issue #621)。
+	wantLayout := fmt.Sprintf("figma_layout_path is %d bytes; maximum is %d bytes", overLimit, maxLayoutJSONBytes)
 	if got := err.Error(); got != wantLayout {
 		t.Errorf("layout error: got %q want %q", got, wantLayout)
 	}
+}
+
+// TestResolveLayoutInput_SizeLimit は layout JSON のインライン文字列長と
+// パスファイルサイズが maxLayoutJSONBytes を超えると読み込み前に拒否されることを検証する (Issue #621)。
+func TestResolveLayoutInput_SizeLimit(t *testing.T) {
+	t.Run("oversized_inline", func(t *testing.T) {
+		over := strings.Repeat("x", maxLayoutJSONBytes+1)
+		want := fmt.Sprintf("web_layout is %d bytes; maximum is %d bytes", len(over), maxLayoutJSONBytes)
+		_, err := resolveLayoutInput(over, "", "web_layout", "web_layout_path")
+		if err == nil {
+			t.Fatal("expected resolveLayoutInput to reject oversized inline JSON")
+		}
+		if got := err.Error(); got != want {
+			t.Errorf("error: got %q want %q", got, want)
+		}
+	})
+
+	t.Run("exact_limit_inline_ok", func(t *testing.T) {
+		exact := strings.Repeat("y", maxLayoutJSONBytes)
+		got, err := resolveLayoutInput(exact, "", "figma_layout", "figma_layout_path")
+		if err != nil {
+			t.Fatalf("exact limit should be accepted: %v", err)
+		}
+		if got != exact {
+			t.Fatalf("returned length: got %d want %d", len(got), len(exact))
+		}
+	})
+
+	t.Run("oversized_sparse_file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		bigPath := filepath.Join(tmpDir, "big_layout.json")
+		const overLimit = int64(maxLayoutJSONBytes) + 1
+		f, err := os.Create(bigPath)
+		if err != nil {
+			t.Fatalf("create sparse file: %v", err)
+		}
+		if err := f.Truncate(overLimit); err != nil {
+			f.Close()
+			t.Fatalf("truncate sparse file: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close sparse file: %v", err)
+		}
+		info, err := os.Stat(bigPath)
+		if err != nil {
+			t.Fatalf("stat sparse file: %v", err)
+		}
+		if info.Size() != overLimit {
+			t.Fatalf("sparse file size: got %d want %d", info.Size(), overLimit)
+		}
+
+		want := fmt.Sprintf("web_layout_path is %d bytes; maximum is %d bytes", overLimit, maxLayoutJSONBytes)
+		_, err = resolveLayoutInput("", bigPath, "web_layout", "web_layout_path")
+		if err == nil {
+			t.Fatal("expected resolveLayoutInput to reject oversized path before read")
+		}
+		if got := err.Error(); got != want {
+			t.Errorf("error: got %q want %q", got, want)
+		}
+	})
 }
 
 // TestResolveImageInput_RejectsNonRegularPaths は FIFO やデバイスのように終端が
@@ -6205,6 +6665,8 @@ func TestTypedArgHelpers(t *testing.T) {
 			{"threshold", "abc"},
 			{"threshold", nil},
 			{"max_diff_pixels", "abc"},
+			{"max_diff_pixels", -0.5},
+			{"max_diff_pixels", 2.9},
 			{"generate_diff", "abc"},
 			{"count_extra_web", ""},
 		}
@@ -6221,6 +6683,37 @@ func TestTypedArgHelpers(t *testing.T) {
 			}
 			if err == nil {
 				t.Errorf("expected error for %s=%#v", tc.key, tc.val)
+			}
+		}
+	})
+
+	// Issue #638: float64 の小数は切り捨てず integer エラーにする。整数値の float64 と数字文字列は現状維持。
+	t.Run("intArg rejects non-integer floats", func(t *testing.T) {
+		for _, val := range []any{-0.5, 2.9, 1.1, -2.7} {
+			req := reqWithArgs(map[string]any{"max_diff_pixels": val})
+			_, err := intArg(req, "max_diff_pixels", 0)
+			if err == nil {
+				t.Errorf("expected error for max_diff_pixels=%#v", val)
+				continue
+			}
+			if !strings.Contains(err.Error(), "argument 'max_diff_pixels' must be an integer") {
+				t.Errorf("max_diff_pixels=%#v: got %q", val, err.Error())
+			}
+		}
+		for _, tc := range []struct {
+			val  any
+			want int
+		}{
+			{float64(10), 10},
+			{float64(0), 0},
+			{float64(-3), -3},
+			{"3", 3},
+			{" 7 ", 7},
+		} {
+			req := reqWithArgs(map[string]any{"max_diff_pixels": tc.val})
+			got, err := intArg(req, "max_diff_pixels", 0)
+			if err != nil || got != tc.want {
+				t.Errorf("intArg(%#v): got %v, %v; want %d, nil", tc.val, got, err, tc.want)
 			}
 		}
 	})
@@ -6472,6 +6965,24 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			want: "argument 'max_diff_pixels' must be an integer",
 		},
 		{
+			// Issue #638: 負の小数を 0 に切り捨てて範囲検証をすり抜けない
+			name: "max_diff_pixels -0.5",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": -0.5},
+			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			// Issue #638: 正の小数も切り捨てず拒否する
+			name: "max_diff_pixels 2.9",
+			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "max_diff_pixels": 2.9},
+			want: "argument 'max_diff_pixels' must be an integer",
+		},
+		{
+			// Issue #638: max_details の負の小数も同様に拒否する
+			name: "max_details -0.5",
+			args: map[string]any{"mode": "layout_tree", "figma_layout": figma, "web_layout": web, "max_details": -0.5},
+			want: "argument 'max_details' must be an integer",
+		},
+		{
 			name: "threshold NaN",
 			args: map[string]any{"mode": "strict", "image_path_a": pathA, "image_path_b": pathB, "threshold": "NaN"},
 			want: "argument 'threshold' must be a finite number",
@@ -6516,6 +7027,18 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "diff_on_mismatch": "yes"},
 			want: "argument 'diff_on_mismatch' must be a boolean",
 		},
+		{
+			// Issue #591: GetBool なら黙って false になり比較後に大きな diff が返る
+			name: "diff_on_mismatch maybe",
+			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "diff_on_mismatch": "maybe"},
+			want: "argument 'diff_on_mismatch' must be a boolean",
+		},
+		{
+			// Issue #591: オブジェクトも変換不能として比較前に拒否する
+			name: "diff_image_content object",
+			args: map[string]any{"mode": "perceptual", "image_path_a": pathA, "image_path_b": pathB, "diff_image_content": map[string]any{}},
+			want: "argument 'diff_image_content' must be a boolean",
+		},
 	}
 
 	for _, tc := range cases {
@@ -6550,7 +7073,7 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 		}
 	})
 
-	// Issue #419: bool / ParseBool 可能な文字列は受け付け、success 時は diff_image を空にする
+	// Issue #419 / #591: bool / ParseBool 可能な文字列は受け付け、success 時は diff_image を空にする
 	for _, tc := range []struct {
 		name string
 		val  any
@@ -6583,6 +7106,26 @@ func TestUnconvertibleNumericParams(t *testing.T) {
 			}
 		})
 	}
+
+	// Issue #591: 不正な真偽値は画像読込より前に拒否する（比較を走らせない）
+	t.Run("diff_on_mismatch maybe rejects before image load", func(t *testing.T) {
+		res, err := compareDesignHandler(context.Background(), reqWithArgs(map[string]any{
+			"mode":             "perceptual",
+			"image_path_a":     "/nonexistent/a.png",
+			"image_path_b":     "/nonexistent/b.png",
+			"diff_on_mismatch": "maybe",
+		}))
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if !res.IsError {
+			t.Fatal("Expected IsError for diff_on_mismatch=maybe")
+		}
+		got := res.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(got, "argument 'diff_on_mismatch' must be a boolean") {
+			t.Errorf("Expected boolean error before image load, got %q", got)
+		}
+	})
 }
 
 // TestPerceptualDecodeErrorListsSupportedFormats verifies that perceptual-mode
@@ -6608,8 +7151,8 @@ func TestPerceptualDecodeErrorListsSupportedFormats(t *testing.T) {
 		pathA, pathB string
 		wantMsg      string
 	}{
-		{"svg_as_image_A", svgPath, pngPath, "Failed to decode image A"},
-		{"svg_as_image_B", pngPath, svgPath, "Failed to decode image B"},
+		{"svg_as_image_A", svgPath, pngPath, "failed to decode image A"},
+		{"svg_as_image_B", pngPath, svgPath, "failed to decode image B"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{
@@ -6680,7 +7223,7 @@ func TestPerceptualDecodeError_CorruptImageOmitsFormatHint(t *testing.T) {
 		t.Fatalf("expected decode error for corrupted PNG, got content=%v", res.Content[0].(mcp.TextContent).Text)
 	}
 	got := res.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(got, "Failed to decode image A") {
+	if !strings.Contains(got, "failed to decode image A") {
 		t.Errorf("expected decode error prefix, got %q", got)
 	}
 	if strings.Contains(got, comparator.UnsupportedImageFormatHint) {
@@ -6931,6 +7474,42 @@ func assertBoolPtr(t *testing.T, name string, got *bool, want bool) {
 	}
 	if *got != want {
 		t.Errorf("Annotations.%s = %v, want %v", name, *got, want)
+	}
+}
+
+// TestModeParamSupportMatchesToolSchema は newCompareDesignTool の
+// InputSchema.Properties（mode を除く）と modeParamSupport のキー集合が
+// 一致することを確認する (Issue #685)。片方だけ更新すると、スキーマにだけ
+// あるパラメータは全モードで "not recognized" になり、マップにだけある
+// パラメータはクライアントから送れない。あわせて mode が Required である
+// ことも確認する。
+func TestModeParamSupportMatchesToolSchema(t *testing.T) {
+	tool := newCompareDesignTool()
+	props := tool.InputSchema.Properties
+
+	hasModeRequired := false
+	for _, name := range tool.InputSchema.Required {
+		if name == "mode" {
+			hasModeRequired = true
+			break
+		}
+	}
+	if !hasModeRequired {
+		t.Errorf("InputSchema.Required missing %q; got %v", "mode", tool.InputSchema.Required)
+	}
+
+	for key := range props {
+		if key == "mode" {
+			continue
+		}
+		if _, ok := modeParamSupport[key]; !ok {
+			t.Errorf("schema property %q is not in modeParamSupport", key)
+		}
+	}
+	for key := range modeParamSupport {
+		if _, ok := props[key]; !ok {
+			t.Errorf("modeParamSupport key %q is not in tool schema Properties", key)
+		}
 	}
 }
 

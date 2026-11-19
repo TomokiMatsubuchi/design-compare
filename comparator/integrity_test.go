@@ -89,6 +89,16 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if portrait.Status != "mismatch" || portrait.IssueCount < 1 || portrait.Issues[0].Type != "viewport_overflow_x" {
 			t.Fatalf("portrait: %#v", portrait)
 		}
+		if portrait.Issues[0].Edge != "right" || portrait.Issues[0].OverflowPx != 132 {
+			t.Errorf("portrait edge/overflow: edge=%q overflow_px=%g, want right/132", portrait.Issues[0].Edge, portrait.Issues[0].OverflowPx)
+		}
+		if portrait.Issues[0].ParentSelector != "" {
+			t.Errorf("viewport_overflow_x must omit parent_selector, got %q", portrait.Issues[0].ParentSelector)
+		}
+		wantNode := LayoutIssueNode{X: 0, Y: 0, W: 900, H: 100}
+		if portrait.Issues[0].Node != wantNode {
+			t.Errorf("portrait node=%#v, want %#v", portrait.Issues[0].Node, wantNode)
+		}
 
 		landscape, err := CheckLayoutIntegrity(web, 1024, 768, nil, nil)
 		if err != nil {
@@ -96,6 +106,31 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if landscape.Status != "success" || landscape.IssueCount != 0 {
 			t.Fatalf("landscape should succeed for 900px width, got %#v", landscape)
+		}
+	})
+
+	// Issue #603: right=812 / viewport_width=768 → overflow_px=44, edge=right, node 付き。
+	t.Run("right_812_overflow_px_44", func(t *testing.T) {
+		web := `[{"selector":".card","x":0,"y":10,"w":812,"h":120}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" || res.IssueCount != 1 || res.Issues[0].Type != "viewport_overflow_x" {
+			t.Fatalf("got %#v", res)
+		}
+		if res.Issues[0].Edge != "right" || res.Issues[0].OverflowPx != 44 {
+			t.Errorf("edge/overflow: edge=%q overflow_px=%g, want right/44", res.Issues[0].Edge, res.Issues[0].OverflowPx)
+		}
+		wantNode := LayoutIssueNode{X: 0, Y: 10, W: 812, H: 120}
+		if res.Issues[0].Node != wantNode {
+			t.Errorf("node=%#v, want %#v", res.Issues[0].Node, wantNode)
+		}
+		if res.Issues[0].ParentSelector != "" {
+			t.Errorf("viewport_overflow_x must omit parent_selector, got %q", res.Issues[0].ParentSelector)
+		}
+		if !strings.Contains(res.Issues[0].Detail, "right=812.00") || !strings.Contains(res.Issues[0].Detail, "viewport_width=768") {
+			t.Errorf("detail should keep right=812.00 / viewport_width=768 wording, got %q", res.Issues[0].Detail)
 		}
 	})
 
@@ -108,6 +143,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "mismatch" || res.IssueCount < 1 || res.Issues[0].Type != "viewport_overflow_x" {
 			t.Fatalf("got %#v", res)
 		}
+		if res.Issues[0].Edge != "right" || res.Issues[0].OverflowPx != 76 {
+			t.Errorf("edge/overflow: edge=%q overflow_px=%g, want right/76", res.Issues[0].Edge, res.Issues[0].OverflowPx)
+		}
 	})
 
 	t.Run("negative_x_overflow", func(t *testing.T) {
@@ -118,6 +156,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if res.Status != "mismatch" || res.Issues[0].Type != "viewport_overflow_x" {
 			t.Fatalf("got %#v", res)
+		}
+		if res.Issues[0].Edge != "left" || res.Issues[0].OverflowPx != 10 {
+			t.Errorf("edge/overflow: edge=%q overflow_px=%g, want left/10", res.Issues[0].Edge, res.Issues[0].OverflowPx)
 		}
 	})
 
@@ -147,10 +188,23 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if len(res.UnresolvedParentRefs) != 0 {
 			t.Errorf("unresolved_parent_refs=%v", res.UnresolvedParentRefs)
 		}
+		if res.IssueCount != 1 {
+			t.Errorf("issue_count=%d, want 1 (single-edge overflow)", res.IssueCount)
+		}
 		found := false
 		for _, issue := range res.Issues {
 			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
 				found = true
+				if issue.Edge != "right" || issue.OverflowPx != 100 {
+					t.Errorf("parent_overflow edge/overflow: edge=%q overflow_px=%g, want right/100", issue.Edge, issue.OverflowPx)
+				}
+				if issue.ParentSelector != "#card" {
+					t.Errorf("parent_selector=%q, want #card", issue.ParentSelector)
+				}
+				wantNode := LayoutIssueNode{X: 0, Y: 0, W: 500, H: 50}
+				if issue.Node != wantNode {
+					t.Errorf("parent_overflow node=%#v, want %#v", issue.Node, wantNode)
+				}
 			}
 			if issue.Type == "viewport_overflow_x" {
 				t.Errorf("unexpected viewport overflow: %#v", issue)
@@ -158,6 +212,60 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("missing parent_overflow: %#v", res.Issues)
+		}
+	})
+
+	// Issue #641: 左右同時はみ出しは辺ごとに 2 件返す（最初の辺だけに潰さない）。
+	t.Run("parent_overflow_both_horizontal_edges", func(t *testing.T) {
+		// 親より幅広の子が左右両方ではみ出す。ビューポート内に収め、parent_overflow だけを数える。
+		// 親 x=100,w=200 / 子 x=50,w=300 → left 50px・right 50px。
+		web := `[{"selector":"#card","x":100,"y":0,"w":200,"h":200},{"selector":"#child","x":50,"y":0,"w":300,"h":50,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "mismatch" {
+			t.Fatalf("status=%s", res.Status)
+		}
+		if res.ParentCheckedNodes != 1 {
+			t.Errorf("parent_checked_nodes=%d, want 1", res.ParentCheckedNodes)
+		}
+		if res.IssueCount != 2 {
+			t.Fatalf("issue_count=%d, want 2; issues=%#v", res.IssueCount, res.Issues)
+		}
+		var parentIssues []LayoutIssue
+		for _, issue := range res.Issues {
+			if issue.Type == "viewport_overflow_x" {
+				t.Errorf("unexpected viewport overflow: %#v", issue)
+			}
+			if issue.Type == "parent_overflow" && issue.Selector == "#child" {
+				parentIssues = append(parentIssues, issue)
+			}
+		}
+		if len(parentIssues) != 2 {
+			t.Fatalf("parent_overflow count=%d, want 2 (left+right); issues=%#v", len(parentIssues), res.Issues)
+		}
+		byEdge := map[string]LayoutIssue{}
+		for _, issue := range parentIssues {
+			byEdge[issue.Edge] = issue
+		}
+		left, okLeft := byEdge["left"]
+		right, okRight := byEdge["right"]
+		if !okLeft || !okRight {
+			t.Fatalf("edges=%v, want left and right", byEdge)
+		}
+		if left.OverflowPx != 50 {
+			t.Errorf("left overflow_px=%g, want 50", left.OverflowPx)
+		}
+		if right.OverflowPx != 50 { // (50+300) - (100+200) = 50
+			t.Errorf("right overflow_px=%g, want 50", right.OverflowPx)
+		}
+		if left.ParentSelector != "#card" || right.ParentSelector != "#card" {
+			t.Errorf("parent_selector left=%q right=%q, want #card", left.ParentSelector, right.ParentSelector)
+		}
+		// 報告順は left → right → top → bottom。
+		if parentIssues[0].Edge != "left" || parentIssues[1].Edge != "right" {
+			t.Errorf("edge order=%q,%q, want left,right", parentIssues[0].Edge, parentIssues[1].Edge)
 		}
 	})
 
@@ -184,6 +292,27 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if !strings.Contains(res.Details[0], "parent_overflow was not applied") {
 			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
+		}
+	})
+
+	t.Run("self_referential_parent_reported", func(t *testing.T) {
+		// parent が自分自身だと包含検査が常に無発火になるため、未解決と同じく報告する。
+		web := `[{"selector":"#self","x":0,"y":0,"w":100,"h":50,"parent":"#self"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IssueCount != 0 {
+			t.Fatalf("got %#v", res)
+		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
+		if len(res.UnresolvedParentRefs) != 1 || res.UnresolvedParentRefs[0] != "Web: '#self'" {
+			t.Fatalf("unresolved_parent_refs=%v, want [Web: '#self']", res.UnresolvedParentRefs)
+		}
+		if len(res.Details) == 0 || !strings.Contains(res.Details[0], "1 unresolved parent ref") {
+			t.Fatalf("details should mention unresolved self-ref, got %v", res.Details)
 		}
 	})
 
@@ -250,6 +379,47 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if !strings.Contains(res.Details[0], "parent_checked_nodes=0") {
 			t.Errorf("expected parent_overflow skip note in the summary line, got %v", res.Details)
+		}
+		wantSkip := "parent_overflow check skipped for 1 children whose parent has zero width/height: '#card'"
+		foundSkip := false
+		for _, d := range res.Details {
+			if d == wantSkip {
+				foundSkip = true
+				break
+			}
+		}
+		if !foundSkip {
+			t.Errorf("expected details line %q, got %v", wantSkip, res.Details)
+		}
+	})
+
+	t.Run("zero_height_parent_skip_detail_lists_selector", func(t *testing.T) {
+		// Issue #696: h=0 の親と、親ボックスを超える子がいても parent_overflow は無言にせず
+		// details に件数+代表セレクタを出し、status は従来どおり（viewport 内なら success）。
+		web := `[{"selector":"#card","x":0,"y":0,"w":400,"h":0},{"selector":"#child-a","x":0,"y":0,"w":500,"h":50,"parent":"#card"},{"selector":"#child-b","x":10,"y":10,"w":450,"h":40,"parent":"#card"}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IssueCount != 0 {
+			t.Fatalf("status/issues must stay non-failing for zero-geom parent skip, got %#v", res)
+		}
+		if res.ParentOverflowSkippedZeroGeom != 2 {
+			t.Fatalf("parent_overflow_skipped_zero_geom=%d, want 2", res.ParentOverflowSkippedZeroGeom)
+		}
+		if res.ParentCheckedNodes != 0 {
+			t.Errorf("parent_checked_nodes=%d, want 0", res.ParentCheckedNodes)
+		}
+		wantSkip := "parent_overflow check skipped for 2 children whose parent has zero width/height: '#card'"
+		foundSkip := false
+		for _, d := range res.Details {
+			if d == wantSkip {
+				foundSkip = true
+				break
+			}
+		}
+		if !foundSkip {
+			t.Errorf("expected details line %q, got %v", wantSkip, res.Details)
 		}
 	})
 
@@ -422,6 +592,12 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "skipped" {
 			t.Fatalf("got %#v", res)
 		}
+		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "1 node ignored in total") {
+			t.Fatalf("singular ignore phrasing expected, got %v", res.Details)
+		}
+		if strings.Contains(res.Details[0], "1 nodes ignored in total") {
+			t.Errorf("must not use plural for 1 ignored node: %q", res.Details[0])
+		}
 	})
 
 	t.Run("invalid_json", func(t *testing.T) {
@@ -491,13 +667,28 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 	})
 
 	t.Run("zero_size_skipped_not_issue", func(t *testing.T) {
+		// Issue #555: 0x0 と正常が混在しても success / checked_nodes=1 のまま、
+		// 除外件数と details 注記で未検査分が分かる。
 		web := `[{"selector":"#hidden","x":0,"y":0,"w":0,"h":0},{"selector":"#ok","x":0,"y":0,"w":100,"h":50}]`
 		res, err := CheckLayoutIntegrity(web, 768, 1024, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Status != "success" || res.CheckedNodes != 1 {
+		if res.Status != "success" || res.CheckedNodes != 1 || res.IssueCount != 0 {
 			t.Fatalf("got %#v", res)
+		}
+		if res.SkippedZeroGeometry != 1 {
+			t.Fatalf("skipped_zero_geometry=%d, want 1", res.SkippedZeroGeometry)
+		}
+		found := false
+		for _, d := range res.Details {
+			if strings.Contains(d, "1 Web nodes were skipped because w/h is <= 0") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("details should note skipped zero-geometry nodes, got %v", res.Details)
 		}
 	})
 
@@ -558,6 +749,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.Status != "success" || res.IssueCount != 0 || res.CheckedNodes != 1 {
 			t.Fatalf("status/issue_count/checked_nodes must stay success/0/1, got %#v", res)
 		}
+		if res.SkippedZeroGeometry != 2 {
+			t.Fatalf("skipped_zero_geometry=%d, want 2", res.SkippedZeroGeometry)
+		}
 		if res.ZeroGeometryWarning != zeroGeometryWarningMsgIntegrity {
 			t.Errorf("ZeroGeometryWarning=%q, want %q", res.ZeroGeometryWarning, zeroGeometryWarningMsgIntegrity)
 		}
@@ -590,13 +784,27 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		if res.ZeroGeometryWarning != "" {
 			t.Errorf("expected no ZeroGeometryWarning for minority zeros, got %q", res.ZeroGeometryWarning)
 		}
+		if res.SkippedZeroGeometry != 1 {
+			t.Fatalf("skipped_zero_geometry=%d, want 1", res.SkippedZeroGeometry)
+		}
+		found := false
+		for _, d := range res.Details {
+			if strings.Contains(d, "1 Web nodes were skipped because w/h is <= 0") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("details should note skipped zero-geometry nodes, got %v", res.Details)
+		}
 	})
 
 	t.Run("partial_ignore_remaining_zero_geometry_is_mismatch", func(t *testing.T) {
 		// ignore で一部だけ除外し、残りがすべて幾何 0 のとき「全件除外」の
-		// skipped と誤報せず、ゼロ幾何の mismatch にする（Issue #475）。
-		web := `[{"selector":"#a","x":0,"y":0,"w":0,"h":0},{"selector":"#b","x":0,"y":0,"w":10,"h":10}]`
-		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#b"}, nil)
+		// skipped と誤報せず、ゼロ幾何の mismatch にする（Issue #475 / #671）。
+		// 件数は ignore 適用前の入力件数（totalNodes）を出す。
+		web := `[{"selector":"#wide","x":0,"y":0,"w":900,"h":50},{"selector":"#a","x":0,"y":0,"w":0,"h":0}]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{"#wide"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -608,6 +816,9 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 		}
 		if len(res.Details) != 1 || !strings.Contains(res.Details[0], "no Web nodes have non-zero geometry") {
 			t.Fatalf("details should report zero geometry, got %v", res.Details)
+		}
+		if !strings.Contains(res.Details[0], "2 nodes parsed") {
+			t.Errorf("geometry message must use pre-ignore totalNodes, got %q", res.Details[0])
 		}
 		if strings.Contains(res.Details[0], "All Web nodes were excluded") {
 			t.Errorf("must not report all-excluded when a zero-geometry node remains: %q", res.Details[0])
@@ -776,6 +987,78 @@ func TestLayoutIntegrity_RequiredKeys(t *testing.T) {
 		}
 		if res.Status != "mismatch" || res.CheckedNodes != 2 || res.IssueCount < 1 {
 			t.Fatalf("expected mismatch with overflow, got %#v", res)
+		}
+	})
+}
+
+func TestLimitLayoutIntegrityIssues(t *testing.T) {
+	issues := []LayoutIssue{
+		{Type: "viewport_overflow_x", Selector: "#a", Edge: "right"},
+		{Type: "viewport_overflow_x", Selector: "#b", Edge: "right"},
+		{Type: "viewport_overflow_x", Selector: "#c", Edge: "right"},
+		{Type: "parent_overflow", Selector: "#d", Edge: "left"},
+	}
+
+	t.Run("max_details_2_truncates", func(t *testing.T) {
+		got, omitted := LimitLayoutIntegrityIssues(issues, 2)
+		if len(got) != 2 {
+			t.Fatalf("len=%d, want 2", len(got))
+		}
+		if omitted != 2 {
+			t.Fatalf("omitted=%d, want 2", omitted)
+		}
+		if got[0].Selector != "#a" || got[1].Selector != "#b" {
+			t.Errorf("expected first two kept, got %#v", got)
+		}
+	})
+
+	t.Run("unspecified_or_zero_keeps_all", func(t *testing.T) {
+		got, omitted := LimitLayoutIntegrityIssues(issues, 0)
+		if len(got) != len(issues) {
+			t.Fatalf("len=%d, want %d", len(got), len(issues))
+		}
+		if omitted != 0 {
+			t.Fatalf("omitted=%d, want 0", omitted)
+		}
+		for i := range issues {
+			if got[i].Selector != issues[i].Selector {
+				t.Errorf("got[%d]=%q, want %q", i, got[i].Selector, issues[i].Selector)
+			}
+		}
+	})
+
+	t.Run("cap_at_or_above_len_keeps_all", func(t *testing.T) {
+		got, omitted := LimitLayoutIntegrityIssues(issues, len(issues))
+		if len(got) != len(issues) {
+			t.Fatalf("len=%d, want %d", len(got), len(issues))
+		}
+		if omitted != 0 {
+			t.Fatalf("omitted=%d, want 0", omitted)
+		}
+		got, omitted = LimitLayoutIntegrityIssues(issues, len(issues)+1)
+		if len(got) != len(issues) {
+			t.Fatalf("over-cap len=%d, want %d", len(got), len(issues))
+		}
+		if omitted != 0 {
+			t.Fatalf("over-cap omitted=%d, want 0", omitted)
+		}
+	})
+
+	t.Run("nil_or_empty_unchanged", func(t *testing.T) {
+		got, omitted := LimitLayoutIntegrityIssues(nil, 2)
+		if got != nil {
+			t.Errorf("nil input: got %#v", got)
+		}
+		if omitted != 0 {
+			t.Fatalf("nil omitted=%d, want 0", omitted)
+		}
+		empty := []LayoutIssue{}
+		got, omitted = LimitLayoutIntegrityIssues(empty, 2)
+		if len(got) != 0 {
+			t.Errorf("empty input: got %#v", got)
+		}
+		if omitted != 0 {
+			t.Fatalf("empty omitted=%d, want 0", omitted)
 		}
 	})
 }

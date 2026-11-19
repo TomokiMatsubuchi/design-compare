@@ -35,14 +35,32 @@ Example layout for one run (`RUN=/tmp/design-compare-<unique-suffix>`):
 ### Step 1: Gather Figma Design Data
 Use the **Figma MCP server** to fetch:
 - Node image: Save to `$RUN/figma.png` (e.g. `/tmp/design-compare-20261029-a1b2/figma.png`).
-- Node metadata: Extract the layout bounding boxes and structural details.
+- Node metadata: Extract the layout bounding boxes into a **FigmaNode** JSON array for `figma_layout` / `figma_layout_path`.
+
+**FigmaNode schema** (required keys: `id`, `name`, `x`, `y`, `w`, `h`; optional `parent` = parent node's `id`):
+
+```json
+[
+  {"id": "1", "name": "Card", "x": 0, "y": 0, "w": 400, "h": 300},
+  {"id": "2", "name": "Button", "x": 100, "y": 100, "w": 200, "h": 50, "parent": "1"}
+]
+```
+
+Keys are `w` / `h` — **not** `width` / `height`. Save the array to `$RUN/figma_layout.json` (or pass it inline as `figma_layout`).
 
 ### Step 2: Gather Web Implementation Data
 Use your browser automation MCP tools (chrome-devtools-mcp or playwright-cli):
 - Capture page screenshot: Save to `$RUN/web.png` (e.g. `/tmp/design-compare-20261029-a1b2/web.png`).
 - Extract DOM bounding boxes into a **WebNode** JSON array for `web_layout` / `web_layout_path`.
 
-**WebNode schema** (same JSON for `layout_tree` and `layout_integrity`):
+**WebNode schema** (same JSON for `layout_tree` and `layout_integrity`; required keys: `selector`, `x`, `y`, `w`, `h`; optional `parent` = parent node's `selector`):
+
+```json
+[
+  {"selector": "#card", "x": 0, "y": 0, "w": 400, "h": 300},
+  {"selector": "#card button.primary", "x": 100, "y": 100, "w": 200, "h": 50, "parent": "#card"}
+]
+```
 
 | Field | Required | Meaning |
 | :--- | :--- | :--- |
@@ -78,7 +96,7 @@ JSON.stringify(extractWebLayout([
 ]));
 ```
 
-Pass the resulting array as `web_layout` (or write it to a file and use `web_layout_path`). Reuse the same shape for Step 5 `layout_integrity` (recapture after resizing the viewport).
+Pass the resulting array as `web_layout` (or write it to a file and use `web_layout_path`). For Step 5 `layout_integrity`, resize the viewport to **768×1024** (portrait) or **1024×768** (landscape), then recapture DOM boxes in this same WebNode shape — do not reuse coordinates from a different viewport size.
 
 ### Step 3: Run the Comparison
 Call the `compare_design` tool from **design-compare** using the appropriate mode:
@@ -114,7 +132,7 @@ A pixel-perfect match against Figma desktop/mobile frames does **NOT** prove tha
 
 Use **separate files** per orientation under the same `$RUN` directory (never overwrite one capture with the other — portrait and landscape checks may run in parallel):
 
-1. **Portrait (default):** resize the browser to **768×1024 CSS px**, recapture **DOM bounding boxes only** (not Figma) into `$RUN/web-portrait.json`, then call `compare_design` with `mode: "layout_integrity"` and `web_layout_path: "/tmp/design-compare-<unique-suffix>/web-portrait.json"` (or inline `web_layout` from that capture). On large or badly broken pages, pass `max_details` (same as `layout_tree`) so `issues` / `details` stay bounded; `issue_count` remains the full count.
+1. **Portrait (default):** resize the browser to **768×1024 CSS px**, recapture **DOM bounding boxes only** (not Figma) into `$RUN/web-portrait.json`, then call `compare_design` with `mode: "layout_integrity"` and `web_layout_path: "/tmp/design-compare-<unique-suffix>/web-portrait.json"` (or inline `web_layout` from that capture). On large or badly broken pages, pass `max_details` (same as `layout_tree`) so `details` and `issues` stay bounded; `issue_count` remains the full count.
 2. **Landscape:** resize to **1024×768 CSS px**, recapture DOM boxes into `$RUN/web-landscape.json`, then call again with `viewport_preset: "ipad_landscape"` (or `viewport_width: 1024` and `viewport_height: 768`) and `web_layout_path: "/tmp/design-compare-<unique-suffix>/web-landscape.json"` (reuse the same `max_details` if set). Do **not** reuse portrait coordinates or the portrait file for the landscape check.
 3. Treat `viewport_overflow_x` and `parent_overflow` as failures. Vertical overflow of the viewport is expected page scroll and is not a failure.
 4. **Confirm parent checks ran:** each response includes `parent_checked_nodes` (how many nodes had a resolvable `parent` and ran containment). If it is `0`, `parent_overflow` was **not** applied — do **not** treat `status: success` as proof that parent overflow passed. Recapture with correct `parent` selectors (matching another node's `selector` in the same JSON). Non-empty `unresolved_parent_refs` (same labels as `layout_tree`, e.g. `Web: '#card-typo'`) means a `parent` value did not resolve; fix the typo or missing parent node before claiming success.
@@ -129,7 +147,10 @@ Intentional horizontal scroll regions (carousels, `overflow-x: auto` tables, mar
 - In `layout_tree` mode, also check misuse-detection fields that do **not** change `status` / `match_rate`: if `unresolved_parent_refs` or `unmatched_ignores` is non-empty, the requested relative compare / exclusion did not take effect — fix the `parent` references and `ignore_nodes` spellings and re-run; do **not** treat verification as complete until they are empty. If `absolute_mode_pairs` > 0, those pairs were compared in raw px (`threshold` applies as px, not ratio), so a below-threshold `pass_rate` is not necessarily an implementation bug.
 - When using `ignore_nodes` / `ignore_region`, check exclusion misuse-detection fields that do **not** change `status` / `match_rate`: non-empty `unmatched_ignores`, `unmatched_ignore_regions`, or `out_of_bounds_regions` means the exclusion did not take effect — fix the selector or coordinates and re-run before treating verification as complete. If `ignored_count` (and in `layout_tree` / `layout_integrity`, the listed `ignored_nodes`) is larger than expected, you may be excluding too much — tighten the exclusion scope. See README §3 (`ignored_count` / `ignored_nodes` / `unmatched_ignores` / `unmatched_ignore_regions` / `out_of_bounds_regions`).
 - If the response includes a non-empty `warnings` array (perceptual / strict only; omitted when empty), do **not** treat `status: success` as verification complete. Act on the warning content: recapture blank/uniform screenshots (all-white or all-black), fix viewport or aspect-ratio mismatches, or explicitly set `max_diff_pixels` when a `strict` call that specified only `min_match` returned `mismatch` because the default of 0 dominated the pass/fail decision (this warning is not emitted on success). See README §1 (`warnings`) for the full list.
-- If discrepancies exist, inspect the output details and the `diff_image` field (perceptual / strict modes only; layout_tree results have no diff image — rely on `details` instead; when present it is a base64 PNG data URI returned in the response; no temporary file is written). For how the visualization is colored, see README §1. In `strict` mode, prefer `generate_diff=false` on iterative verify loops: `diff_image` stays empty while `diff_regions` still reports mismatch bounding boxes (same as `perceptual` returning `diff_cells` without a large base64 payload). Then correct the HTML/CSS code, and re-run the validation to ensure the layout matches the template.
+- If discrepancies exist, analyze in this order, then correct the HTML/CSS and re-run until the comparison passes:
+  1. Inspect `details` (and mode-specific text fields such as `issues` in `layout_integrity`). `layout_tree` / `layout_integrity` have no diff image — rely on those text fields.
+  2. Prefer machine-readable location fields before looking at images. `perceptual` returns `diff_cells` (16×16 grid `{grid_x, grid_y}`) and `diff_region` (image A bounding box as `"x,y,w,h"`). `strict` returns `diff_regions` (red-pixel connected-component boxes, at most 10 — when `diff_regions_total` is present, more clusters existed than the 10 returned). These location fields are still returned when `generate_diff=false`; only `diff_image` is emptied. On iterative verify loops where location fields suffice, prefer `generate_diff=false` to avoid large base64 payloads.
+  3. The JSON `diff_image` field is a base64 PNG data URI string — agents cannot view it as an image. When you need to see the visualization, call `perceptual` / `strict` with `diff_image_content: true` so the MCP response includes an `image/png` content block after the JSON text (default is `false`). `diff_image_content` only attaches an image when `diff_image` is non-empty, so keep `generate_diff` at its default `true` (or omit it) for that call. For how the visualization is colored, see README §1.
 
 ## Guardrails & Best Practices
 

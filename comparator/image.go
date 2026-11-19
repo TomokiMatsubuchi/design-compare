@@ -145,12 +145,20 @@ func gifHeaderDimensions(data []byte) (w, h int, ok bool) {
 	return int(binary.LittleEndian.Uint16(data[6:8])), int(binary.LittleEndian.Uint16(data[8:10])), true
 }
 
+// decodeImageConfig は画像ヘッダだけを読み image.Config を返す。
+// CheckImageHeaderSize / ValidateImageSizeLimit が同じ DecodeConfig 結果を
+// 共有し、辺上限と総画素上限を二重パースせず判定できるようにする (Issue #599)。
+func decodeImageConfig(data []byte) (image.Config, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return cfg, err
+}
+
 // CheckImageHeaderSize は画像ヘッダ (DecodeConfig) だけを読んで寸法上限を検査する。
 // #158 の maxImageDimension (8192) をフルデコード前に適用し、圧縮爆弾的な
 // PNG がピクセルバッファを確保する前に修復可能なエラーで弾く (Issue #273)。
 // ヘッダが読めない場合は nil を返し、後続の image.Decode に任せる。
 func CheckImageHeaderSize(data []byte, label string) error {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, err := decodeImageConfig(data)
 	if err != nil {
 		return nil
 	}
@@ -158,16 +166,17 @@ func CheckImageHeaderSize(data []byte, label string) error {
 }
 
 // ValidateImageSizeLimit はヘッダだけ読んで幅・高さを確認し、上限を超えていれば
-// フルデコードせずエラーを返す。先に CheckImageHeaderSize (8192) を適用し、
-// 各辺が比較上限内でも総画素が大きすぎる画像は #237 の画素上限で弾く。
-// ヘッダが読めない場合は nil を返し、後続の image.Decode に既存の形式・破損エラーを任せる。
+// フルデコードせずエラーを返す。1 回の DecodeConfig 結果で先に #158 の辺上限
+// (8192) を適用し、各辺が比較上限内でも総画素が大きすぎる画像は #237 の画素
+// 上限で弾く。ヘッダが読めない場合は nil を返し、後続の image.Decode に既存の
+// 形式・破損エラーを任せる。
 func ValidateImageSizeLimit(data []byte, label string) error {
-	if err := CheckImageHeaderSize(data, label); err != nil {
-		return err
-	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, err := decodeImageConfig(data)
 	if err != nil {
 		return nil
+	}
+	if err := dimensionLimitError(label, cfg.Width, cfg.Height); err != nil {
+		return err
 	}
 	w, h := cfg.Width, cfg.Height
 	pixels := int64(w) * int64(h)
@@ -184,16 +193,22 @@ func ValidateImageSizeLimit(data []byte, label string) error {
 // 1 箇所で済むようにする。
 const UnsupportedImageFormatHint = "(supported: PNG, JPEG, GIF, WebP; SVG and animated WebP are not supported)"
 
-// decodeImageError は image.Decode の失敗エラーに "failed to decode <画像>" の
-// コンテキストを付けて返す。対応外の画像形式 (image.ErrFormat) のときだけ
-// UnsupportedImageFormatHint を付ける。PNG/JPEG/GIF/WebP だが破損・途中切れの
-// ファイル (例: unexpected EOF) では「SVG and animated WebP are not supported」
-// と読める文面が原因を形式違いだと誤認させるため、ヒントは付けない (Issue #122)。
-func decodeImageError(what string, err error) error {
+// DecodeImageErrorMessage は image.Decode の失敗メッセージを組み立てる。
+// 対応外の画像形式 (image.ErrFormat) のときだけ UnsupportedImageFormatHint を
+// 付ける。PNG/JPEG/GIF/WebP だが破損・途中切れのファイル (例: unexpected EOF)
+// では「SVG and animated WebP are not supported」と読める文面が原因を形式違い
+// だと誤認させるため、ヒントは付けない (Issue #122)。strict / perceptual の
+// 案内文面を揃えるため、文字列版をこの 1 箇所に集約する (Issue #592)。
+func DecodeImageErrorMessage(what string, err error) string {
 	if errors.Is(err, image.ErrFormat) {
-		return fmt.Errorf("failed to decode %s: %w %s", what, err, UnsupportedImageFormatHint)
+		return fmt.Sprintf("failed to decode %s: %v %s", what, err, UnsupportedImageFormatHint)
 	}
-	return fmt.Errorf("failed to decode %s: %w", what, err)
+	return fmt.Sprintf("failed to decode %s: %v", what, err)
+}
+
+// decodeImageError は DecodeImageErrorMessage の error 版。
+func decodeImageError(what string, err error) error {
+	return errors.New(DecodeImageErrorMessage(what, err))
 }
 
 // RunPixelMatch performs strict pixel-by-pixel VRT using pixelmatch. When
@@ -211,29 +226,29 @@ func decodeImageError(what string, err error) error {
 // 成功時の 6 番目の戻り値は比較した画像の寸法 ("WxH")。ensureSameSize 後の
 // 同一サイズなので A/B を分けず image_size として応答へ echo できる。
 // diffCount>0 のとき、7 番目に赤ピクセルの連結成分 bounding box (最大 10 件)
-// を返す (generateDiff の真偽に依らない)。
-// 8 番目は warnings。diffCount==0 かつマスク後の両画像が単色ベタ塗りのとき、
+// を返し、8 番目に切り詰め前の総数を返す (generateDiff の真偽に依らない)。
+// 9 番目は warnings。diffCount==0 かつマスク後の両画像が単色ベタ塗りのとき、
 // 空洞比較の可能性を status / match_rate は変えずに通知する (Issue #227)。
-func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, []string, error) {
+func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff, includeAA bool, ignoreRegions []Region) (float64, int, int, string, []string, string, []DiffRegion, int, []string, error) {
 	if err := ValidateImageSizeLimit(imgABytes, "design image"); err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, err
+		return 0, 0, 0, "", nil, "", nil, 0, nil, err
 	}
 	imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("design image", err)
+		return 0, 0, 0, "", nil, "", nil, 0, nil, decodeImageError("design image", err)
 	}
 
 	if err := ValidateImageSizeLimit(imgBBytes, "web screenshot"); err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, err
+		return 0, 0, 0, "", nil, "", nil, 0, nil, err
 	}
 	imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, decodeImageError("web screenshot", err)
+		return 0, 0, 0, "", nil, "", nil, 0, nil, decodeImageError("web screenshot", err)
 	}
 
 	normA, normB, err := ensureSameSize(imgA, imgB)
 	if err != nil {
-		return 0, 0, 0, "", nil, "", nil, nil, err
+		return 0, 0, 0, "", nil, "", nil, 0, nil, err
 	}
 
 	bounds := normA.Bounds()
@@ -242,13 +257,13 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 	// 0次元画像は totalPixels=0 となり一致率計算が0除算 (NaN) になるため、
 	// 明示的なエラーとして報告する。
 	if w == 0 || h == 0 {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, fmt.Errorf("image dimensions are zero (%dx%d); strict comparison requires non-zero image size", w, h)
 	}
 	// 幅・高さのどちらかが上限を超えたら、maskRegions の RGBA コピーや
 	// pixelmatch の差分画像による追加確保の前に修復可能なエラーとして弾く
 	// (ensureSameSize 済みのため両画像の寸法は同一)。
 	if err := dimensionLimitError("image", w, h); err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, err
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, err
 	}
 	totalPixels := w * h
 
@@ -280,7 +295,7 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 
 	diffCount, err := pixelmatch.MatchPixel(normA, normB, opts...)
 	if err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("pixelmatch error: %w", err)
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, fmt.Errorf("pixelmatch error: %w", err)
 	}
 
 	matchRate := float64(totalPixels-diffCount) / float64(totalPixels) * 100.0
@@ -293,42 +308,83 @@ func RunPixelMatch(imgABytes, imgBBytes []byte, threshold float64, generateDiff,
 
 	// pixelmatch は差分描画用に内部で NewRGBA し WriteTo へ差し替えるが、同一画像の
 	// fast path では差し替えずに return する。事前確保をやめたためその場合は nil。
-	// 旧実装は空の RGBA をエンコードしていたので同等にする。
+	// nil のときは pixelmatch の一致ピクセル描画と同じ薄いグレースケールを自前生成し、
+	// README の「差分がなかった箇所は image A の輝度を白寄りに薄める」説明と揃える (Issue #659)。
 	if diffImg == nil {
-		diffImg = image.NewRGBA(bounds)
+		diffImg = fadedGrayscaleFromImage(normA)
 	}
 
 	// 差分があるとき赤ピクセルの連結成分を返す (generate_diff に依らない)。
 	// 黄 (アンチエイリアス除外) は差分カウント対象外のため領域にも含めない。
+	// regionsTotal は maxDiffRegions での切り詰め前の総数 (Issue #573)。
 	var regions []DiffRegion
+	var regionsTotal int
 	if diffCount > 0 {
-		regions = collectDiffRegions(diffImg)
+		regions, regionsTotal = collectDiffRegions(diffImg)
 	}
 
 	if !generateDiff {
-		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, regions, warnings, nil
+		return matchRate, totalPixels, diffCount, "", outOfBounds, imageSize, regions, regionsTotal, warnings, nil
 	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, diffImg); err != nil {
-		return 0, 0, 0, "", nil, imageSize, nil, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
+		return 0, 0, 0, "", nil, imageSize, nil, 0, nil, fmt.Errorf("failed to encode diff PNG: %w", err)
 	}
 	diffDataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, warnings, nil
+	return matchRate, totalPixels, diffCount, diffDataURI, outOfBounds, imageSize, regions, regionsTotal, warnings, nil
+}
+
+// pixelmatchDiffAlpha は pixelmatch 既定の alpha（一致ピクセルを白寄りに薄める係数）。
+const pixelmatchDiffAlpha = 0.1
+
+// fadedGrayscaleFromImage は pixelmatch の一致ピクセル描画と同じ式で、img の輝度を
+// グレースケール化して白寄りに薄めた不透明 RGBA を返す。WriteTo が nil のまま返る
+// 同一画像 fast path を README 記載の見た目に揃える (Issue #659)。
+//
+// pixelmatch は一致ピクセルを
+//
+//	blend(rgbaToY(r, g, b), (alpha/255)*a)
+//
+// で描く (a は 16-bit 展開したアルファを 256 で割った値)。アルファを掛けるため
+// 不透明ピクセルの実効係数は約 0.1 で、alpha/255 単体 (~0.0004) ではない。
+// チャネルも pixelmatch の rgbaFromColor と同じ 16-bit/256 で 0-255 に落とす。
+func fadedGrayscaleFromImage(img image.Image) *image.RGBA {
+	bounds := img.Bounds()
+	out := image.NewRGBA(bounds)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			// RGBA() の 16-bit 値を pixelmatch の rgbaFromColor と同じ 1/256 で落とす。
+			rf := float64(r) / 256
+			gf := float64(g) / 256
+			bf := float64(b) / 256
+			af := float64(a) / 256
+			yVal := rf*0.29889531 + gf*0.58662247 + bf*0.11448223
+			v := uint8(255 + (yVal-255)*(pixelmatchDiffAlpha/255)*af)
+			i := out.PixOffset(x, y)
+			out.Pix[i+0] = v
+			out.Pix[i+1] = v
+			out.Pix[i+2] = v
+			out.Pix[i+3] = 255
+		}
+	}
+	return out
 }
 
 // collectDiffRegions は差分画像の赤ピクセルを 4 近傍連結成分に分割し、
 // bounding box とピクセル数を差分ピクセル数の多い順（同数なら y, x）に最大
-// maxDiffRegions 件返す。座標は画像原点からのピクセル座標。
-func collectDiffRegions(img image.Image) []DiffRegion {
+// maxDiffRegions 件返す。戻り値の int は切り詰め前の連結成分総数
+// (Issue #573)。座標は画像原点からのピクセル座標。
+func collectDiffRegions(img image.Image) ([]DiffRegion, int) {
 	if img == nil {
-		return nil
+		return nil, 0
 	}
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
 	if w == 0 || h == 0 {
-		return nil
+		return nil, 0
 	}
 
 	visited := make([]bool, w*h)
@@ -396,13 +452,14 @@ func collectDiffRegions(img image.Image) []DiffRegion {
 		}
 		return regions[i].X < regions[j].X
 	})
+	total := len(regions)
 	if len(regions) > maxDiffRegions {
 		regions = regions[:maxDiffRegions]
 	}
 	if len(regions) == 0 {
-		return nil
+		return nil, 0
 	}
-	return regions
+	return regions, total
 }
 
 // CalculateLayoutSimilarityWithDiff calculates aHash (16x16) similarity and, when

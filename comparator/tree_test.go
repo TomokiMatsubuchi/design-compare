@@ -295,7 +295,7 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if !found {
 			t.Errorf("Expected a detail stating the geometric diff exceeds tolerance, got details: %v", result.Details)
 		}
-		bboxLine := "figma: x=0 y=0 w=100 h=100 / web: x=50 y=0 w=100 h=100"
+		bboxLine := "figma (px): x=0 y=0 w=100 h=100 / web (px): x=50 y=0 w=100 h=100"
 		var foundBBox bool
 		for _, d := range result.Details {
 			if strings.Contains(d, bboxLine) {
@@ -323,7 +323,7 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 		if mn.Space != "absolute" {
 			t.Errorf("Expected space=absolute for parentless pair, got %q", mn.Space)
 		}
-		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (absolute px: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)",
+		detailLine := fmt.Sprintf("geometric diff %.2f exceeds tolerance %.2f (absolute: figma (px): x=%g y=%g w=%g h=%g / web (px): x=%g y=%g w=%g h=%g; dx: %.2f (px), dy: %.2f (px), dw: %.2f (px), dh: %.2f (px))",
 			mn.Diff, 0.15, 0.0, 0.0, 100.0, 100.0, 50.0, 0.0, 100.0, 100.0, mn.DX, mn.DY, mn.DW, mn.DH)
 		var detailsMatch bool
 		for _, d := range result.Details {
@@ -353,6 +353,124 @@ func TestLayoutTree_MismatchMessages(t *testing.T) {
 			t.Errorf("Expected geometric_diff=%g tolerance=0.15, got geometric_diff=%g tolerance=%v", wantDiff, mp.GeometricDiff, gotTol)
 		}
 	})
+}
+
+// TestLayoutTree_MatchedPairs verifies that tolerance 以内の一致ペアが
+// MatchedPairs（figma_name / web_selector）に構造化され、0 件時は空のままになる。
+func TestLayoutTree_MatchedPairs(t *testing.T) {
+	t.Run("all_match", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"},
+			{"id":"3","name":"nav","x":600,"y":10,"w":380,"h":80,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"},
+			{"selector":".nav","x":600,"y":10,"w":380,"h":80,"parent":"#header"}
+		]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.MatchedNodes != 3 {
+			t.Fatalf("Expected 3 matched nodes, got %d", result.MatchedNodes)
+		}
+		want := []MatchedPair{
+			{FigmaName: "header", WebSelector: "#header"},
+			{FigmaName: "logo", WebSelector: ".logo"},
+			{FigmaName: "nav", WebSelector: ".nav"},
+		}
+		if len(result.MatchedPairs) != len(want) {
+			t.Fatalf("Expected %d matched_pairs, got %#v", len(want), result.MatchedPairs)
+		}
+		for i, mp := range result.MatchedPairs {
+			if mp != want[i] {
+				t.Errorf("matched_pairs[%d]=%#v, want %#v", i, mp, want[i])
+			}
+		}
+		// details の Matched 行も従来どおり残る。
+		for _, pair := range want {
+			needle := fmt.Sprintf("Matched: '%s' ↔ '%s'", pair.FigmaName, pair.WebSelector)
+			found := false
+			for _, d := range result.Details {
+				if strings.Contains(d, needle) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Expected details to contain %q, got %v", needle, result.Details)
+			}
+		}
+	})
+
+	t.Run("no_matches_empty", func(t *testing.T) {
+		figmaJSON := `[{"id":"1","name":"A","x":0,"y":0,"w":100,"h":100}]`
+		webJSON := `[{"selector":".B","x":500,"y":500,"w":100,"h":100}]`
+
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, 0.15, 98.0, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if result.MatchedNodes != 0 {
+			t.Fatalf("Expected 0 matched nodes, got %d", result.MatchedNodes)
+		}
+		if len(result.MatchedPairs) != 0 {
+			t.Errorf("Expected empty matched_pairs when none match, got %#v", result.MatchedPairs)
+		}
+	})
+}
+
+// TestLayoutTree_MismatchPartnerNotCountedAsExtra verifies that a Web node
+// chosen as the closest match for a Figma node that exceeds tolerance is
+// marked used: it must not appear as an extra_web element, and with
+// count_extra_web=true the denominator stays Figma-side only (1/2 = 50%).
+func TestLayoutTree_MismatchPartnerNotCountedAsExtra(t *testing.T) {
+	// Figma 2 / Web 2: header matches; card is closest to #card but exceeds
+	// default-ish tolerance so the pair is a mismatch, not an extra Web node.
+	figmaJSON := `[
+		{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+		{"id":"2","name":"card","x":0,"y":200,"w":100,"h":100}
+	]`
+	webJSON := `[
+		{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+		{"selector":"#card","x":50,"y":200,"w":100,"h":100}
+	]`
+	const tolerance = 0.05
+	const passRate = 98.0
+
+	result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, true, nil)
+	if err != nil {
+		t.Fatalf("CompareLayoutTrees failed: %v", err)
+	}
+	if result.MatchedNodes != 1 {
+		t.Errorf("MatchedNodes=%d, want 1", result.MatchedNodes)
+	}
+	if result.TotalNodes != 2 {
+		t.Errorf("TotalNodes=%d, want 2 (mismatch partner must not inflate denominator)", result.TotalNodes)
+	}
+	if result.ExtraWebCount != 0 {
+		t.Errorf("ExtraWebCount=%d, want 0", result.ExtraWebCount)
+	}
+	if len(result.ExtraWebNodes) != 0 {
+		t.Errorf("ExtraWebNodes=%v, want empty", result.ExtraWebNodes)
+	}
+	if got := fmt.Sprintf("%.2f", result.MatchRate); got != "50.00" {
+		t.Errorf("MatchRate=%.2f, want 50.00", result.MatchRate)
+	}
+	if len(result.MismatchedPairs) != 1 {
+		t.Fatalf("MismatchedPairs=%d, want 1", len(result.MismatchedPairs))
+	}
+	if result.MismatchedPairs[0].WebSelector != "#card" {
+		t.Errorf("mismatch partner=%q, want #card", result.MismatchedPairs[0].WebSelector)
+	}
+	for _, d := range result.Details {
+		if strings.Contains(d, "extra element") {
+			t.Errorf("details must not report mismatch partner as extra: %q", d)
+		}
+	}
 }
 
 // TestLayoutTree_DetailsOrderPutsFailuresFirst verifies that after the
@@ -904,6 +1022,116 @@ func TestLayoutTree_RequiredFieldsValidation(t *testing.T) {
 	})
 }
 
+// TestLayoutTree_DuplicateIdentifiers verifies that repeated Figma id /
+// Web selector values are listed in DuplicateIdentifiers without changing
+// first-wins parent resolution or match_rate / status.
+func TestLayoutTree_DuplicateIdentifiers(t *testing.T) {
+	const tolerance = 0.15
+	const passRate = 98.0
+
+	t.Run("duplicate_figma_id_reported_match_rate_unchanged", func(t *testing.T) {
+		// 先勝ち: parent "1" は最初の header（1000x100）を使う。
+		// 2 件目の同 id は親として使われないが、比較対象としては残る。
+		figmaDup := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"1","name":"header-dup","x":500,"y":500,"w":10,"h":10},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"}
+		]`
+		webJSON := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"},
+			{"selector":".orphan","x":500,"y":500,"w":10,"h":10}
+		]`
+		// 対照: 重複 id をユニークな id に置き換えただけ（幾何・順序は同じ）。
+		figmaUnique := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"1b","name":"header-dup","x":500,"y":500,"w":10,"h":10},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"}
+		]`
+
+		dup, err := CompareLayoutTrees(figmaDup, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (dup) failed: %v", err)
+		}
+		unique, err := CompareLayoutTrees(figmaUnique, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (unique) failed: %v", err)
+		}
+		if len(dup.DuplicateIdentifiers) != 1 || dup.DuplicateIdentifiers[0] != "Figma: '1'" {
+			t.Errorf("Expected duplicate_node_identifiers=[Figma: '1'], got %v", dup.DuplicateIdentifiers)
+		}
+		if len(unique.DuplicateIdentifiers) != 0 {
+			t.Errorf("Expected no duplicate_node_identifiers for unique ids, got %v", unique.DuplicateIdentifiers)
+		}
+		if dup.MatchRate != unique.MatchRate {
+			t.Errorf("Expected match_rate unchanged by duplicate warning (dup=%.2f unique=%.2f)", dup.MatchRate, unique.MatchRate)
+		}
+		if dup.Status != unique.Status {
+			t.Errorf("Expected status unchanged (dup=%s unique=%s)", dup.Status, unique.Status)
+		}
+	})
+
+	t.Run("duplicate_web_selector_reported_match_rate_unchanged", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"header","x":0,"y":0,"w":1000,"h":100},
+			{"id":"2","name":"logo","x":10,"y":10,"w":100,"h":80,"parent":"1"},
+			{"id":"3","name":"orphan","x":500,"y":500,"w":10,"h":10}
+		]`
+		webDup := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":"#header","x":500,"y":500,"w":10,"h":10},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"}
+		]`
+		webUnique := `[
+			{"selector":"#header","x":0,"y":0,"w":1000,"h":100},
+			{"selector":"#header-dup","x":500,"y":500,"w":10,"h":10},
+			{"selector":".logo","x":10,"y":10,"w":100,"h":80,"parent":"#header"}
+		]`
+
+		dup, err := CompareLayoutTrees(figmaJSON, webDup, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (dup) failed: %v", err)
+		}
+		unique, err := CompareLayoutTrees(figmaJSON, webUnique, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees (unique) failed: %v", err)
+		}
+		if len(dup.DuplicateIdentifiers) != 1 || dup.DuplicateIdentifiers[0] != "Web: '#header'" {
+			t.Errorf("Expected duplicate_node_identifiers=[Web: '#header'], got %v", dup.DuplicateIdentifiers)
+		}
+		if len(unique.DuplicateIdentifiers) != 0 {
+			t.Errorf("Expected no duplicate_node_identifiers for unique selectors, got %v", unique.DuplicateIdentifiers)
+		}
+		if dup.MatchRate != unique.MatchRate {
+			t.Errorf("Expected match_rate unchanged by duplicate warning (dup=%.2f unique=%.2f)", dup.MatchRate, unique.MatchRate)
+		}
+		if dup.Status != unique.Status {
+			t.Errorf("Expected status unchanged (dup=%s unique=%s)", dup.Status, unique.Status)
+		}
+	})
+
+	t.Run("both_sides_and_triplicate_deduped", func(t *testing.T) {
+		figmaJSON := `[
+			{"id":"1","name":"a","x":0,"y":0,"w":50,"h":50},
+			{"id":"1","name":"b","x":0,"y":0,"w":50,"h":50},
+			{"id":"1","name":"c","x":0,"y":0,"w":50,"h":50}
+		]`
+		webJSON := `[
+			{"selector":".x","x":0,"y":0,"w":50,"h":50},
+			{"selector":".x","x":0,"y":0,"w":50,"h":50}
+		]`
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if len(result.DuplicateIdentifiers) != 2 ||
+			result.DuplicateIdentifiers[0] != "Figma: '1'" ||
+			result.DuplicateIdentifiers[1] != "Web: '.x'" {
+			t.Errorf("Expected [Figma: '1' Web: '.x'], got %v", result.DuplicateIdentifiers)
+		}
+	})
+}
+
 // TestLayoutTree_UnresolvedParentRefs verifies that a non-empty parent that
 // matches no id / selector is reported in UnresolvedParentRefs without
 // changing match status (still falls back to absolute coordinates).
@@ -979,6 +1207,12 @@ func TestLayoutTree_SelfReferentialParentNoFalseMatch(t *testing.T) {
 	}
 	if result.Status == "success" {
 		t.Errorf("Expected status not 'success' (false match), got '%s' (matchRate=%.1f%%)", result.Status, result.MatchRate)
+	}
+	// 自己参照は相対化不能のため unresolved_parent_refs にも載せる（誤用検出）。
+	if len(result.UnresolvedParentRefs) != 2 ||
+		result.UnresolvedParentRefs[0] != "Figma: '1'" ||
+		result.UnresolvedParentRefs[1] != "Web: 'A'" {
+		t.Errorf("Expected unresolved_parent_refs=[Figma: '1' Web: 'A'], got %v", result.UnresolvedParentRefs)
 	}
 }
 
@@ -1194,6 +1428,66 @@ func TestLimitLayoutTreeDetails(t *testing.T) {
 			if got[i] != details[i] {
 				t.Errorf("details[%d]=%q, want %q", i, got[i], details[i])
 			}
+		}
+	})
+}
+
+func TestLimitLayoutTreeStructured(t *testing.T) {
+	newResult := func() *LayoutTreeResult {
+		return &LayoutTreeResult{
+			MismatchedPairs: []MismatchPair{
+				{FigmaName: "a", Reason: "exceeds_tolerance"},
+				{FigmaName: "b", Reason: "exceeds_tolerance"},
+				{FigmaName: "c", Reason: "no_unused_web_elements"},
+				{FigmaName: "d", Reason: "exceeds_tolerance"},
+			},
+			MismatchedNodes: []MismatchedNode{
+				{FigmaName: "a"},
+				{FigmaName: "b"},
+				{FigmaName: "d"},
+			},
+			ExtraWebNodes: []string{".x", ".y", ".z"},
+			IgnoredNodes:  []string{"figma:1", "web:#ad"},
+			IgnoredCount:  2,
+		}
+	}
+
+	t.Run("max_details_2_truncates_arrays_and_reports_omitted", func(t *testing.T) {
+		result := newResult()
+		pairsOmitted, extraOmitted := LimitLayoutTreeStructured(result, 2)
+		if pairsOmitted != 2 {
+			t.Errorf("pairsOmitted=%d, want 2", pairsOmitted)
+		}
+		if extraOmitted != 1 {
+			t.Errorf("extraOmitted=%d, want 1", extraOmitted)
+		}
+		if len(result.MismatchedPairs) != 2 {
+			t.Fatalf("mismatched_pairs=%d, want 2", len(result.MismatchedPairs))
+		}
+		if result.MismatchedPairs[0].FigmaName != "a" || result.MismatchedPairs[1].FigmaName != "b" {
+			t.Errorf("expected first two pairs kept, got %#v", result.MismatchedPairs)
+		}
+		if len(result.MismatchedNodes) != 2 {
+			t.Fatalf("mismatched_nodes=%d, want 2", len(result.MismatchedNodes))
+		}
+		if len(result.ExtraWebNodes) != 2 {
+			t.Fatalf("extra_web_nodes=%d, want 2", len(result.ExtraWebNodes))
+		}
+		// ignored_nodes は監査用のため切り詰めない
+		if len(result.IgnoredNodes) != 2 || result.IgnoredCount != 2 {
+			t.Errorf("ignored_nodes should stay intact, got %v count=%d", result.IgnoredNodes, result.IgnoredCount)
+		}
+	})
+
+	t.Run("unspecified_or_zero_keeps_all", func(t *testing.T) {
+		result := newResult()
+		pairsOmitted, extraOmitted := LimitLayoutTreeStructured(result, 0)
+		if pairsOmitted != 0 || extraOmitted != 0 {
+			t.Errorf("omitted should be 0, got pairs=%d extra=%d", pairsOmitted, extraOmitted)
+		}
+		if len(result.MismatchedPairs) != 4 || len(result.MismatchedNodes) != 3 || len(result.ExtraWebNodes) != 3 {
+			t.Fatalf("expected no truncation, got pairs=%d nodes=%d extra=%d",
+				len(result.MismatchedPairs), len(result.MismatchedNodes), len(result.ExtraWebNodes))
 		}
 	})
 }

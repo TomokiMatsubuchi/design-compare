@@ -90,15 +90,22 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
         }),
       ),
       figma_layout: Type.Optional(
-        Type.String({
-          description: "Inline JSON Figma node list for layout_tree; mutually exclusive with figma_layout_path",
-        }),
+        Type.Union(
+          [Type.String(), Type.Array(Type.Record(Type.String(), Type.Any()))],
+          {
+            description:
+              "Inline JSON Figma node list for layout_tree; mutually exclusive with figma_layout_path. A native JSON array is also accepted and marshaled to the same string form. A single JSON object is not accepted; wrap the nodes in [...]",
+          },
+        ),
       ),
       web_layout: Type.Optional(
-        Type.String({
-          description:
-            "Inline JSON Web DOM node list for layout_tree and layout_integrity; mutually exclusive with web_layout_path",
-        }),
+        Type.Union(
+          [Type.String(), Type.Array(Type.Record(Type.String(), Type.Any()))],
+          {
+            description:
+              "Inline JSON Web DOM node list for layout_tree and layout_integrity; mutually exclusive with web_layout_path. A native JSON array is also accepted and marshaled to the same string form. A single JSON object is not accepted; wrap the nodes in [...]",
+          },
+        ),
       ),
       figma_layout_path: Type.Optional(
         Type.String({
@@ -132,13 +139,13 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
       ignore_nodes: Type.Optional(
         Type.String({
           description:
-            "Comma-separated Figma node IDs/names or Web selectors to ignore (layout_tree and layout_integrity). A JSON array of strings is also accepted. In layout_integrity only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner'); a prefix that matches no node is reported in unmatched_ignores. For perceptual/strict use ignore_region instead",
+            "Comma-separated list of Figma Node IDs, Figma Node Names, or Web Selectors to ignore (for 'layout_tree' and 'layout_integrity' modes). A JSON array of strings (e.g. [\"#ad-banner\",\".cookie\"]) is also accepted and joined the same way; non-string, non-array values are rejected. In 'layout_integrity' only Web selectors apply. An entry ending with '*' matches by prefix (e.g. '.ad-*' matches '.ad-banner', 'Icon/*' matches 'Icon/Home'), so naming-convention groups can be excluded without enumerating every element; a prefix entry that matches no node is reported in 'unmatched_ignores'.",
         }),
       ),
       ignore_region: Type.Optional(
         Type.String({
           description:
-            "Semicolon-separated x,y,w,h pixel regions (e.g. '10,20,100,50;200,300,80,60'). A JSON array of region strings (e.g. [\"10,20,100,50\",\"200,300,80,60\"]) is also accepted; non-string, non-array values are rejected. In perceptual/strict (where ignore_nodes is unsupported), both images are white-masked in these regions before comparison; parsed count is ignored_regions; regions that miss the image entirely are reported in out_of_bounds_regions. In layout_tree and layout_integrity, nodes whose bounding-box center lies inside a region are excluded (counted in ignored_count); regions that contain no node center are reported in unmatched_ignore_regions. Useful to exclude dynamic content (dates, ads, banners)",
+            "Semicolon-separated rectangular regions to ignore, each region formatted as 'x,y,w,h' in pixels (e.g. '10,20,100,50;200,300,80,60'). A JSON array of region strings (e.g. [\"10,20,100,50\",\"200,300,80,60\"]) is also accepted; non-string, non-array values are rejected. In 'perceptual' and 'strict' modes, both images are masked with white in these regions before comparison; the number of parsed regions is always reported as 'ignored_regions' (empty segments are skipped). Regions that do not intersect the image at all mask nothing and are reported in the 'out_of_bounds_regions' response field so coordinate mistakes are noticeable. When the two images differ in size in 'perceptual' mode, the same x,y,w,h is applied in absolute pixels of each image (a note is added to 'details', and 'warnings' notes that the same region may mask different areas). In 'layout_tree' and 'layout_integrity' modes, nodes whose bounding-box center lies inside a region are excluded (from both sides in layout_tree; Web nodes in layout_integrity) and counted in 'ignored_count'; regions that contain no node center exclude nothing and are reported in 'unmatched_ignore_regions'. In layout_tree the same region coordinates are applied to both Figma and Web (align coordinates when the Figma canvas is offset). Useful to exclude dynamic content (dates, ads, banners) that always differs.",
         }),
       ),
       count_extra_web: Type.Optional(
@@ -149,7 +156,7 @@ export default async function designCompareExtension(pi: ExtensionAPI) {
       max_details: Type.Optional(
         Type.Number({
           description:
-            "Maximum details lines for layout_tree and layout_integrity; default 0 means unlimited",
+            "For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines to return (default 0 = unlimited). When greater than 0, the leading lines (summary first) are kept up to this count and a final omit line is appended ('... and N more details omitted'). In 'layout_tree', mismatched_pairs / mismatched_nodes / extra_web_nodes are also truncated to the same cap with mismatched_pairs_omitted / extra_web_nodes_omitted reporting how many were dropped (ignored_nodes is not truncated so it stays aligned with ignored_count). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'details' and 'issues' are truncated to the same cap with issues_omitted reporting how many issues were dropped; 'issue_count' stays the full count so pass/fail and total size remain visible.",
         }),
       ),
       threshold: Type.Optional(

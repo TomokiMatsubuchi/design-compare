@@ -56,6 +56,14 @@ type MismatchPair struct {
 	Space         string   `json:"space,omitempty"` // "relative" | "absolute"（超過時のみ）
 }
 
+// MatchedPair は layout_tree で tolerance 以内に一致した Figma/Web ペアを
+// 機械可読に返す。details の "Matched: '<figma>' ↔ '<selector>'" と同じ対応を
+// 文字列パースなしで扱うためのフィールド。
+type MatchedPair struct {
+	FigmaName   string `json:"figma_name"`
+	WebSelector string `json:"web_selector"`
+}
+
 type LayoutTreeResult struct {
 	MatchRate              float64          `json:"match_rate"`
 	Status                 string           `json:"status"`
@@ -70,8 +78,10 @@ type LayoutTreeResult struct {
 	ExtraWebNodes          []string         `json:"extra_web_nodes,omitempty"`
 	MismatchedNodes        []MismatchedNode `json:"mismatched_nodes,omitempty"`
 	MismatchedPairs        []MismatchPair   `json:"mismatched_pairs,omitempty"`
+	MatchedPairs           []MatchedPair    `json:"matched_pairs,omitempty"`
 	ZeroGeometryWarning    string           `json:"zero_geometry_warning,omitempty"`
 	UnresolvedParentRefs   []string         `json:"unresolved_parent_refs,omitempty"`
+	DuplicateIdentifiers   []string         `json:"duplicate_node_identifiers,omitempty"`
 	AbsoluteModePairs      int              `json:"absolute_mode_pairs"`
 }
 
@@ -147,6 +157,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 「最初に見つかったノード」を返していた従来挙動を維持する。
 	figmaByID := indexFigmaNodesByID(fNodes)
 	webBySelector := indexWebNodesBySelector(wNodes)
+	// 親インデックス元のリストで重複を検出し、先勝ちで黙って解釈しないよう通知する。
+	// 合否・座標解決は変えず、unresolved_parent_refs と同種の誤用検出。
+	duplicateIdentifiers := collectDuplicateIdentifiers(fNodes, wNodes)
 
 	// フィルタ後に片側が空でも、元から空だった側と全件除外を取り違えないよう
 	// ignore_nodes / ignore_region 適用前の件数を残す。
@@ -161,18 +174,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var ignoredNodes []string
 	var unmatchedIgnores []string
 	if len(ignoreList) > 0 {
-		ignoreMap := make(map[string]bool)
-		var wildcardPrefixes []string
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				// プレフィックス一致エントリ: '*' を除いた部分（raw + clean）を prefix として登録
-				prefix := strings.TrimSuffix(item, "*")
-				wildcardPrefixes = append(wildcardPrefixes, prefix, cleanNodeName(prefix))
-				continue
-			}
-			ignoreMap[item] = true
-			ignoreMap[cleanNodeName(item)] = true
-		}
+		matcher := newIgnoreMatcher(ignoreList)
 
 		// ノード側の識別値（raw + clean）を集め、ignore エントリが実際に
 		// どれかのノードに一致したかの判定に使う
@@ -190,7 +192,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 		var filteredFNodes []FigmaNode
 		for _, fn := range fNodes {
-			if isNodeValueIgnored(fn.ID, ignoreMap, wildcardPrefixes) || isNodeValueIgnored(fn.Name, ignoreMap, wildcardPrefixes) {
+			if matcher.matches(fn.ID) || matcher.matches(fn.Name) {
 				ignoredCount++
 				ignoredNodes = append(ignoredNodes, ignoredFigmaID(fn))
 				continue
@@ -201,7 +203,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 		var filteredWNodes []WebNode
 		for _, wn := range wNodes {
-			if isNodeValueIgnored(wn.Selector, ignoreMap, wildcardPrefixes) {
+			if matcher.matches(wn.Selector) {
 				ignoredCount++
 				ignoredNodes = append(ignoredNodes, ignoredWebID(wn))
 				continue
@@ -210,20 +212,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		}
 		wNodes = filteredWNodes
 
-		// どのノードにも一致しなかった ignore エントリ（スペルミス等）を検出する。
-		// 末尾 '*' のプレフィックスエントリは、プレフィックスに一致するノードが
-		// 1つも無い場合のみ報告する。
-		for _, item := range ignoreList {
-			if strings.HasSuffix(item, "*") {
-				if !anyNodeValueHasPrefix(nodeValues, strings.TrimSuffix(item, "*")) {
-					unmatchedIgnores = append(unmatchedIgnores, item)
-				}
-				continue
-			}
-			if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
-				unmatchedIgnores = append(unmatchedIgnores, item)
-			}
-		}
+		unmatchedIgnores = matcher.unmatched(nodeValues)
 	}
 
 	// ignore_region による領域除外: BoundingBox の中心点が領域内にあるノードを
@@ -297,6 +286,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 				ZeroGeometryWarning:    zeroGeometryWarning,
 				UnresolvedParentRefs:   unresolvedParentRefs,
+				DuplicateIdentifiers:   duplicateIdentifiers,
 			}, nil
 		}
 		// 両側とも元から非空で、ignore により比較対象が無くなった場合のみ
@@ -319,6 +309,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 				ZeroGeometryWarning:    zeroGeometryWarning,
 				UnresolvedParentRefs:   unresolvedParentRefs,
+				DuplicateIdentifiers:   duplicateIdentifiers,
 			}, nil
 		}
 		// どちら側の入力が空かを明示する。
@@ -341,6 +332,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 			ZeroGeometryWarning:    zeroGeometryWarning,
 			UnresolvedParentRefs:   unresolvedParentRefs,
+			DuplicateIdentifiers:   duplicateIdentifiers,
 		}, nil
 	}
 
@@ -349,6 +341,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	var totalCompared int
 	var absoluteModePairs int
 	var matchedPairDetails []string
+	var matchedPairs []MatchedPair
 	var mismatchDetails []string
 	var extraWebDetails []string
 	var mismatchedNodes []MismatchedNode
@@ -356,6 +349,10 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 
 	// 使用済みWebノードを追跡し、1対1対応を保証する（重複マッチによる一致率水増しを防ぐ）
 	usedWeb := make(map[int]bool)
+	// tolerance 超過で報告した相手 Web ノード。一致時の usedWeb とは別に持ち、
+	// 不一致相手を extra に二重計上しない（Issue #642）。一致時だけ used にする既存
+	// の貪欲再マッチ（後続 Figma が同じ Web を拾う）は維持する。
+	mismatchPartnerWeb := make(map[int]bool)
 
 	// 各Figmaノードと、Webの対応する要素を探して比較
 	// 簡単のため、Figmaの各要素と、Web側で最も「幾何学的位置（相対位置）が近いもの」を対応付ける
@@ -421,7 +418,12 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				usedWeb[bestMatchIdx] = true
 			}
 			// 一致したペア（Figmaノード名 ↔ Webセレクタ）を details に出力する。
+			// 同じ対応を matched_pairs でも返し、文字列パースなしで扱えるようにする。
 			matchedPairDetails = append(matchedPairDetails, fmt.Sprintf("Matched: '%s' ↔ '%s'", fn.Name, bestMatchSelector))
+			matchedPairs = append(matchedPairs, MatchedPair{
+				FigmaName:   fn.Name,
+				WebSelector: bestMatchSelector,
+			})
 		} else if bestMatchIdx == -1 {
 			// 比較候補（未使用のWebノード）が残っていないケース（Web側のノードがFigma側より少ない等）。
 			// このとき bestMatchSelector / minDiff は初期値（空文字・math.MaxFloat64）のまま意味を
@@ -434,14 +436,17 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		} else {
 			// 判定は相対座標・相対サイズの幾何差分（L2距離）のみで行われるため、データモデルに
 			// 存在しない「type config」等の文言は出さず、許容差（tolerance）を超過した旨を示す。
+			// 不一致の相手側は実装側の余分要素ではない（Issue #642）。usedWeb には載せない。
+			mismatchPartnerWeb[bestMatchIdx] = true
 			bestWeb := wNodes[bestMatchIdx]
 			space := "relative"
-			spaceLabel := "relative to the parent box; dx/dw are ratios"
+			unit := "ratio"
 			if bestAbs {
 				space = "absolute"
-				spaceLabel = "absolute px"
+				unit = "px"
 			}
-			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (%s: figma: x=%g y=%g w=%g h=%g / web: x=%g y=%g w=%g h=%g; dx: %.2f, dy: %.2f, dw: %.2f, dh: %.2f)", fn.Name, bestMatchSelector, minDiff, tolerance, spaceLabel, fn.X, fn.Y, fn.W, fn.H, bestWeb.X, bestWeb.Y, bestWeb.W, bestWeb.H, bestDiffX, bestDiffY, bestDiffW, bestDiffH))
+			// figma/web の bbox は常に絶対 px。dx/dy/dw/dh だけ比較空間に応じ ratio か px。
+			mismatchDetails = append(mismatchDetails, fmt.Sprintf("Figma Node '%s' did not match closest Web element '%s': geometric diff %.2f exceeds tolerance %.2f (%s: figma (px): x=%g y=%g w=%g h=%g / web (px): x=%g y=%g w=%g h=%g; dx: %.2f (%s), dy: %.2f (%s), dw: %.2f (%s), dh: %.2f (%s))", fn.Name, bestMatchSelector, minDiff, tolerance, space, fn.X, fn.Y, fn.W, fn.H, bestWeb.X, bestWeb.Y, bestWeb.W, bestWeb.H, bestDiffX, unit, bestDiffY, unit, bestDiffW, unit, bestDiffH, unit))
 			mismatchedNodes = append(mismatchedNodes, MismatchedNode{
 				FigmaName:   fn.Name,
 				WebSelector: bestMatchSelector,
@@ -467,9 +472,10 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 1対1マッチング後に使用されなかったWebノード（実装側の余分な要素）を報告する。
 	// details の free-text に加え、クライアントが文字列パースなしで対象を特定できる
 	// ようセレクタを構造化フィールド (ExtraWebCount / ExtraWebNodes) 用にも収集する。
+	// tolerance 超過の不一致相手はここに含めない（不一致として既に計上済み）。
 	var extraWebSelectors []string
 	for wi, wn := range wNodes {
-		if !usedWeb[wi] {
+		if !usedWeb[wi] && !mismatchPartnerWeb[wi] {
 			extraWebDetails = append(extraWebDetails, fmt.Sprintf("Web Node '%s' did not match any Figma node (extra element in implementation)", wn.Selector))
 			extraWebSelectors = append(extraWebSelectors, wn.Selector)
 		}
@@ -479,7 +485,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 分母 (totalCompared) に加算し、余分な要素が一致率に反映されるようにする。
 	if countExtraWeb {
 		for wi := range wNodes {
-			if !usedWeb[wi] {
+			if !usedWeb[wi] && !mismatchPartnerWeb[wi] {
 				totalCompared++
 			}
 		}
@@ -519,24 +525,58 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		ExtraWebNodes:          extraWebSelectors,
 		MismatchedNodes:        mismatchedNodes,
 		MismatchedPairs:        mismatchedPairs,
+		MatchedPairs:           matchedPairs,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		DuplicateIdentifiers:   duplicateIdentifiers,
 		AbsoluteModePairs:      absoluteModePairs,
 	}, nil
 }
 
-// LimitLayoutTreeDetails は layout_tree の details を maxDetails 件に切り詰める。
-// maxDetails <= 0 のときは無制限（現行どおり全件）。件数を超える場合は
-// summary 行を先頭に残したまま先頭 maxDetails 件を残し、末尾に省略行を付ける。
+// limitMaxKeep は maxDetails 件までの残件数と省略件数を返す。
+// maxDetails <= 0 は無制限（全件残し・省略 0）。details と構造化配列で共通。
+func limitMaxKeep(n, maxDetails int) (keep, omitted int) {
+	if maxDetails <= 0 || n <= maxDetails {
+		return n, 0
+	}
+	return maxDetails, n - maxDetails
+}
+
+// LimitLayoutTreeDetails は layout_tree / layout_integrity の details を
+// maxDetails 件に切り詰める。maxDetails <= 0 のときは無制限（現行どおり全件）。
+// 件数を超える場合は先頭 maxDetails 件を残し、末尾に省略行を付ける。
 func LimitLayoutTreeDetails(details []string, maxDetails int) []string {
-	if maxDetails <= 0 || len(details) <= maxDetails {
+	keep, omitted := limitMaxKeep(len(details), maxDetails)
+	if omitted == 0 {
 		return details
 	}
-	omitted := len(details) - maxDetails
-	limited := make([]string, 0, maxDetails+1)
-	limited = append(limited, details[:maxDetails]...)
+	limited := make([]string, 0, keep+1)
+	limited = append(limited, details[:keep]...)
 	limited = append(limited, fmt.Sprintf("... and %d more details omitted (max_details=%d)", omitted, maxDetails))
 	return limited
+}
+
+// LimitLayoutTreeStructured は layout_tree の構造化配列を maxDetails 件に切り詰める。
+// mismatched_pairs / mismatched_nodes / extra_web_nodes が対象。ignored_nodes は
+// ignored_count と件数が一致する契約のため対象外。maxDetails <= 0 は無変更。
+// 省略件数は pairsOmitted / extraOmitted（0 のときは応答に載せる必要なし）。
+func LimitLayoutTreeStructured(result *LayoutTreeResult, maxDetails int) (pairsOmitted, extraOmitted int) {
+	if result == nil || maxDetails <= 0 {
+		return 0, 0
+	}
+	if keep, omitted := limitMaxKeep(len(result.MismatchedPairs), maxDetails); omitted > 0 {
+		result.MismatchedPairs = result.MismatchedPairs[:keep]
+		pairsOmitted = omitted
+	}
+	// mismatched_nodes は切り詰めのみ（省略件数フィールドは mismatched_pairs_omitted で表現）
+	if keep, nOmitted := limitMaxKeep(len(result.MismatchedNodes), maxDetails); nOmitted > 0 {
+		result.MismatchedNodes = result.MismatchedNodes[:keep]
+	}
+	if keep, omitted := limitMaxKeep(len(result.ExtraWebNodes), maxDetails); omitted > 0 {
+		result.ExtraWebNodes = result.ExtraWebNodes[:keep]
+		extraOmitted = omitted
+	}
+	return pairsOmitted, extraOmitted
 }
 
 // layout_tree 入力で必須のキー。明示的な 0 は許容し、キー欠落のみ拒否する
@@ -743,9 +783,44 @@ func getWebParent(node WebNode, bySelector map[string]*WebNode) *WebNode {
 	return bySelector[node.Parent]
 }
 
-// collectUnresolvedParentRefs は parent が空でないのにインデックスから解決できない
-// 参照を列挙する（タイポ・余分な空白など）。合否や座標空間は変えず、
+// collectDuplicateIdentifiers は Figma id / Web selector が入力内で 2 回以上
+// 出現する識別子を列挙する。親参照インデックスは先勝ちのため、2 件目以降は
+// 親として解決されず相対座標がずれることがある。合否や解決挙動は変えず、
+// unresolved_parent_refs と同種の誤入力通知に使う。同一ラベルは先勝ちで 1 回だけ出す。
+func collectDuplicateIdentifiers(fNodes []FigmaNode, wNodes []WebNode) []string {
+	var refs []string
+	seenLabel := make(map[string]bool)
+	appendOnce := func(label string) {
+		if seenLabel[label] {
+			return
+		}
+		seenLabel[label] = true
+		refs = append(refs, label)
+	}
+	figmaSeen := make(map[string]bool)
+	for _, fn := range fNodes {
+		if figmaSeen[fn.ID] {
+			appendOnce(fmt.Sprintf("Figma: '%s'", fn.ID))
+			continue
+		}
+		figmaSeen[fn.ID] = true
+	}
+	webSeen := make(map[string]bool)
+	for _, wn := range wNodes {
+		if webSeen[wn.Selector] {
+			appendOnce(fmt.Sprintf("Web: '%s'", wn.Selector))
+			continue
+		}
+		webSeen[wn.Selector] = true
+	}
+	return refs
+}
+
+// collectUnresolvedParentRefs は parent が空でないのに有効な親として使えない
+// 参照を列挙する（タイポ・余分な空白・自己参照など）。合否や座標空間は変えず、
 // unmatched_ignores と同種の誤入力通知に使う。同一ラベルは先勝ちで重複しない。
+// 自己参照はインデックス上は自分自身に当たるが、相対化すると常に一致扱い／
+// parent_overflow が常に無発火になるため、解決不能と同じく報告する。
 func collectUnresolvedParentRefs(fNodes []FigmaNode, wNodes []WebNode, figmaByID map[string]*FigmaNode, webBySelector map[string]*WebNode) []string {
 	var refs []string
 	seen := make(map[string]bool)
@@ -757,12 +832,20 @@ func collectUnresolvedParentRefs(fNodes []FigmaNode, wNodes []WebNode, figmaByID
 		refs = append(refs, label)
 	}
 	for _, fn := range fNodes {
-		if fn.Parent != "" && figmaByID[fn.Parent] == nil {
+		if fn.Parent == "" {
+			continue
+		}
+		// 自己参照は getFigmaParent と同様に無効（相対化すると常に (0,0,1,1)）。
+		if fn.Parent == fn.ID || figmaByID[fn.Parent] == nil {
 			appendRef(fmt.Sprintf("Figma: '%s'", fn.Parent))
 		}
 	}
 	for _, wn := range wNodes {
-		if wn.Parent != "" && webBySelector[wn.Parent] == nil {
+		if wn.Parent == "" {
+			continue
+		}
+		// 自己参照は getWebParent と同様に無効（parent_overflow も常に無発火）。
+		if wn.Parent == wn.Selector || webBySelector[wn.Parent] == nil {
 			appendRef(fmt.Sprintf("Web: '%s'", wn.Parent))
 		}
 	}
@@ -835,6 +918,58 @@ func cleanNodeName(s string) string {
 	return s
 }
 
+// ignoreMatcher は ignore_nodes の完全一致・末尾 '*' プレフィックス一致を
+// 1か所で組み立てる。layout_tree / layout_integrity が同じ規則を共有する。
+type ignoreMatcher struct {
+	exact    map[string]bool
+	prefixes []string
+	list     []string
+}
+
+// newIgnoreMatcher は ignoreList から判定器を組み立てる。
+// 末尾 '*' はプレフィックス一致（raw + clean）、それ以外は完全一致（raw + clean）。
+func newIgnoreMatcher(ignoreList []string) *ignoreMatcher {
+	m := &ignoreMatcher{
+		exact: make(map[string]bool),
+		list:  ignoreList,
+	}
+	for _, item := range ignoreList {
+		if strings.HasSuffix(item, "*") {
+			prefix := strings.TrimSuffix(item, "*")
+			m.prefixes = append(m.prefixes, prefix, cleanNodeName(prefix))
+			continue
+		}
+		m.exact[item] = true
+		m.exact[cleanNodeName(item)] = true
+	}
+	return m
+}
+
+// matches はノード識別値の raw と cleanNodeName 適用後の値の両方に対して
+// ignore 判定を行う。
+func (m *ignoreMatcher) matches(value string) bool {
+	return isIgnored(value, m.exact, m.prefixes) || isIgnored(cleanNodeName(value), m.exact, m.prefixes)
+}
+
+// unmatched はどのノードにも一致しなかった ignore エントリを指定順で返す。
+// 末尾 '*' のプレフィックスエントリは、プレフィックスに一致するノードが
+// 1つも無い場合のみ報告する。
+func (m *ignoreMatcher) unmatched(nodeValues map[string]bool) []string {
+	var out []string
+	for _, item := range m.list {
+		if strings.HasSuffix(item, "*") {
+			if !anyNodeValueHasPrefix(nodeValues, strings.TrimSuffix(item, "*")) {
+				out = append(out, item)
+			}
+			continue
+		}
+		if !nodeValues[item] && !nodeValues[cleanNodeName(item)] {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // isIgnored はノード識別値 v が ignore エントリ（完全一致: m、末尾 '*' の
 // プレフィックス一致: prefixes）に一致するかを判定する。
 func isIgnored(v string, m map[string]bool, prefixes []string) bool {
@@ -847,12 +982,6 @@ func isIgnored(v string, m map[string]bool, prefixes []string) bool {
 		}
 	}
 	return false
-}
-
-// isNodeValueIgnored はノード識別値の raw と cleanNodeName 適用後の値の
-// 両方に対して ignore 判定を行う。
-func isNodeValueIgnored(v string, m map[string]bool, prefixes []string) bool {
-	return isIgnored(v, m, prefixes) || isIgnored(cleanNodeName(v), m, prefixes)
 }
 
 // anyNodeValueHasPrefix はノード識別値の集合の中に、prefix（またはその

@@ -125,13 +125,18 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		"--image-a", "a.png",
 		"--image-b", "b.png",
 		"--include-aa", "false",
-		"--ignore-region", "0,0,100,50",
+		"--min-match", "99",
 	}, io.Discard, &stderr)
 	if err == nil {
 		t.Fatal("expected error for space-separated --include-aa value")
 	}
-	if !strings.Contains(err.Error(), "unexpected non-flag argument(s): false") {
-		t.Errorf("error should mention unexpected false, got %q", err.Error())
+	msg = err.Error()
+	if !strings.Contains(msg, "unexpected non-flag argument(s): false") {
+		t.Errorf("error should mention unexpected false, got %q", msg)
+	}
+	// Go flag は最初の非フラグで打ち切るため、後続の --min-match も残存引数に含まれる。
+	if !strings.Contains(msg, "--min-match") {
+		t.Errorf("error should list flags dropped after space-separated boolean, got %q", msg)
 	}
 
 	got, _, err := parseCLIArgs([]string{
@@ -236,8 +241,26 @@ func TestParseCLIArgsHelp(t *testing.T) {
 	if !strings.Contains(help, "diff-image-out") {
 		t.Errorf("help should list --diff-image-out, got %q", help)
 	}
+	if !strings.Contains(help, "design-compare --version") {
+		t.Errorf("help output missing --version usage line: %q", help)
+	}
 	if stderr.Len() != 0 {
 		t.Errorf("explicit help must not write Usage to stderr, got %q", stderr.String())
+	}
+}
+
+func TestParseCLIArgsVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	_, _, err := parseCLIArgs([]string{"--version"}, &stdout, &stderr)
+	if err != errShowVersion {
+		t.Fatalf("expected errShowVersion, got %v", err)
+	}
+	want := "design-compare " + version + "\n"
+	if stdout.String() != want {
+		t.Errorf("stdout=%q, want %q", stdout.String(), want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("--version must leave stderr empty, got %q", stderr.String())
 	}
 }
 
@@ -363,6 +386,60 @@ func TestRunCLILayoutTree(t *testing.T) {
 	}
 }
 
+// TestRunCLILayoutTreeInline は一時ファイルなしで --figma-layout / --web-layout の
+// インライン JSON が layout_tree 比較に通り、exit 0 になることを固定する (Issue #704)。
+func TestRunCLILayoutTreeInline(t *testing.T) {
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "layout_tree",
+		"--figma-layout", figma,
+		"--web-layout", web,
+	}, &stdout, &stderr)
+	if code != exitSuccess {
+		t.Fatalf("inline layout exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "success" || result["mode"] != "layout_tree" {
+		t.Errorf("unexpected result: %v", result)
+	}
+}
+
+// TestRunCLILayoutInlineAndFileConflict は --figma-layout と --figma-layout-file の
+// 併用が resolveLayoutInput の排他エラーで exit 1 になることを固定する (Issue #704)。
+func TestRunCLILayoutInlineAndFileConflict(t *testing.T) {
+	tmp := t.TempDir()
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+	figmaPath := filepath.Join(tmp, "figma.json")
+	if err := os.WriteFile(figmaPath, []byte(figma), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "layout_tree",
+		"--figma-layout", figma,
+		"--figma-layout-file", figmaPath,
+		"--web-layout", web,
+	}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("expected exit 1 for inline+file, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "only one of figma_layout and figma_layout_path can be specified") {
+		t.Errorf("expected mutual-exclusion error, got %q", errOut)
+	}
+}
+
 func TestRunCLIErrorExit(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{"--mode", "strict"}, &stdout, &stderr)
@@ -374,8 +451,29 @@ func TestRunCLIErrorExit(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "Strict mode input error: either image_path_a or image_a_base64 is required") {
-		t.Errorf("expected error text on stderr, got %q", stderr.String())
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "strict mode requires --image-a and --image-b (or --image-a-base64 / --image-b-base64)") {
+		t.Errorf("expected CLI flag required error on stderr, got %q", errOut)
+	}
+	if strings.Contains(errOut, "image_path_a") || strings.Contains(errOut, "image_a_base64") {
+		t.Errorf("CLI required-input error must not use MCP parameter names, got %q", errOut)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLIWithIO([]string{"--mode", "layout_integrity"}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("layout_integrity without web layout: expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	errOut = stderr.String()
+	if !strings.Contains(errOut, "layout_integrity mode requires --web-layout-file (or --web-layout)") {
+		t.Errorf("expected layout_integrity CLI flag error, got %q", errOut)
+	}
+	if strings.Contains(errOut, "web_layout_path") || strings.Contains(errOut, "either web_layout") {
+		t.Errorf("CLI required-input error must not use MCP parameter names, got %q", errOut)
 	}
 
 	stdout.Reset()
@@ -387,7 +485,7 @@ func TestRunCLIErrorExit(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("stdout must stay empty when --mode is missing, got %s", stdout.String())
 	}
-	errOut := stderr.String()
+	errOut = stderr.String()
 	if !strings.Contains(errOut, "--mode is required") {
 		t.Errorf("stderr should say --mode is required, got %q", errOut)
 	}
@@ -402,6 +500,143 @@ func TestRunCLIErrorExit(t *testing.T) {
 	}
 }
 
+func TestValidateCLIRequiredFlags(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		args    map[string]any
+		wantErr string
+	}{
+		{
+			name:    "strict missing both",
+			mode:    "strict",
+			args:    map[string]any{"mode": "strict"},
+			wantErr: "strict mode requires --image-a and --image-b (or --image-a-base64 / --image-b-base64)",
+		},
+		{
+			name: "perceptual accepts base64",
+			mode: "perceptual",
+			args: map[string]any{
+				"mode":           "perceptual",
+				"image_a_base64": "aaa",
+				"image_b_base64": "bbb",
+			},
+		},
+		{
+			name:    "layout_tree missing both",
+			mode:    "layout_tree",
+			args:    map[string]any{"mode": "layout_tree"},
+			wantErr: "layout_tree mode requires --figma-layout-file and --web-layout-file (or --figma-layout / --web-layout)",
+		},
+		{
+			name: "layout_tree accepts inline",
+			mode: "layout_tree",
+			args: map[string]any{
+				"mode":         "layout_tree",
+				"figma_layout": "[]",
+				"web_layout":   "[]",
+			},
+		},
+		{
+			name:    "layout_integrity missing web",
+			mode:    "layout_integrity",
+			args:    map[string]any{"mode": "layout_integrity"},
+			wantErr: "layout_integrity mode requires --web-layout-file (or --web-layout)",
+		},
+		{
+			name: "unknown mode deferred",
+			mode: "nope",
+			args: map[string]any{"mode": "nope"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateCLIRequiredFlags(tc.mode, tc.args)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("got %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestRunCLIParamHints はツールエラー本文の MCP パラメータ名に対し、
+// 対応する CLI フラグの hint 行が stderr に付くことを確認する (Issue #589)。
+// 必須入力欠落は validateCLIRequiredFlags が先に止めるため、hint 対象は
+// 必須入力を満たしたうえでの別エラー (未対応パラメータ等) に限る。
+func TestRunCLIParamHints(t *testing.T) {
+	tmp := t.TempDir()
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10}]`
+	figmaPath := filepath.Join(tmp, "figma.json")
+	webPath := filepath.Join(tmp, "web.json")
+	if err := os.WriteFile(figmaPath, []byte(figma), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(webPath, []byte(web), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "layout_tree",
+		"--figma-layout-file", figmaPath,
+		"--web-layout-file", webPath,
+		"--min-match", "90",
+	}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("layout_tree with --min-match: expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must stay empty on error, got %s", stdout.String())
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "parameter 'min_match' is not supported in mode 'layout_tree'") {
+		t.Errorf("expected min_match unsupported error, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "use 'pass_rate' instead") {
+		t.Errorf("expected pass_rate alternative, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "hint: CLI flag is --min-match") {
+		t.Errorf("expected --min-match hint, got %q", errOut)
+	}
+	if !strings.Contains(errOut, "hint: CLI flag is --pass-rate") {
+		t.Errorf("expected --pass-rate hint, got %q", errOut)
+	}
+}
+
+func TestWriteCLIParamHints(t *testing.T) {
+	var buf bytes.Buffer
+	writeCLIParamHints(&buf, "no mcp params here")
+	if buf.Len() != 0 {
+		t.Errorf("no-op when no params, got %q", buf.String())
+	}
+
+	buf.Reset()
+	writeCLIParamHints(&buf, "parameter 'min_match' is not supported (use 'pass_rate' instead)")
+	got := buf.String()
+	if !strings.Contains(got, "hint: CLI flag is --min-match\n") {
+		t.Errorf("missing --min-match hint: %q", got)
+	}
+	if !strings.Contains(got, "hint: CLI flag is --pass-rate\n") {
+		t.Errorf("missing --pass-rate hint: %q", got)
+	}
+	// mode は英語文に誤マッチさせない
+	buf.Reset()
+	writeCLIParamHints(&buf, "Strict mode input error: something")
+	if buf.Len() != 0 {
+		t.Errorf("must not hint on bare English 'mode', got %q", buf.String())
+	}
+}
+
 func TestRunCLIHelpStdout(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLIWithIO([]string{"--help"}, &stdout, &stderr)
@@ -413,6 +648,44 @@ func TestRunCLIHelpStdout(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("--help must leave stderr empty, got %q", stderr.String())
+	}
+}
+
+// TestRunCLIVersion は --version が比較を実行せず版番号だけを stdout に出し、
+// 終了コード 0・stderr 空であることを固定する (Issue #657)。
+func TestRunCLIVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{"--version"}, &stdout, &stderr)
+	if code != exitSuccess {
+		t.Fatalf("expected exit 0 for --version, got %d stderr=%s", code, stderr.String())
+	}
+	want := "design-compare " + version + "\n"
+	if stdout.String() != want {
+		t.Errorf("stdout=%q, want %q", stdout.String(), want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("--version must leave stderr empty, got %q", stderr.String())
+	}
+	// 比較経路に入ると必須入力欠落で exit 1 になるため、exit 0 は
+	// compareDesignHandler 未到達の証拠になる。
+}
+
+// TestVersionMatchesPackageJSON は --version と MCP serverInfo が返す version 定数が
+// package.json の版番号とずれていないことを固定する。release.yml はリリース時に
+// 両方を同じ値へ更新するため、ここがずれると版番号の更新手順が壊れている。
+func TestVersionMatchesPackageJSON(t *testing.T) {
+	data, err := os.ReadFile("package.json")
+	if err != nil {
+		t.Fatalf("read package.json: %v", err)
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		t.Fatalf("parse package.json: %v", err)
+	}
+	if version != pkg.Version {
+		t.Errorf("version=%q, want package.json version %q", version, pkg.Version)
 	}
 }
 

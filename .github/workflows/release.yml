@@ -106,6 +106,8 @@ jobs:
           npm version "$next" --no-git-tag-version --allow-same-version >/dev/null
           # 版番号を持つファイルは package.json だけではないため、すべて同じ値に揃える。
           sed -i "s/^version: .*/version: $next/" plugin.yaml
+          # Go 側の版番号（--version と MCP serverInfo）も同じ値に揃える。
+          sed -i "s/^const version = .*/const version = \"$next\"/" main.go
           node -e '
             const fs = require("node:fs");
             const version = process.argv[1];
@@ -121,6 +123,25 @@ jobs:
             }
           ' "$next"
           echo "Next release version: $next"
+
+      - name: Generate the release notes
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 本文はタグ以降のコミット件名から作る。件名の type だけで節を決め、件名は書き換えない。
+          # 公開より前に走らせ、本文の生成に失敗したら npm へ出さないようにする。
+          git fetch --tags --force --quiet
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          node .github/scripts/release-notes.mjs \
+            --from "$last_tag" \
+            --to HEAD \
+            --current "v${VERSION}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --out "$RUNNER_TEMP/release-notes.md"
+          echo "----- release notes -----"
+          cat "$RUNNER_TEMP/release-notes.md"
 
       - name: Publish to npm
         if: steps.version.outputs.version != ''
@@ -141,7 +162,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json plugin.yaml .codex-plugin/plugin.json \
+          git add package.json plugin.yaml main.go .codex-plugin/plugin.json \
             .claude-plugin/marketplace.json .codex-plugin/marketplace.json \
             .agents/plugins/marketplace.json
           git commit -m "chore: release v${VERSION} [skip ci]"
@@ -157,4 +178,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes
+        run: |
+          set -euo pipefail
+          # 差分行から自動生成する一覧ではなく、公開前に作った本文を使う。
+          gh release create "v${VERSION}" --title "v${VERSION}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

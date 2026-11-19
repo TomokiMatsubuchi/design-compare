@@ -4,14 +4,48 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// errShowVersion は --version 指定時に parseCLIArgs が返す。
+// runCLIWithIO は比較をせず終了コード 0 で返す。
+var errShowVersion = errors.New("show version")
+
+// mcpParamToCLIFlag は compare_design の MCP パラメータ名と CLI フラグの対応表。
+// ツールエラー本文が MCP 名のまま出るとき、stderr へ CLI 側の直し方を追記する。
+// mode は英語エラー文 ("… mode …") に誤マッチしやすいため載せない。
+var mcpParamToCLIFlag = map[string]string{
+	"image_path_a":      "--image-a",
+	"image_path_b":      "--image-b",
+	"image_a_base64":    "--image-a-base64",
+	"image_b_base64":    "--image-b-base64",
+	"figma_layout":      "--figma-layout",
+	"web_layout":        "--web-layout",
+	"figma_layout_path": "--figma-layout-file",
+	"web_layout_path":   "--web-layout-file",
+	"threshold":         "--threshold",
+	"min_match":         "--min-match",
+	"pass_rate":         "--pass-rate",
+	"max_diff_pixels":   "--max-diff-pixels",
+	"include_aa":        "--include-aa",
+	"ignore_region":     "--ignore-region",
+	"generate_diff":     "--generate-diff",
+	"viewport_preset":   "--viewport-preset",
+	"viewport_width":    "--viewport-width",
+	"viewport_height":   "--viewport-height",
+	"ignore_nodes":      "--ignore-nodes",
+	"count_extra_web":   "--count-extra-web",
+	"max_details":       "--max-details",
+	"diff_on_mismatch":  "--diff-on-mismatch",
+}
 
 const (
 	exitSuccess  = 0
@@ -39,12 +73,19 @@ func runCLI(args []string) int {
 func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 	toolArgs, opts, err := parseCLIArgs(args, stdout, stderr)
 	if err != nil {
-		if err == flag.ErrHelp {
-			// 明示ヘルプの Usage は parseCLIArgs が stdout へ書き済み。
+		if err == flag.ErrHelp || err == errShowVersion {
+			// 明示ヘルプ／--version の出力は parseCLIArgs が stdout へ書き済み。
 			return exitSuccess
 		}
 		// parseCLIArgs は flag の自動出力を Discard しているため、ここが
 		// パース／検証エラー本文の唯一の stderr 出力点になる。
+		fmt.Fprintln(stderr, err)
+		return exitError
+	}
+	// 必須入力欠落を handler 到達前に CLI フラグ名で案内する。
+	// MCP パラメータ名のまま出すと CLI では直し方が分からないため。
+	mode, _ := toolArgs["mode"].(string)
+	if err := validateCLIRequiredFlags(mode, toolArgs); err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitError
 	}
@@ -53,7 +94,9 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		Params: mcp.CallToolParams{Arguments: toolArgs},
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		msg := err.Error()
+		fmt.Fprintln(stderr, msg)
+		writeCLIParamHints(stderr, msg)
 		return exitError
 	}
 
@@ -62,6 +105,7 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		// stdout を JSON としてパースする呼び出し側に非 JSON テキストが混入するのを
 		// 防ぐため、エラー本文は stderr へ出す (終了コード 1 で検知できる)。
 		fmt.Fprintln(stderr, text)
+		writeCLIParamHints(stderr, text)
 		return exitError
 	}
 	fmt.Fprintln(stdout, text)
@@ -100,9 +144,64 @@ func writeCLIDiffImage(path, resultJSON string, stderr io.Writer) error {
 	return nil
 }
 
+// cliStringArgPresent は parseCLIArgs が map に載せた非空文字列引数の有無を返す。
+func cliStringArgPresent(args map[string]any, key string) bool {
+	v, ok := args[key]
+	if !ok {
+		return false
+	}
+	s, ok := v.(string)
+	return ok && s != ""
+}
+
+// validateCLIRequiredFlags はモードごとの必須入力を CLI フラグ名で案内する。
+// MCP ツール側の "either image_path_a or …" 文面は変えず、CLI 経路だけを置き換える。
+// 未知モードは handler の Unknown comparison mode 案内に委ねる。
+func validateCLIRequiredFlags(mode string, args map[string]any) error {
+	switch mode {
+	case "perceptual", "strict":
+		hasA := cliStringArgPresent(args, "image_path_a") || cliStringArgPresent(args, "image_a_base64")
+		hasB := cliStringArgPresent(args, "image_path_b") || cliStringArgPresent(args, "image_b_base64")
+		if !hasA || !hasB {
+			return fmt.Errorf("%s mode requires --image-a and --image-b (or --image-a-base64 / --image-b-base64)", mode)
+		}
+	case "layout_tree":
+		hasFigma := cliStringArgPresent(args, "figma_layout") || cliStringArgPresent(args, "figma_layout_path")
+		hasWeb := cliStringArgPresent(args, "web_layout") || cliStringArgPresent(args, "web_layout_path")
+		if !hasFigma || !hasWeb {
+			return fmt.Errorf("layout_tree mode requires --figma-layout-file and --web-layout-file (or --figma-layout / --web-layout)")
+		}
+	case "layout_integrity":
+		if !cliStringArgPresent(args, "web_layout") && !cliStringArgPresent(args, "web_layout_path") {
+			return fmt.Errorf("layout_integrity mode requires --web-layout-file (or --web-layout)")
+		}
+	}
+	return nil
+}
+
+// writeCLIParamHints はエラー本文に MCP パラメータ名が含まれるときだけ、
+// 対応する CLI フラグを hint 行として追記する。CI のワンショット検証で
+// MCP 名のままリトライして無駄打ちしないための案内。
+func writeCLIParamHints(w io.Writer, msg string) {
+	var params []string
+	for param := range mcpParamToCLIFlag {
+		if strings.Contains(msg, param) {
+			params = append(params, param)
+		}
+	}
+	if len(params) == 0 {
+		return
+	}
+	sort.Strings(params)
+	for _, param := range params {
+		fmt.Fprintf(w, "hint: CLI flag is %s\n", mcpParamToCLIFlag[param])
+	}
+}
+
 // writeUsage は CLI の使い方を w へ書く。明示ヘルプは stdout、パース／検証エラーは stderr。
 func writeUsage(fs *flag.FlagSet, w io.Writer) {
 	fmt.Fprintf(w, "Usage: design-compare --mode <layout_tree|perceptual|strict|layout_integrity> [options]\n")
+	fmt.Fprintf(w, "       design-compare --version  (print version and exit)\n")
 	fmt.Fprintf(w, "       design-compare          (no args: start stdio MCP server)\n")
 	fmt.Fprintf(w, "Positional arguments are not accepted; specify images with --image-a / --image-b.\n\n")
 	prev := fs.Output()
@@ -121,6 +220,7 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 	usageStderr := func() { writeUsage(fs, stderr) }
 	fs.Usage = usageStderr
 
+	showVersion := fs.Bool("version", false, "Print version and exit")
 	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")
 	imageA := fs.String("image-a", "", "Path to reference image A (maps to image_path_a)")
 	imageB := fs.String("image-b", "", "Path to target image B (maps to image_path_b)")
@@ -161,6 +261,10 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 	fs.Usage = usageStderr
 	if fs.NArg() > 0 {
 		return nil, cliOptions{}, fmt.Errorf("unexpected non-flag argument(s): %s (positional arguments are not accepted; specify images with --image-a / --image-b; boolean flags need the --flag=value form)", strings.Join(fs.Args(), " "))
+	}
+	if *showVersion {
+		fmt.Fprintf(stdout, "design-compare %s\n", version)
+		return nil, cliOptions{}, errShowVersion
 	}
 
 	toolArgs := make(map[string]any)

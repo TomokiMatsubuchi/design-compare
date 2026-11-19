@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	"log"
@@ -37,6 +36,10 @@ func main() {
 	}
 }
 
+// version は MCP serverInfo と CLI --version の共通の版番号。
+// release.yml がリリース時に package.json と同じ値へ書き換える。
+const version = "1.0.8"
+
 // mcpInstructions は initialize 応答の instructions に載せ、ツール説明だけを
 // 読むクライアントが strict でサイズ不一致エラーを起こしにくいようにする。
 const mcpInstructions = `layout_tree compares DOM/coordinate structure (Figma vs Web).
@@ -47,7 +50,7 @@ The default pass line is 98% (pass_rate for layout_tree, min_match for perceptua
 
 // newDesignCompareMCPServer は compare_design ツール付きの MCP サーバーを作る。
 func newDesignCompareMCPServer() *server.MCPServer {
-	s := server.NewMCPServer("design-compare", "1.0.0",
+	s := server.NewMCPServer("design-compare", version,
 		server.WithInstructions(mcpInstructions),
 	)
 
@@ -89,10 +92,10 @@ func newCompareDesignTool() mcp.Tool {
 			mcp.Description("Base64-encoded target image B (for 'perceptual' and 'strict' modes; mutually exclusive with image_path_b). Supported formats: PNG / JPEG / GIF / WebP (still images; animated WebP is not supported). Also accepts a data URI form ('data:<mime>;base64,...'), as returned by screenshot tools or this tool's diff_image; the prefix is stripped before decoding. ASCII whitespace (newlines, spaces, tabs) in the base64 payload is ignored so MIME-wrapped copies decode. Standard base64 alphabet only; padding ('=') may be omitted"),
 		),
 		mcp.WithString("figma_layout",
-			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array is also accepted and marshaled to the same string form. A single JSON object is rejected — wrap it in an array. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
+			mcp.Description("JSON string representing Figma node list metadata (required for 'layout_tree' mode unless figma_layout_path is given; mutually exclusive with figma_layout_path). In layout_tree, a native JSON array is also accepted and marshaled to the same string form. A single JSON object is not accepted; wrap the nodes in [...]. e.g. [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]"),
 		),
 		mcp.WithString("web_layout",
-			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). In layout_tree and layout_integrity, a native JSON array is also accepted and marshaled to the same string form. A single JSON object is rejected — wrap it in an array. e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
+			mcp.Description("JSON string representing Web DOM node list layout (required for 'layout_tree' and 'layout_integrity' modes unless web_layout_path is given; mutually exclusive with web_layout_path). In layout_tree and layout_integrity, a native JSON array is also accepted and marshaled to the same string form. A single JSON object is not accepted; wrap the nodes in [...]. e.g. [{\"selector\":\"#card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"selector\":\"#card button.primary\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"#card\"}]"),
 		),
 		mcp.WithString("figma_layout_path",
 			mcp.Description("Path to a JSON file containing the Figma node list metadata (alternative to figma_layout for 'layout_tree' mode; mutually exclusive with figma_layout). The file content is a JSON array like [{\"id\":\"1\",\"name\":\"card\",\"x\":0,\"y\":0,\"w\":400,\"h\":300},{\"id\":\"2\",\"name\":\"button\",\"x\":100,\"y\":100,\"w\":200,\"h\":50,\"parent\":\"1\"}]. Note: files are read from the server's local filesystem with the server process's privileges, so only pass paths from trusted callers"),
@@ -121,7 +124,7 @@ func newCompareDesignTool() mcp.Tool {
 		),
 		mcp.WithNumber("max_details",
 			mcp.Min(0),
-			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines / issues to return (default 0 = unlimited). When greater than 0, the summary line is kept first, remaining details are truncated to this count, and a final omit line is appended ('... and N more details omitted' in layout_tree; '... and N more issues omitted' in layout_integrity). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'issues' is truncated to the same cap while 'issue_count' stays the full count so pass/fail is unchanged."),
+			mcp.Description("For 'layout_tree' and 'layout_integrity' modes: maximum number of detail lines to return (default 0 = unlimited). When greater than 0, the leading lines (summary first) are kept up to this count and a final omit line is appended ('... and N more details omitted'). In 'layout_tree', mismatched_pairs / mismatched_nodes / extra_web_nodes are also truncated to the same cap with mismatched_pairs_omitted / extra_web_nodes_omitted reporting how many were dropped (ignored_nodes is not truncated so it stays aligned with ignored_count). Useful to keep large layout comparisons from flooding the MCP client context. In 'layout_integrity', 'details' and 'issues' are truncated to the same cap with issues_omitted reporting how many issues were dropped; 'issue_count' stays the full count so pass/fail and total size remain visible."),
 		),
 		mcp.WithNumber("threshold",
 			mcp.Description("Sensitivity threshold. For 'strict' mode, color diff tolerance (0.0 to 1.0, default 0.1). For 'layout_tree', BoundingBox tolerance (0.0 to 1.0, default 0.15). For backward compatibility, 'perceptual' mode also accepts this as a minimum match percentage (1.0 to 100.0, default 98.0) when 'min_match' is omitted; specifying both in perceptual mode is an error. Prefer 'min_match' to avoid confusion with the 0.0–1.0 tolerance scale."),
@@ -237,26 +240,13 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 	}
 }
 
-// decodeImageErrorMessage は perceptual モードの image.Decode 失敗メッセージを
-// 組み立てる。対応外の画像形式 (image.ErrFormat) のときだけ、strict モード
-// (comparator.RunPixelMatch) と共通の対応フォーマットヒント
-// (comparator.UnsupportedImageFormatHint) を付ける。PNG/JPEG/GIF/WebP だが破損・
-// 途中切れのファイル (例: unexpected EOF) では「SVG and animated WebP are not
-// supported」と読める文面が原因を形式違いだと誤認させるため、ヒントは付けない
-// (Issue #122)。
-func decodeImageErrorMessage(what string, err error) string {
-	if errors.Is(err, image.ErrFormat) {
-		return fmt.Sprintf("Failed to decode %s: %v %s", what, err, comparator.UnsupportedImageFormatHint)
-	}
-	return fmt.Sprintf("Failed to decode %s: %v", what, err)
-}
-
 // inlineLayoutJSON は layout_tree / layout_integrity のインライン layout 引数を文字列にする。
-// MCP クライアントが JSON 配列を文字列化せず渡した場合は
-// Marshal して従来の文字列入力と同じ経路へ載せる。未指定は空文字。
-// JSON オブジェクトはネイティブ値でも文字列でも比較側が配列しか受け付けないため
-// 明示エラーにする（下流の []json.RawMessage Unmarshal で Go 内部型名が漏れるのを防ぐ）。
-// 文字列・配列以外（数値・真偽・null 等）も明示エラー。
+// MCP クライアントが JSON 配列を文字列化せず渡した場合は Marshal して
+// 従来の文字列入力と同じ経路へ載せる。未指定は空文字。
+// 単一オブジェクト（ネイティブ map / オブジェクト JSON 文字列）は配列しか
+// 受け付けないため明示エラーにする（{"nodes":[...]} のような API レスポンス全体と
+// 単一ノードの曖昧さを避け、下流の []json.RawMessage Unmarshal で Go 内部型名が
+// 漏れるのを防ぐ）。文字列・配列以外（数値・真偽・null 等）も明示エラー。
 func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 	if args == nil {
 		return "", nil
@@ -274,26 +264,42 @@ func inlineLayoutJSON(args map[string]any, key string) (string, error) {
 	case []any:
 		b, err := json.Marshal(v)
 		if err != nil {
-			return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array", key)
+			return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array/object", key)
 		}
 		return string(b), nil
 	case map[string]any:
 		return "", comparator.JSONArrayRequiredError(key)
 	default:
-		return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array", key)
+		return "", fmt.Errorf("%s must be a JSON-encoded string or a JSON array/object", key)
 	}
 }
 
+// maxLayoutJSONBytes は layout JSON（インライン文字列・パスファイル）のバイト上限 (32 MiB)。
+// 画像 path の MaxInputFileBytes (512 MiB) より厳しく、巨大な中間 JSON を
+// Unmarshal 前に弾いて stdio サーバーの OOM を防ぐ (Issue #621)。
+const maxLayoutJSONBytes = 32 << 20
+
 // resolveLayoutInput returns the layout JSON from either an inline JSON string or
 // a local file path (exactly one must be provided, mirroring resolveImageInput).
-// パス入力は readLocalFile で通常ファイルかつ MaxInputFileBytes 以内に制限する。
+// インラインは文字列バイト長、パスは os.Stat のサイズを maxLayoutJSONBytes で検査する。
+// パスは続けて readLocalFile で通常ファイル判定も行う。
 func resolveLayoutInput(inlineValue, pathValue, inlineParam, pathParam string) (string, error) {
 	switch {
 	case inlineValue != "" && pathValue != "":
 		return "", fmt.Errorf("only one of %s and %s can be specified", inlineParam, pathParam)
 	case inlineValue != "":
+		if len(inlineValue) > maxLayoutJSONBytes {
+			return "", fmt.Errorf("%s is %d bytes; maximum is %d bytes", inlineParam, len(inlineValue), maxLayoutJSONBytes)
+		}
 		return inlineValue, nil
 	case pathValue != "":
+		info, err := os.Stat(pathValue)
+		if err != nil {
+			return "", fmt.Errorf("failed to read %s: %w", pathParam, err)
+		}
+		if info.Size() > maxLayoutJSONBytes {
+			return "", fmt.Errorf("%s is %d bytes; maximum is %d bytes", pathParam, info.Size(), maxLayoutJSONBytes)
+		}
 		data, err := readLocalFile(pathValue, pathParam)
 		if err != nil {
 			return "", err
@@ -511,6 +517,11 @@ func intArg(request mcp.CallToolRequest, key string, def int) (int, error) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return 0, fmt.Errorf("argument '%s' must be a finite number", key)
 		}
+		// JSON 数値は float64 になるため整数値（例: 10.0）は受け付けるが、
+		// 小数は切り捨てず明示エラーにする（負の小数が 0 に落ちて範囲検証をすり抜けるのを防ぐ）。
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("argument '%s' must be an integer", key)
+		}
 		return int(v), nil
 	case string:
 		s := strings.TrimSpace(v)
@@ -645,6 +656,17 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	// GetBool は変換不能値を黙って false にするので、他の真偽引数と同様 boolArg で読む。
+	// 比較完了後だと不正値でも重い比較をやり切ってしまうため、モード分岐前に検証する (Issue #591)。
+	diffOnMismatch, err := boolArg(request, "diff_on_mismatch", false)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	diffImageContent, err := boolArg(request, "diff_image_content", false)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
 	var responseMap map[string]interface{}
 
 	switch mode {
@@ -652,8 +674,8 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// =================================================================
 		// 1. 構造的VRT（Layout Tree 比較）
 		// =================================================================
-		// layout JSON はインライン（文字列またはネイティブ配列/オブジェクト）
-		// またはファイルパスのどちらか一方で指定できる
+		// layout JSON はインライン（文字列またはネイティブ配列）
+		// またはファイルパスのどちらか一方で指定できる（単一オブジェクトは不可）
 		args := request.GetArguments()
 		figmaInline, err := inlineLayoutJSON(args, "figma_layout")
 		if err != nil {
@@ -735,6 +757,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("Layout Tree comparison failed: %v", err)), nil
 		}
 		treeResult.Details = comparator.LimitLayoutTreeDetails(treeResult.Details, maxDetails)
+		// mismatched_pairs / mismatched_nodes / extra_web_nodes も同じ max_details に切り詰める。
+		// ignored_nodes は ignored_count と件数が一致する契約のため対象外 (Issue #570)。
+		pairsOmitted, extraOmitted := comparator.LimitLayoutTreeStructured(treeResult, maxDetails)
 
 		// 実効パラメータと除外件数を応答に含め、どの閾値で判定されたかを検証可能にする
 		responseMap = map[string]interface{}{
@@ -768,8 +793,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		// どの Figma ノードにもマッチしなかった余分な Web ノード（実装側の過剰要素）を
 		// 文字列パースなしで扱えるよう、セレクタを構造化フィールドでも返す（0件時は省略）。
+		// extra_web_count は実件数のまま。切り詰め時は extra_web_nodes_omitted を付ける。
 		if len(treeResult.ExtraWebNodes) > 0 {
 			responseMap["extra_web_nodes"] = treeResult.ExtraWebNodes
+		}
+		if extraOmitted > 0 {
+			responseMap["extra_web_nodes_omitted"] = extraOmitted
 		}
 		// tolerance 超過の不一致ペアを、details と同じ数値で構造化して返す（0件時は省略）。
 		if len(treeResult.MismatchedNodes) > 0 {
@@ -778,6 +807,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 不一致 2 分岐（tolerance 超過 / Web 候補枯渇）を reason 付きで返す（0件時は省略）。
 		if len(treeResult.MismatchedPairs) > 0 {
 			responseMap["mismatched_pairs"] = treeResult.MismatchedPairs
+		}
+		if pairsOmitted > 0 {
+			responseMap["mismatched_pairs_omitted"] = pairsOmitted
+		}
+		// 一致ペアを構造化して返す（0件時は省略）。details の Matched 行と同じ対応。
+		if len(treeResult.MatchedPairs) > 0 {
+			responseMap["matched_pairs"] = treeResult.MatchedPairs
 		}
 		// width/height などキー名の揺れで幾何が全て 0 になると一致率 100% になるため、
 		// unmatched_ignores と同様に誤用検出のフィードバックを載せる（status は非破壊）。
@@ -788,6 +824,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// 比較は従来どおり親なし＝絶対座標へフォールバックし、status は非破壊。
 		if len(treeResult.UnresolvedParentRefs) > 0 {
 			responseMap["unresolved_parent_refs"] = treeResult.UnresolvedParentRefs
+		}
+		// 同一 Figma id / Web selector が複数あるとき（親インデックスは先勝ち）。
+		// 解決挙動・status / match_rate は変えず、誤用検出のみ載せる。
+		if len(treeResult.DuplicateIdentifiers) > 0 {
+			responseMap["duplicate_node_identifiers"] = treeResult.DuplicateIdentifiers
 		}
 
 	case "perceptual":
@@ -876,7 +917,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		imgA, _, err := image.Decode(bytes.NewReader(imgABytes))
 		if err != nil {
-			return mcp.NewToolResultError(decodeImageErrorMessage("image A", err)), nil
+			return mcp.NewToolResultError(comparator.DecodeImageErrorMessage("image A", err)), nil
 		}
 
 		if err := comparator.ValidateImageSizeLimit(imgBBytes, "image B"); err != nil {
@@ -884,7 +925,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		imgB, _, err := image.Decode(bytes.NewReader(imgBBytes))
 		if err != nil {
-			return mcp.NewToolResultError(decodeImageErrorMessage("image B", err)), nil
+			return mcp.NewToolResultError(comparator.DecodeImageErrorMessage("image B", err)), nil
 		}
 
 		boundsA := imgA.Bounds()
@@ -913,7 +954,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// diff_pixels / total_pixels と同様に数量として応答へ含める。aHash は
 		// 256 段階の離散値のため、一致率だけよりも差分セル数の方が min_match の
 		// 調整や差分の解釈が容易になる (Issue #141)。
-		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.1f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
+		details := []string{fmt.Sprintf("Template visual similarity. Minimum required: %.2f%%. %d of %d blocks differ.", minMatchRate, diffBlocks, comparator.AHashBlocks)}
 		if diffRegion != "" {
 			details = append(details, fmt.Sprintf("Differing blocks cluster near (%s) on image A.", diffRegion))
 		}
@@ -1052,7 +1093,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, warnings, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
+		matchRate, totalPixels, diffPixels, diffImage, outOfBounds, imageSize, diffRegions, diffRegionsTotal, warnings, err := comparator.RunPixelMatch(imgABytes, imgBBytes, threshold, generateDiff, includeAA, ignoreRegions)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Pixelmatch VRT failed: %v", err)), nil
 		}
@@ -1126,8 +1167,13 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 		// 赤ピクセルの bounding box。generate_diff=false でも in-memory マスクから返す
 		// (Issue #187 / #499)。差分ピクセル数の多い順に最大 10 件。
+		// 切り詰め前の総数は diff_regions_total として、上限超過時のみ返す
+		// (Issue #573。layout_integrity の issue_count と同様に実件数を残す)。
 		if len(diffRegions) > 0 {
 			responseMap["diff_regions"] = diffRegions
+			if diffRegionsTotal > len(diffRegions) {
+				responseMap["diff_regions_total"] = diffRegionsTotal
+			}
 		}
 
 	case "layout_integrity":
@@ -1216,9 +1262,12 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Layout integrity check failed: %v", err)), nil
 		}
-		// issues / details を max_details で切り詰める（issue_count は実件数のまま）。
-		// CheckLayoutIntegrity の引数は増やさず、応答マップ組み立て前に適用する (Issue #527)。
-		limitIntegrityOutput(integrityResult, maxDetails)
+		// details / issues を同じ max_details で切り詰める（issue_count は総数のまま）。
+		// details は layout_tree と同じ LimitLayoutTreeDetails（Issue #629）。
+		// issues も打ち切り、省略数は issues_omitted で返す (Issue #679 / #698)。
+		integrityResult.Details = comparator.LimitLayoutTreeDetails(integrityResult.Details, maxDetails)
+		var issuesOmitted int
+		integrityResult.Issues, issuesOmitted = comparator.LimitLayoutIntegrityIssues(integrityResult.Issues, maxDetails)
 
 		responseMap = map[string]interface{}{
 			"status":               integrityResult.Status,
@@ -1242,6 +1291,9 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if integrityResult.IssueCount > 0 {
 			responseMap["issues"] = integrityResult.Issues
 		}
+		if issuesOmitted > 0 {
+			responseMap["issues_omitted"] = issuesOmitted
+		}
 		if len(integrityResult.UnmatchedIgnores) > 0 {
 			responseMap["unmatched_ignores"] = integrityResult.UnmatchedIgnores
 		}
@@ -1260,6 +1312,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if integrityResult.ParentOverflowSkippedZeroGeom > 0 {
 			responseMap["parent_overflow_skipped_zero_geom"] = integrityResult.ParentOverflowSkippedZeroGeom
 		}
+		// w/h<=0 のため checkable から外した件数。一部だけ零サイズでも success と
+		// 「全要素検査済み」を誤認させない（Issue #555）。1 以上のときのみ返す。
+		if integrityResult.SkippedZeroGeometry > 0 {
+			responseMap["skipped_zero_geometry"] = integrityResult.SkippedZeroGeometry
+		}
 		// 過半数ノードが明示的な w/h=0 のときの誤用検出（layout_tree と同方針。Issue #498）。
 		// status / issue_count は非破壊。非空時のみ返す。
 		if integrityResult.ZeroGeometryWarning != "" {
@@ -1273,11 +1330,7 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 	// 成功時は差分画像が不要な呼び出し向け: 合否確定後に diff_image だけ空にする。
 	// comparator は変更せず、generate_diff の既存挙動 (未指定時は生成) を保つ。
-	// GetBool は変換不能値を黙って false にするので、他の真偽引数と同様 boolArg で読む (Issue #419)。
-	diffOnMismatch, err := boolArg(request, "diff_on_mismatch", false)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
+	// diff_on_mismatch / diff_image_content は冒頭で boolArg 済み。
 	if diffOnMismatch {
 		if status, _ := responseMap["status"].(string); status == "success" {
 			if _, ok := responseMap["diff_image"]; ok {
@@ -1294,10 +1347,6 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 
 	// MCP クライアントが差分 PNG をネイティブ描画できるよう、オプトイン時だけ
 	// JSON テキストの後に image コンテンツを付ける。content[0] は従来どおり JSON。
-	diffImageContent, err := boolArg(request, "diff_image_content", false)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
 	if diffImageContent {
 		if diffImage, _ := responseMap["diff_image"].(string); diffImage != "" {
 			if payload, ok := pngPayloadFromDiffImage(diffImage); ok {
@@ -1312,26 +1361,6 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 	}
 	return mcp.NewToolResultStructured(responseMap, string(responseJSON)), nil
-}
-
-// limitIntegrityOutput は layout_integrity の issues / details を maxDetails 件に
-// 切り詰める。maxDetails <= 0 または件数以内なら無変更。issue_count は実件数のまま
-// 残し、合否（issue_count == 0）は変えない。details は先頭の summary 行と
-// 切り詰め後の issue.Detail から再構築し、末尾に省略行を付ける (Issue #527)。
-func limitIntegrityOutput(result *comparator.LayoutIntegrityResult, maxDetails int) {
-	if maxDetails <= 0 || len(result.Issues) <= maxDetails {
-		return
-	}
-	omitted := len(result.Issues) - maxDetails
-	result.Issues = result.Issues[:maxDetails]
-	details := make([]string, 0, maxDetails+2)
-	if len(result.Details) > 0 {
-		details = append(details, result.Details[0]) // 先頭は summary 行
-	}
-	for _, issue := range result.Issues {
-		details = append(details, issue.Detail)
-	}
-	result.Details = append(details, fmt.Sprintf("... and %d more issues omitted (max_details=%d)", omitted, maxDetails))
 }
 
 // pngPayloadFromDiffImage は JSON の diff_image (PNG data URI) から
