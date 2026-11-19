@@ -23,7 +23,7 @@ func TestUseCLI(t *testing.T) {
 
 func TestParseCLIArgsMapsFlags(t *testing.T) {
 	var stderr bytes.Buffer
-	got, err := parseCLIArgs([]string{
+	got, opts, err := parseCLIArgs([]string{
 		"--mode", "strict",
 		"--image-a", "a.png",
 		"--image-b", "b.png",
@@ -35,9 +35,16 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		"--include-aa",
 		"--ignore-region", "0,0,1,1",
 		"--generate-diff=false",
+		"--diff-image-out", "out.png",
 	}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
+	}
+	if opts.DiffImageOut != "out.png" {
+		t.Errorf("DiffImageOut=%q", opts.DiffImageOut)
+	}
+	if _, ok := got["diff_image_out"]; ok {
+		t.Errorf("diff-image-out must not enter toolArgs: %v", got)
 	}
 	if got["mode"] != "strict" {
 		t.Errorf("mode=%v", got["mode"])
@@ -69,7 +76,7 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 
 	figmaInline := `[{"id":"1","name":"card","x":0,"y":0,"w":400,"h":300}]`
 	webInline := `[{"selector":"#card","x":0,"y":0,"w":400,"h":300}]`
-	gotLayout, err := parseCLIArgs([]string{
+	gotLayout, _, err := parseCLIArgs([]string{
 		"--mode", "layout_tree",
 		"--figma-layout", figmaInline,
 		"--web-layout", webInline,
@@ -95,7 +102,7 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 
 func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 	var stderr bytes.Buffer
-	_, err := parseCLIArgs([]string{
+	_, _, err := parseCLIArgs([]string{
 		"--mode", "strict",
 		"--image-a", "a.png",
 		"--image-b", "b.png",
@@ -113,7 +120,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		t.Errorf("error should hint --flag=value form, got %q", msg)
 	}
 
-	_, err = parseCLIArgs([]string{
+	_, _, err = parseCLIArgs([]string{
 		"--mode", "strict",
 		"--image-a", "a.png",
 		"--image-b", "b.png",
@@ -132,7 +139,7 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 		t.Errorf("error should list flags dropped after space-separated boolean, got %q", msg)
 	}
 
-	got, err := parseCLIArgs([]string{
+	got, _, err := parseCLIArgs([]string{
 		"--mode", "strict",
 		"--image-a", "a.png",
 		"--image-b", "b.png",
@@ -152,9 +159,12 @@ func TestParseCLIArgsRejectsUnexpectedArgs(t *testing.T) {
 
 func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	var stderr bytes.Buffer
-	got, err := parseCLIArgs([]string{"--mode", "perceptual", "--image-a", "a.png", "--image-b", "b.png"}, io.Discard, &stderr)
+	got, opts, err := parseCLIArgs([]string{"--mode", "perceptual", "--image-a", "a.png", "--image-b", "b.png"}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
+	}
+	if opts.DiffImageOut != "" {
+		t.Errorf("unset DiffImageOut should be empty, got %q", opts.DiffImageOut)
 	}
 	for _, key := range []string{
 		"threshold", "min_match", "pass_rate", "max_diff_pixels", "include_aa",
@@ -172,7 +182,7 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 
 func TestParseCLIArgsMapsViewportAndLayoutFlags(t *testing.T) {
 	var stderr bytes.Buffer
-	got, err := parseCLIArgs([]string{
+	got, _, err := parseCLIArgs([]string{
 		"--mode", "layout_integrity",
 		"--web-layout-file", "web.json",
 		"--viewport-preset", "ipad_landscape",
@@ -217,7 +227,7 @@ func TestParseCLIArgsMapsViewportAndLayoutFlags(t *testing.T) {
 
 func TestParseCLIArgsHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	_, err := parseCLIArgs([]string{"-h"}, &stdout, &stderr)
+	_, _, err := parseCLIArgs([]string{"-h"}, &stdout, &stderr)
 	if err != flag.ErrHelp {
 		t.Fatalf("expected flag.ErrHelp, got %v", err)
 	}
@@ -227,6 +237,9 @@ func TestParseCLIArgsHelp(t *testing.T) {
 	}
 	if !strings.Contains(help, "Positional arguments are not accepted") {
 		t.Errorf("help output missing positional-args hint: %q", help)
+	}
+	if !strings.Contains(help, "diff-image-out") {
+		t.Errorf("help should list --diff-image-out, got %q", help)
 	}
 	if !strings.Contains(help, "design-compare --version") {
 		t.Errorf("help output missing --version usage line: %q", help)
@@ -238,7 +251,7 @@ func TestParseCLIArgsHelp(t *testing.T) {
 
 func TestParseCLIArgsVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	_, err := parseCLIArgs([]string{"--version"}, &stdout, &stderr)
+	_, _, err := parseCLIArgs([]string{"--version"}, &stdout, &stderr)
 	if err != errShowVersion {
 		t.Fatalf("expected errShowVersion, got %v", err)
 	}
@@ -253,7 +266,7 @@ func TestParseCLIArgsVersion(t *testing.T) {
 
 func TestParseCLIArgsRequiresMode(t *testing.T) {
 	var stderr bytes.Buffer
-	_, err := parseCLIArgs([]string{"--image-a", "a.png", "--image-b", "b.png"}, io.Discard, &stderr)
+	_, _, err := parseCLIArgs([]string{"--image-a", "a.png", "--image-b", "b.png"}, io.Discard, &stderr)
 	if err == nil {
 		t.Fatal("expected error when --mode is omitted")
 	}
@@ -277,7 +290,7 @@ func TestParseCLIArgsRequiresMode(t *testing.T) {
 
 func TestParseCLIArgsRejectsPositionalArgs(t *testing.T) {
 	var stderr bytes.Buffer
-	_, err := parseCLIArgs([]string{
+	_, _, err := parseCLIArgs([]string{
 		"a.png", "b.png",
 		"--mode", "strict",
 		"--image-a", "a.png",
@@ -706,5 +719,77 @@ func TestExitCodeFromResultJSON(t *testing.T) {
 	}
 	if got := exitCodeFromResultJSON(`not json`); got != exitError {
 		t.Errorf("invalid json -> %d", got)
+	}
+}
+
+func TestRunCLIDiffImageOut(t *testing.T) {
+	tmp := t.TempDir()
+	pathA := saveTempImage(t, tmp, "a.png", generateSolidImage(8, 8, color.White))
+	pathB := saveTempImage(t, tmp, "b.png", generateSolidImage(8, 8, color.Black))
+	outPath := filepath.Join(tmp, "diff.png")
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "strict",
+		"--image-a", pathA,
+		"--image-b", pathB,
+		"--diff-image-out", outPath,
+	}, &stdout, &stderr)
+	if code != exitMismatch {
+		t.Fatalf("mismatch exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "mismatch" {
+		t.Errorf("status=%v", result["status"])
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("expected diff PNG at %s: %v", outPath, err)
+	}
+	if len(data) < 8 || string(data[:8]) != "\x89PNG\r\n\x1a\n" {
+		t.Fatalf("diff file missing PNG signature: %x", data[:min(8, len(data))])
+	}
+
+	// generate-diff=false: skip write, note on stderr, keep mismatch exit.
+	stdout.Reset()
+	stderr.Reset()
+	skipPath := filepath.Join(tmp, "skip.png")
+	code = runCLIWithIO([]string{
+		"--mode", "strict",
+		"--image-a", pathA,
+		"--image-b", pathB,
+		"--generate-diff=false",
+		"--diff-image-out", skipPath,
+	}, &stdout, &stderr)
+	if code != exitMismatch {
+		t.Fatalf("empty diff exit=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(skipPath); !os.IsNotExist(err) {
+		t.Fatalf("empty diff_image must not create %s (err=%v)", skipPath, err)
+	}
+	if !strings.Contains(stderr.String(), "diff_image is empty") {
+		t.Errorf("stderr should note empty diff_image, got %q", stderr.String())
+	}
+
+	// Write failure (directory as path) → exit 1 after printing JSON.
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLIWithIO([]string{
+		"--mode", "strict",
+		"--image-a", pathA,
+		"--image-b", pathB,
+		"--diff-image-out", tmp,
+	}, &stdout, &stderr)
+	if code != exitError {
+		t.Fatalf("write failure exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--diff-image-out") {
+		t.Errorf("stderr should mention --diff-image-out, got %q", stderr.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("stdout should still be JSON on write failure: %v\n%s", err, stdout.String())
 	}
 }
