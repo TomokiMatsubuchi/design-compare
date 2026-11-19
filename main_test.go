@@ -6149,7 +6149,7 @@ func TestLayoutTree_MismatchPairsToleranceZero(t *testing.T) {
 // 動作することを検証する (Issue #127)。
 func TestParseIgnoreRegions_OverflowRejected(t *testing.T) {
 	const overflow = "4611686018427387904,0,4611686018427387904,10"
-	_, err := parseIgnoreRegions(overflow)
+	_, err := parseIgnoreRegions(overflow, false)
 	if err == nil {
 		t.Fatalf("expected error for overflowing ignore_region %q", overflow)
 	}
@@ -6157,14 +6157,14 @@ func TestParseIgnoreRegions_OverflowRejected(t *testing.T) {
 		t.Errorf("expected max-value error, got %v", err)
 	}
 
-	_, err = parseIgnoreRegions("2147483647,0,1,1")
+	_, err = parseIgnoreRegions("2147483647,0,1,1", false)
 	if err != nil {
 		t.Errorf("MaxInt32 should be accepted, got %v", err)
 	}
 }
 
 func TestParseIgnoreRegions_FractionalValues(t *testing.T) {
-	got, err := parseIgnoreRegions("327.5,30,100.5,40")
+	got, err := parseIgnoreRegions("327.5,30,100.5,40", false)
 	if err != nil {
 		t.Fatalf("expected fractional ignore_region to parse, got %v", err)
 	}
@@ -6172,12 +6172,194 @@ func TestParseIgnoreRegions_FractionalValues(t *testing.T) {
 		t.Errorf("expected rounded region {328,30,101,40}, got %+v", got)
 	}
 
-	_, err = parseIgnoreRegions("a,b,c,d")
+	_, err = parseIgnoreRegions("a,b,c,d", false)
 	if err == nil {
 		t.Fatal("expected invalid ignore_region string to fail")
 	}
 	if !strings.Contains(err.Error(), "must be numbers") {
 		t.Errorf("expected numbers error, got %v", err)
+	}
+}
+
+// Issue #717: layout 系は負の x/y を許可し、画像系は拒否する。w,h > 0 は常に必須。
+func TestParseIgnoreRegions_NegativeXY(t *testing.T) {
+	got, err := parseIgnoreRegions("-50,0,100,100", true)
+	if err != nil {
+		t.Fatalf("layout allowNegativeXY should accept negative x: %v", err)
+	}
+	if len(got) != 1 || got[0] != (comparator.Region{X: -50, Y: 0, W: 100, H: 100}) {
+		t.Fatalf("got %+v", got)
+	}
+
+	got, err = parseIgnoreRegions("0,-20,10,10", true)
+	if err != nil {
+		t.Fatalf("layout allowNegativeXY should accept negative y: %v", err)
+	}
+	if len(got) != 1 || got[0] != (comparator.Region{X: 0, Y: -20, W: 10, H: 10}) {
+		t.Fatalf("got %+v", got)
+	}
+
+	_, err = parseIgnoreRegions("-50,0,100,100", false)
+	if err == nil {
+		t.Fatal("image modes must reject negative x")
+	}
+	if !strings.Contains(err.Error(), "requires x,y >= 0 and w,h > 0") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	_, err = parseIgnoreRegions("-50,0,0,100", true)
+	if err == nil {
+		t.Fatal("w <= 0 must still be rejected when negatives are allowed")
+	}
+	if !strings.Contains(err.Error(), "requires w,h > 0") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	_, err = parseIgnoreRegions("-50,0,100,0", true)
+	if err == nil {
+		t.Fatal("h <= 0 must still be rejected when negatives are allowed")
+	}
+	if !strings.Contains(err.Error(), "requires w,h > 0") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// Issue #717: layout_integrity / layout_tree は負座標 ignore_region で左はみ出し等を除外でき、
+// perceptual / strict は従来どおり入力エラーにする。
+func TestIgnoreRegion_NegativeXYByMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	pathE := saveTempImage(t, tmpDir, "imageE.png", generateSolidImage(200, 200, color.White))
+	pathF := saveTempImage(t, tmpDir, "imageF.png", generateSolidImage(200, 200, color.White))
+
+	t.Run("layout_integrity_excludes_left_overflow", func(t *testing.T) {
+		// #neg center = (-30, 25); region [-50,50)×[0,100) がそれを含む。
+		web := `[{"selector":"#ok","x":0,"y":0,"w":100,"h":50},{"selector":"#neg","x":-80,"y":0,"w":100,"h":50}]`
+
+		reqNoIgnore := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":       "layout_integrity",
+					"web_layout": web,
+				},
+			},
+		}
+		resNo, err := compareDesignHandler(context.Background(), reqNoIgnore)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if resNo.IsError {
+			t.Fatalf("unexpected error: %s", resNo.Content[0].(mcp.TextContent).Text)
+		}
+		var resultNo map[string]interface{}
+		json.Unmarshal([]byte(resNo.Content[0].(mcp.TextContent).Text), &resultNo)
+		if resultNo["status"] != "mismatch" {
+			t.Fatalf("expected mismatch without ignore, got %#v", resultNo)
+		}
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "layout_integrity",
+					"web_layout":    web,
+					"ignore_region": "-50,0,100,100",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("layout_integrity must accept negative ignore_region, got %s", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Fatalf("expected success after ignoring left overflow, got %#v", result)
+		}
+		if result["ignored_count"] != float64(1) {
+			t.Errorf("ignored_count=%v want 1", result["ignored_count"])
+		}
+	})
+
+	t.Run("layout_tree_accepts_negative_region", func(t *testing.T) {
+		// 両側 off の中心 (-30,50) と (-150,50) を [-250,50)×[0,100) で除外。
+		figma := `[{"id":"1","name":"ok","x":0,"y":0,"w":100,"h":100},{"id":"2","name":"off","x":-80,"y":0,"w":100,"h":100}]`
+		web := `[{"selector":"#ok","x":0,"y":0,"w":100,"h":100},{"selector":".off","x":-200,"y":0,"w":100,"h":100}]`
+
+		reqNo := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":         "layout_tree",
+					"figma_layout": figma,
+					"web_layout":   web,
+					"threshold":    0.15,
+				},
+			},
+		}
+		resNo, err := compareDesignHandler(context.Background(), reqNo)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var resultNo map[string]interface{}
+		json.Unmarshal([]byte(resNo.Content[0].(mcp.TextContent).Text), &resultNo)
+		if resultNo["status"] != "mismatch" {
+			t.Fatalf("expected mismatch without ignore, got %#v", resultNo)
+		}
+
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":          "layout_tree",
+					"figma_layout":  figma,
+					"web_layout":    web,
+					"threshold":     0.15,
+					"ignore_region": "-250,0,300,100",
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("layout_tree must accept negative ignore_region, got %s", res.Content[0].(mcp.TextContent).Text)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" {
+			t.Fatalf("expected success after ignoring negative-x nodes, got %#v", result)
+		}
+		if result["ignored_count"] != float64(2) {
+			t.Errorf("ignored_count=%v want 2", result["ignored_count"])
+		}
+	})
+
+	for _, mode := range []string{"perceptual", "strict"} {
+		mode := mode
+		t.Run(mode+"_rejects_negative_region", func(t *testing.T) {
+			req := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Arguments: map[string]any{
+						"mode":          mode,
+						"image_path_a":  pathE,
+						"image_path_b":  pathF,
+						"ignore_region": "-50,0,100,100",
+					},
+				},
+			}
+			res, err := compareDesignHandler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("handler failed: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("%s must reject negative ignore_region, got %v", mode, res.Content[0].(mcp.TextContent).Text)
+			}
+			got := res.Content[0].(mcp.TextContent).Text
+			if !strings.Contains(got, "requires x,y >= 0 and w,h > 0") {
+				t.Errorf("%s unexpected error text: %s", mode, got)
+			}
+		})
 	}
 }
 
