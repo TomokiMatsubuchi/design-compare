@@ -6585,6 +6585,7 @@ func TestResolveImageInput_HeaderDimensions(t *testing.T) {
 
 // TestResolveImageInput_FileSizeLimit は MaxInputFileBytes を超えるパス入力が
 // os.ReadFile 前に拒否されることを、スパースな巨大ファイルで検証する (Issue #489)。
+// base64 はデコード前に MaxImageBase64Bytes (MaxInputFileBytes の 4/3) で弾く (Issue #740)。
 func TestResolveImageInput_FileSizeLimit(t *testing.T) {
 	tmpDir := t.TempDir()
 	bigPath := filepath.Join(tmpDir, "big.png")
@@ -6626,6 +6627,45 @@ func TestResolveImageInput_FileSizeLimit(t *testing.T) {
 	if got := err.Error(); got != wantLayout {
 		t.Errorf("layout error: got %q want %q", got, wantLayout)
 	}
+
+	t.Run("rejects_oversized_base64_before_decode", func(t *testing.T) {
+		// 本番既定は MaxImageBase64Bytes。ここをずらすとデコード前ガードが無効になる。
+		if maxImageBase64PayloadBytes != int64(comparator.MaxImageBase64Bytes) {
+			t.Fatalf("default maxImageBase64PayloadBytes = %d, want %d", maxImageBase64PayloadBytes, comparator.MaxImageBase64Bytes)
+		}
+		// 本番上限 (~683 MiB) の実アロケーションを避け、配線とエラー文面だけを検証する。
+		const testLimit int64 = 64
+		old := maxImageBase64PayloadBytes
+		maxImageBase64PayloadBytes = testLimit
+		t.Cleanup(func() { maxImageBase64PayloadBytes = old })
+
+		over := strings.Repeat("A", int(testLimit)+1)
+		wantB64 := fmt.Sprintf("image_a_base64 is too large (%d bytes; limit %d bytes)", len(over), testLimit)
+		_, err := resolveImageInput("", over, "image_path_a", "image_a_base64")
+		if err == nil {
+			t.Fatal("expected resolveImageInput to reject oversized base64 before decode")
+		}
+		if got := err.Error(); got != wantB64 {
+			t.Errorf("error: got %q want %q", got, wantB64)
+		}
+
+		// data URI + 空白除去後の長さで判定する（プレフィックスは上限に含めない）。
+		prefixed := "data:image/png;base64," + over
+		_, err = resolveImageInput("", prefixed, "image_path_a", "image_a_base64")
+		if err == nil {
+			t.Fatal("expected data URI oversized payload to be rejected")
+		}
+		if got := err.Error(); got != wantB64 {
+			t.Errorf("data URI error: got %q want %q", got, wantB64)
+		}
+
+		// 上限ちょうどはサイズ検査を通過する（デコード成否は問わない）。
+		atLimit := strings.Repeat("A", int(testLimit))
+		_, err = resolveImageInput("", atLimit, "image_path_a", "image_a_base64")
+		if err != nil && strings.Contains(err.Error(), "too large") {
+			t.Errorf("at-limit payload must not hit size limit, got %q", err.Error())
+		}
+	})
 }
 
 // TestResolveLayoutInput_SizeLimit は layout JSON のインライン文字列長と

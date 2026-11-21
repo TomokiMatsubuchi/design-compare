@@ -83,6 +83,10 @@ const (
 // 8192×8192 画像を符号化した現実的な最大サイズより十分大きく、正常な入力は拒否しない。
 const MaxInputFileBytes = 512 << 20
 
+// MaxImageBase64Bytes は base64 画像ペイロードのデコード前文字列長上限。
+// デコード後が MaxInputFileBytes を超えないよう base64 膨張率 4/3 で換算する (Issue #740)。
+const MaxImageBase64Bytes = MaxInputFileBytes * 4 / 3
+
 // pngSignature は PNG ファイルシグネチャ (8 バイト)。IHDR の幅・高さは
 // シグネチャ直後のチャンク先頭からオフセット 16–23 のビッグエンディアン。
 var pngSignature = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
