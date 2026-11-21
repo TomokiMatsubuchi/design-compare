@@ -1237,3 +1237,15 @@ func TestRunPixelMatch_WebP_VP8AndVP8L(t *testing.T) {
 		})
 	}
 }
+
+// TestMaxImageBase64Bytes は base64 ペイロード上限が MaxInputFileBytes の 4/3
+// （デコード後がファイル上限を超えない換算）であることを固定する (Issue #740)。
+func TestMaxImageBase64Bytes(t *testing.T) {
+	want := MaxInputFileBytes * 4 / 3
+	if MaxImageBase64Bytes != want {
+		t.Errorf("MaxImageBase64Bytes = %d, want MaxInputFileBytes*4/3 = %d", MaxImageBase64Bytes, want)
+	}
+	if MaxImageBase64Bytes <= MaxInputFileBytes {
+		t.Errorf("MaxImageBase64Bytes (%d) must exceed MaxInputFileBytes (%d)", MaxImageBase64Bytes, MaxInputFileBytes)
+	}
+}

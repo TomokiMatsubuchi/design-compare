@@ -181,6 +181,11 @@ func readLocalFile(path, param string) ([]byte, error) {
 	return data, nil
 }
 
+// maxImageBase64PayloadBytes は base64 画像ペイロードのデコード前バイト上限。
+// 既定は comparator.MaxImageBase64Bytes (MaxInputFileBytes の 4/3)。
+// テストで小さく上書きし、~683 MiB の実アロケーションを避けて配線を検証する (Issue #740)。
+var maxImageBase64PayloadBytes = int64(comparator.MaxImageBase64Bytes)
+
 // resolveImageInput returns the raw bytes of a comparison image from either a
 // local file path or a base64-encoded string (exactly one must be provided).
 // For base64 input, a data URI prefix ("data:<mime>;base64,...") such as the one
@@ -194,6 +199,7 @@ func readLocalFile(path, param string) ([]byte, error) {
 // (CheckHeaderDimensions)。巨大 IHDR 宣言の PNG が image.Decode 到達前に弾かれる。
 // エラーには入力パラメータ名を label として渡し、A/B どちらの入力かを文面に残す。
 // パス入力は readLocalFile で通常ファイルかつ MaxInputFileBytes 以内に制限する。
+// base64 入力はデコード前に maxImageBase64PayloadBytes で文字列長を制限する (Issue #740)。
 func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([]byte, error) {
 	switch {
 	case pathValue != "" && base64Value != "":
@@ -212,6 +218,9 @@ func resolveImageInput(pathValue, base64Value, pathParam, base64Param string) ([
 		}
 		// ログ等からコピーした MIME 折り返し (改行・スペース・タブ) を除去してからデコードする。
 		payload = strings.Join(strings.Fields(payload), "")
+		if int64(len(payload)) > maxImageBase64PayloadBytes {
+			return nil, fmt.Errorf("%s is too large (%d bytes; limit %d bytes)", base64Param, len(payload), maxImageBase64PayloadBytes)
+		}
 		data, err := base64.StdEncoding.DecodeString(payload)
 		if err != nil {
 			// LLM や一部スクショツールはパディング (=) を省略することがある。
