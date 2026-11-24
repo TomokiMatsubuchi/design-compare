@@ -1356,6 +1356,28 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 	}
 
+	// perceptual / strict: diff_image が空の理由を応答だけで判別できるよう、
+	// generate_diff / diff_on_mismatch の実効値を返し、空のときは details に理由を足す。
+	if mode == "perceptual" || mode == "strict" {
+		// generate_diff は各モード分岐で boolArg 検証済み (ここでのエラーは起こらない)。
+		generateDiff, _ := boolArg(request, "generate_diff", true)
+		responseMap["generate_diff"] = generateDiff
+		responseMap["diff_on_mismatch"] = diffOnMismatch
+		if diffImage, _ := responseMap["diff_image"].(string); diffImage == "" {
+			reason := ""
+			if !generateDiff {
+				reason = "diff image not generated (generate_diff=false)"
+			} else if status, _ := responseMap["status"].(string); diffOnMismatch && status == "success" {
+				reason = "diff image omitted (diff_on_mismatch=true, status=success)"
+			}
+			if reason != "" {
+				if lines, ok := responseMap["details"].([]string); ok {
+					responseMap["details"] = append(lines, reason)
+				}
+			}
+		}
+	}
+
 	responseJSON, err := json.MarshalIndent(responseMap, "", "  ")
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal comparison result: %v", err)), nil
