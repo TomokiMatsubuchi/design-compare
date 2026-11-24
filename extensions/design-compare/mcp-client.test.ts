@@ -418,3 +418,27 @@ test("toToolResult: forwards image blocks and keeps errors text-only", () => {
   assert.deepEqual(onError.content, [{ type: "text", text: "Error: boom" }]);
   assert.equal(onError.details.error, "tool_error");
 });
+
+test("toToolResult: exposes structuredContent as details.result", () => {
+  const structured = { status: "success", match_rate: "100.00%", match_rate_value: 100 };
+  const mapped = toToolResult({
+    content: [{ type: "text", text: JSON.stringify(structured) }],
+    structuredContent: structured,
+  });
+  const result = mapped.details.result as Record<string, unknown>;
+  assert.equal(result.status, "success");
+  assert.equal(typeof result.match_rate_value, "number");
+  assert.equal(mapped.details.has_image_content, undefined);
+
+  const withImage = toToolResult({
+    content: [
+      { type: "text", text: "{}" },
+      { type: "image", data: "abc", mimeType: "image/png" },
+    ],
+    structuredContent: structured,
+  });
+  assert.equal(withImage.details.has_image_content, true);
+  assert.deepEqual(withImage.details.result, structured);
+
+  assert.deepEqual(toToolResult({ content: [{ type: "text", text: "x" }] }).details, {});
+});

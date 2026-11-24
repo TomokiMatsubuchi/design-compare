@@ -17,6 +17,7 @@ export interface McpContent {
 
 export interface McpCallResult {
   content?: McpContent[];
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
@@ -63,10 +64,13 @@ export function toToolResult(result: McpCallResult): ToolResult {
     hasImageContent = true;
   }
 
-  return {
-    content,
-    details: hasImageContent ? { has_image_content: true } : {},
-  };
+  const details: Record<string, unknown> = {};
+  if (result.structuredContent !== undefined && result.structuredContent !== null) {
+    details.result = result.structuredContent;
+  }
+  if (hasImageContent) details.has_image_content = true;
+
+  return { content, details };
 }
 
 interface JsonRpcMessage {
