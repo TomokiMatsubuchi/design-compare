@@ -103,6 +103,8 @@ image A / B のいずれかが一様と検出された場合、status / match_ra
 | `web_layout` | string / object[] | `layout_tree` / `layout_integrity` | Web DOM ノードリストの JSON 文字列（インライン指定）。ノードの JSON 配列をそのまま渡すこともできる。単一オブジェクト（ネイティブ / 文字列）は専用エラー。`web_layout_path` と排他で、どちらか一方が必須。 |
 | `web_layout_path` | string | `layout_tree` / `layout_integrity` | Web DOM ノードリスト JSON ファイルのローカルパス。`web_layout` と排他。 |
 
+ファイルパス入力（`image_path_a` / `image_path_b` / `figma_layout_path` / `web_layout_path`）は通常ファイルのみ受け付け、読み込み前にサイズを確認する。上限は画像 512 MiB、レイアウト JSON（インライン文字列も同じ）32 MiB。超過時は読み込まずエラーになる。
+
 画像の幅・高さはそれぞれ最大 8192px。超過時は自動リサイズされずエラーになるため、比較前にリサイズまたは切り出しが必要。あわせてフルデコード前に各辺 30,000px / 総ピクセル 50,000,000 の上限も検査し、超過時は展開せずエラーになる。
 
 ### 比較条件（閾値・除外・ビューポート）
