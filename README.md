@@ -235,7 +235,9 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 | フィールド | 型 | 常に返す | 説明 |
 | :--- | :--- | :--- | :--- |
 | `min_match` | number | ○ | 判定に使った最低一致率 %（`threshold` エイリアス解決後を含む。未指定時は既定 98.0）。 |
-| `diff_image` | string | ○ | 差分画像の base64 data URI。`generate_diff=false` または `diff_on_mismatch=true` かつ `success` のときは空文字列。 |
+| `diff_image` | string | ○ | 差分画像の base64 data URI。`generate_diff=false` または `diff_on_mismatch=true` かつ `success` のときは空文字列。空の理由は `generate_diff` / `diff_on_mismatch` と `details` の末尾 1 行（`diff image not generated (generate_diff=false)` / `diff image omitted (diff_on_mismatch=true, status=success)`）で判別できる。 |
+| `generate_diff` | boolean | ○ | 判定に使った実効値（未指定時は既定 true）。 |
+| `diff_on_mismatch` | boolean | ○ | 判定に使った実効値（未指定時は既定 false）。 |
 | `total_blocks` | number | ○ | aHash セル総数（常に 256）。 |
 | `diff_blocks` | number | ○ | 不一致セル数。 |
 | `image_size_a` / `image_size_b` | string | ○ | 各画像のピクセル寸法（例: `"800x600"`）。 |
@@ -252,7 +254,9 @@ DOM からの抽出手順（`getBoundingClientRect()` + `window.scrollX` / `wind
 | `total_pixels` | number | ○ | 比較したピクセル総数。 |
 | `diff_pixels` | number | ○ | 色差が `threshold` を超えた差分ピクセル数（既定ではアンチエイリアス除外後。`include_aa=true` なら AA 境界も含む）。 |
 | `min_match` | number | 指定時のみ | 指定したときだけ判定に使い、応答へ echo する。 |
-| `diff_image` | string | ○ | pixelmatch 差分画像の base64 data URI。生成しない場合は空文字列。 |
+| `diff_image` | string | ○ | pixelmatch 差分画像の base64 data URI。`generate_diff=false` または `diff_on_mismatch=true` かつ `success` のときは空文字列。空の理由は `generate_diff` / `diff_on_mismatch` と `details` の末尾 1 行で判別できる（文言は `perceptual` と同じ）。 |
+| `generate_diff` | boolean | ○ | 判定に使った実効値（未指定時は既定 true）。 |
+| `diff_on_mismatch` | boolean | ○ | 判定に使った実効値（未指定時は既定 false）。 |
 | `image_size` | string | ○ | 両画像共通のピクセル寸法。 |
 | `effective_threshold` | number | ○ | 判定に使った色差許容（未指定時は既定 0.1）。 |
 | `include_aa` | boolean | ○ | 判定に使った AA 境界の扱い（未指定時は既定 false。`diff_pixels` が AA 除外後か含むかを示す）。 |
