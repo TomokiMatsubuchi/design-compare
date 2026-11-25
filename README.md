@@ -311,13 +311,16 @@ go build -o design-compare
 引数付きで起動すると MCP ハンドシェイクなしで `compare_design` を1回実行し、ツールと同じ応答 JSON を stdout に出して終了します（`0` = success / `2` = mismatch・skipped（比較未実施を含む）/ `1` = エラー）。エラー（`1`）時のエラー本文は、stdout を JSON としてパースする呼び出し側を壊さないよう stderr に出ます。引数なし起動は従来どおり stdio MCP サーバーです。
 
 ```bash
-./design-compare --mode strict --image-a a.png --image-b b.png
+./design-compare --mode strict --image-a a.png --image-b b.png --generate-diff=false
+./design-compare --mode perceptual --image-a a.png --image-b b.png --diff-on-mismatch
 ./design-compare --mode strict --image-a-base64 "$(base64 -w0 a.png)" --image-b-base64 "$(base64 -w0 b.png)" --generate-diff=false
 ./design-compare --mode layout_tree --figma-layout-file figma.json --web-layout-file web.json
 ./design-compare --mode layout_tree --figma-layout '[{"id":"1","name":"card","x":0,"y":0,"w":400,"h":300}]' --web-layout '[{"selector":"#card","x":0,"y":0,"w":400,"h":300}]'
 ./design-compare --help
 ./design-compare --version
 ```
+
+既定では応答 JSON の `diff_image` に base64 PNG が入ります。ターミナルや CI で合否だけを見る場合は `--generate-diff=false`、不一致時だけ画像が欲しい場合は `--diff-on-mismatch` を使ってください（CLI の既定値は MCP と同じで変えていません）。
 
 主なフラグ: `--mode` / `--image-a` / `--image-b` / `--image-a-base64` / `--image-b-base64` / `--figma-layout` / `--web-layout` / `--figma-layout-file` / `--web-layout-file` / `--threshold` / `--min-match` / `--pass-rate` / `--max-diff-pixels` / `--include-aa` / `--ignore-region` / `--generate-diff` / `--viewport-preset` / `--viewport-width` / `--viewport-height` / `--ignore-nodes` / `--count-extra-web` / `--max-details` / `--diff-on-mismatch` / `--diff-image-out` / `--version`
 
