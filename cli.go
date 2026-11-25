@@ -108,40 +108,56 @@ func runCLIWithIO(args []string, stdout, stderr io.Writer) int {
 		writeCLIParamHints(stderr, text)
 		return exitError
 	}
-	fmt.Fprintln(stdout, text)
+	outText := text
 	if opts.DiffImageOut != "" {
-		if err := writeCLIDiffImage(opts.DiffImageOut, text, stderr); err != nil {
+		// 書き出しに失敗したら比較結果の JSON は出さず exit 1（既存のエラー経路と同じ）。
+		var err error
+		outText, err = writeCLIDiffImage(opts.DiffImageOut, text, stderr)
+		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return exitError
 		}
 	}
+	fmt.Fprintln(stdout, outText)
 	return exitCodeFromResultJSON(text)
 }
 
 // writeCLIDiffImage decodes result JSON's diff_image data URI and writes a PNG to path.
-// Empty diff_image skips the write and notes that on stderr (not an error).
-func writeCLIDiffImage(path, resultJSON string, stderr io.Writer) error {
-	var m map[string]any
+// It returns the JSON to print on stdout: diff_image blanked after a successful write,
+// otherwise resultJSON unchanged. Empty diff_image skips the write and notes that on
+// stderr (not an error).
+func writeCLIDiffImage(path, resultJSON string, stderr io.Writer) (string, error) {
+	var m map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(resultJSON), &m); err != nil {
-		return fmt.Errorf("parse result JSON for --diff-image-out: %w", err)
+		return "", fmt.Errorf("parse result JSON for --diff-image-out: %w", err)
 	}
-	diffImage, _ := m["diff_image"].(string)
+	var diffImage string
+	if raw, ok := m["diff_image"]; ok {
+		if err := json.Unmarshal(raw, &diffImage); err != nil {
+			return "", fmt.Errorf("--diff-image-out: diff_image is not a string: %w", err)
+		}
+	}
 	if diffImage == "" {
 		fmt.Fprintln(stderr, "diff_image is empty; skipping --diff-image-out")
-		return nil
+		return resultJSON, nil
 	}
 	payload, ok := pngPayloadFromDiffImage(diffImage)
 	if !ok {
-		return fmt.Errorf("--diff-image-out: diff_image is not a PNG data URI")
+		return "", fmt.Errorf("--diff-image-out: diff_image is not a PNG data URI")
 	}
 	data, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
-		return fmt.Errorf("decode diff_image for --diff-image-out: %w", err)
+		return "", fmt.Errorf("decode diff_image for --diff-image-out: %w", err)
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write --diff-image-out: %w", err)
+		return "", fmt.Errorf("write --diff-image-out: %w", err)
 	}
-	return nil
+	m["diff_image"] = json.RawMessage(`""`)
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode result JSON for --diff-image-out: %w", err)
+	}
+	return string(out), nil
 }
 
 // cliStringArgPresent は parseCLIArgs が map に載せた非空文字列引数の有無を返す。

@@ -745,6 +745,9 @@ func TestRunCLIDiffImageOut(t *testing.T) {
 	if result["status"] != "mismatch" {
 		t.Errorf("status=%v", result["status"])
 	}
+	if result["diff_image"] != "" {
+		t.Errorf("stdout diff_image should be blanked, got %v", result["diff_image"])
+	}
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("expected diff PNG at %s: %v", outPath, err)
@@ -774,7 +777,7 @@ func TestRunCLIDiffImageOut(t *testing.T) {
 		t.Errorf("stderr should note empty diff_image, got %q", stderr.String())
 	}
 
-	// Write failure (directory as path) → exit 1 after printing JSON.
+	// Write failure (directory as path) → exit 1 without result JSON on stdout.
 	stdout.Reset()
 	stderr.Reset()
 	code = runCLIWithIO([]string{
@@ -789,7 +792,7 @@ func TestRunCLIDiffImageOut(t *testing.T) {
 	if !strings.Contains(stderr.String(), "--diff-image-out") {
 		t.Errorf("stderr should mention --diff-image-out, got %q", stderr.String())
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		t.Fatalf("stdout should still be JSON on write failure: %v\n%s", err, stdout.String())
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must be empty on write failure, got %q", stdout.String())
 	}
 }
