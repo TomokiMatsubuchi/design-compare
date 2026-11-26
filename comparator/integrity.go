@@ -73,6 +73,10 @@ type LayoutIntegrityResult struct {
 	// UnresolvedParentRefs は parent が空でないのに有効な親として使えない参照
 	// （入力欠落・自己参照）。合否は変えず、layout_tree と同形式（Web: '…'）で通知する。
 	UnresolvedParentRefs []string `json:"unresolved_parent_refs,omitempty"`
+	// DuplicateWebSelectors は ignore 前の Web ノードで 2 回以上現れた selector。
+	// 親参照インデックスは layout_tree と同じく先勝ちのため、2 件目以降は親として
+	// 解決されない。合否（status / issue_count）は変えず、誤入力の気づきだけを与える。
+	DuplicateWebSelectors []string `json:"duplicate_web_selectors,omitempty"`
 	// ParentOverflowSkippedZeroGeom は親ノードは入力にあるが w/h が 0 以下のため
 	// parent_overflow をスキップした checkable 子の件数（status は変えない）。
 	ParentOverflowSkippedZeroGeom int `json:"parent_overflow_skipped_zero_geom,omitempty"`
@@ -201,6 +205,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 	// 走査対象は除外後の wNodes とし、除外済み親を誤って unresolved にしない
 	// （layout_tree の collectUnresolvedParentRefs と同方針）。
 	unresolvedParentRefs := collectUnresolvedParentRefs(nil, wNodes, nil, indexWebNodesBySelector(allWebNodes))
+	duplicateWebSelectors := collectDuplicateWebSelectors(allWebNodes)
 
 	// ignore 後の候補に対し、layout_tree と同じ過半数ゼロ幾何の警告を付ける。
 	// 全件ゼロの既存 mismatch でも status / details は変えず、フィールドだけ載せる。
@@ -217,6 +222,7 @@ func CheckLayoutIntegrity(webJSON string, viewportW, viewportH float64, ignoreLi
 		UnmatchedIgnores:       unmatchedIgnores,
 		UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
 		UnresolvedParentRefs:   unresolvedParentRefs,
+		DuplicateWebSelectors:  duplicateWebSelectors,
 		SkippedZeroGeometry:    skippedZeroGeometry,
 		ZeroGeometryWarning:    zeroGeometryWarning,
 	}

@@ -82,6 +82,7 @@ type LayoutTreeResult struct {
 	ZeroGeometryWarning    string           `json:"zero_geometry_warning,omitempty"`
 	UnresolvedParentRefs   []string         `json:"unresolved_parent_refs,omitempty"`
 	DuplicateIdentifiers   []string         `json:"duplicate_node_identifiers,omitempty"`
+	DuplicateWebSelectors  []string         `json:"duplicate_web_selectors,omitempty"`
 	AbsoluteModePairs      int              `json:"absolute_mode_pairs"`
 }
 
@@ -101,6 +102,10 @@ const zeroGeometryWarningMsg = `Most nodes have zero width/height; check the lay
 // どのノード中心とも重ならない領域は UnmatchedIgnoreRegions に "x,y,w,h" で入る
 // （ignore_nodes の unmatched_ignores / 画像モードの out_of_bounds_regions と同種）。
 // セレクタ名が不明な動的要素（日付・広告バナー等）を領域だけで除外できる。
+// 同一 selector が入力内で 2 回以上現れても親解決は先勝ちのまま（status / match_rate は
+// 変えない）だが、DuplicateWebSelectors に接頭辞なしの selector を初出順で返す。
+// DuplicateIdentifiers（Figma: '…' / Web: '…' 形式）と対象は同じで、mismatched_pairs の
+// web_selector と文字列加工なしに突き合わせられる形がこちら。
 // RoundMatchRateDisplay は表示 match_rate (%.2f) と同じ小数第2位に丸める。
 // 合否判定を表示桁と一致させるために使う。match_rate_value には適用しない。
 func RoundMatchRateDisplay(rate float64) float64 {
@@ -160,6 +165,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 	// 親インデックス元のリストで重複を検出し、先勝ちで黙って解釈しないよう通知する。
 	// 合否・座標解決は変えず、unresolved_parent_refs と同種の誤用検出。
 	duplicateIdentifiers := collectDuplicateIdentifiers(fNodes, wNodes)
+	duplicateWebSelectors := collectDuplicateWebSelectors(wNodes)
 
 	// フィルタ後に片側が空でも、元から空だった側と全件除外を取り違えないよう
 	// ignore_nodes / ignore_region 適用前の件数を残す。
@@ -287,6 +293,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				ZeroGeometryWarning:    zeroGeometryWarning,
 				UnresolvedParentRefs:   unresolvedParentRefs,
 				DuplicateIdentifiers:   duplicateIdentifiers,
+				DuplicateWebSelectors:  duplicateWebSelectors,
 			}, nil
 		}
 		// 両側とも元から非空で、ignore により比較対象が無くなった場合のみ
@@ -310,6 +317,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				ZeroGeometryWarning:    zeroGeometryWarning,
 				UnresolvedParentRefs:   unresolvedParentRefs,
 				DuplicateIdentifiers:   duplicateIdentifiers,
+				DuplicateWebSelectors:  duplicateWebSelectors,
 			}, nil
 		}
 		// どちら側の入力が空かを明示する。
@@ -333,6 +341,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			ZeroGeometryWarning:    zeroGeometryWarning,
 			UnresolvedParentRefs:   unresolvedParentRefs,
 			DuplicateIdentifiers:   duplicateIdentifiers,
+			DuplicateWebSelectors:  duplicateWebSelectors,
 		}, nil
 	}
 
@@ -529,6 +538,7 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 		ZeroGeometryWarning:    zeroGeometryWarning,
 		UnresolvedParentRefs:   unresolvedParentRefs,
 		DuplicateIdentifiers:   duplicateIdentifiers,
+		DuplicateWebSelectors:  duplicateWebSelectors,
 		AbsoluteModePairs:      absoluteModePairs,
 	}, nil
 }
@@ -789,31 +799,47 @@ func getWebParent(node WebNode, bySelector map[string]*WebNode) *WebNode {
 // unresolved_parent_refs と同種の誤入力通知に使う。同一ラベルは先勝ちで 1 回だけ出す。
 func collectDuplicateIdentifiers(fNodes []FigmaNode, wNodes []WebNode) []string {
 	var refs []string
-	seenLabel := make(map[string]bool)
-	appendOnce := func(label string) {
-		if seenLabel[label] {
-			return
-		}
-		seenLabel[label] = true
-		refs = append(refs, label)
-	}
-	figmaSeen := make(map[string]bool)
+	figmaIDs := make([]string, 0, len(fNodes))
 	for _, fn := range fNodes {
-		if figmaSeen[fn.ID] {
-			appendOnce(fmt.Sprintf("Figma: '%s'", fn.ID))
-			continue
-		}
-		figmaSeen[fn.ID] = true
+		figmaIDs = append(figmaIDs, fn.ID)
 	}
-	webSeen := make(map[string]bool)
-	for _, wn := range wNodes {
-		if webSeen[wn.Selector] {
-			appendOnce(fmt.Sprintf("Web: '%s'", wn.Selector))
-			continue
-		}
-		webSeen[wn.Selector] = true
+	for _, id := range duplicateValues(figmaIDs) {
+		refs = append(refs, fmt.Sprintf("Figma: '%s'", id))
+	}
+	for _, selector := range collectDuplicateWebSelectors(wNodes) {
+		refs = append(refs, fmt.Sprintf("Web: '%s'", selector))
 	}
 	return refs
+}
+
+// collectDuplicateWebSelectors は 2 回以上現れた Web selector を接頭辞なしで
+// 初出順に返す（重複は 1 回だけ）。親参照インデックスは先勝ちのまま、
+// 重複の存在だけを知らせるために使う。
+func collectDuplicateWebSelectors(nodes []WebNode) []string {
+	selectors := make([]string, 0, len(nodes))
+	for _, wn := range nodes {
+		selectors = append(selectors, wn.Selector)
+	}
+	return duplicateValues(selectors)
+}
+
+// duplicateValues は入力のうち 2 回以上現れた値を初出順に 1 回ずつ返す。
+func duplicateValues(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	reported := make(map[string]bool, len(values))
+	var dups []string
+	for _, v := range values {
+		if !seen[v] {
+			seen[v] = true
+			continue
+		}
+		if reported[v] {
+			continue
+		}
+		reported[v] = true
+		dups = append(dups, v)
+	}
+	return dups
 }
 
 // collectUnresolvedParentRefs は parent が空でないのに有効な親として使えない
