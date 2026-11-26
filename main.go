@@ -846,6 +846,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		if len(treeResult.DuplicateIdentifiers) > 0 {
 			responseMap["duplicate_node_identifiers"] = treeResult.DuplicateIdentifiers
 		}
+		// 2 回以上現れた Web selector（接頭辞なし）。親解決は先勝ちのままで、
+		// 重複自体を web_selector と突き合わせやすい形でも返す。非空時のみ。
+		if len(treeResult.DuplicateWebSelectors) > 0 {
+			responseMap["duplicate_web_selectors"] = treeResult.DuplicateWebSelectors
+		}
 
 	case "perceptual":
 		// =================================================================
@@ -1323,6 +1328,11 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		// layout_tree と同様、非空時のみ返し status は変えない (Issue #460)。
 		if len(integrityResult.UnresolvedParentRefs) > 0 {
 			responseMap["unresolved_parent_refs"] = integrityResult.UnresolvedParentRefs
+		}
+		// 2 回以上現れた Web selector（親参照は先勝ち）。layout_tree と同フィールドで、
+		// status / issue_count は変えない。非空時のみ返す。
+		if len(integrityResult.DuplicateWebSelectors) > 0 {
+			responseMap["duplicate_web_selectors"] = integrityResult.DuplicateWebSelectors
 		}
 		// 親の w/h が 0 以下のため parent_overflow をスキップした件数。
 		// status は変えず可視化のみ (Issue #435)。

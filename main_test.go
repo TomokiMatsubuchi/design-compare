@@ -786,6 +786,9 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		if _, ok := result["duplicate_node_identifiers"]; ok {
 			t.Errorf("duplicate_node_identifiers should be omitted when empty: %v", result["duplicate_node_identifiers"])
 		}
+		if _, ok := result["duplicate_web_selectors"]; ok {
+			t.Errorf("duplicate_web_selectors should be omitted when empty: %v", result["duplicate_web_selectors"])
+		}
 	})
 
 	// =================================================================
@@ -821,6 +824,59 @@ func TestVRTUnifiedCompare(t *testing.T) {
 		dups, ok := result["duplicate_node_identifiers"].([]interface{})
 		if !ok || len(dups) != 2 || dups[0] != "Figma: '1'" || dups[1] != "Web: '.item'" {
 			t.Errorf("Expected duplicate_node_identifiers=[Figma: '1' Web: '.item'], got %v", result["duplicate_node_identifiers"])
+		}
+		webDups, ok := result["duplicate_web_selectors"].([]interface{})
+		if !ok || len(webDups) != 1 || webDups[0] != ".item" {
+			t.Errorf("Expected duplicate_web_selectors=[.item], got %v", result["duplicate_web_selectors"])
+		}
+	})
+
+	// Issue #790: layout_integrity でも重複 selector を duplicate_web_selectors
+	// で返し、status / issue_count は変えない。
+	t.Run("LayoutIntegrity_DuplicateWebSelectors", func(t *testing.T) {
+		webLayout := `[
+			{"selector": ".card", "x": 0, "y": 0, "w": 300, "h": 100},
+			{"selector": ".card", "x": 0, "y": 200, "w": 300, "h": 100}
+		]`
+		req := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":       "layout_integrity",
+					"web_layout": webLayout,
+				},
+			},
+		}
+		res, err := compareDesignHandler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var result map[string]interface{}
+		json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
+		if result["status"] != "success" || result["issue_count"] != float64(0) {
+			t.Errorf("Expected status / issue_count unchanged, got status=%v issue_count=%v", result["status"], result["issue_count"])
+		}
+		webDups, ok := result["duplicate_web_selectors"].([]interface{})
+		if !ok || len(webDups) != 1 || webDups[0] != ".card" {
+			t.Errorf("Expected duplicate_web_selectors=[.card], got %v", result["duplicate_web_selectors"])
+		}
+
+		// 重複がない入力ではフィールド自体を返さない。
+		uniqueReq := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]any{
+					"mode":       "layout_integrity",
+					"web_layout": `[{"selector": ".card", "x": 0, "y": 0, "w": 300, "h": 100}]`,
+				},
+			},
+		}
+		uniqueRes, err := compareDesignHandler(context.Background(), uniqueReq)
+		if err != nil {
+			t.Fatalf("handler failed: %v", err)
+		}
+		var uniqueResult map[string]interface{}
+		json.Unmarshal([]byte(uniqueRes.Content[0].(mcp.TextContent).Text), &uniqueResult)
+		if _, ok := uniqueResult["duplicate_web_selectors"]; ok {
+			t.Errorf("duplicate_web_selectors should be omitted when empty: %v", uniqueResult["duplicate_web_selectors"])
 		}
 	})
 

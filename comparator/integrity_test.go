@@ -906,6 +906,62 @@ func TestCheckLayoutIntegrity(t *testing.T) {
 	})
 }
 
+// TestLayoutIntegrity_DuplicateWebSelectors verifies that repeated Web
+// selectors are listed in DuplicateWebSelectors without changing status /
+// issue_count or first-wins parent resolution.
+func TestLayoutIntegrity_DuplicateWebSelectors(t *testing.T) {
+	t.Run("duplicate_selector_reported_status_unchanged", func(t *testing.T) {
+		// カード一覧の典型形: 同じ .card が繰り返され、その子の parent は
+		// 先勝ちで最初の .card に解決される。合否は従来と変えない。
+		dupWeb := `[
+			{"selector":".card","x":0,"y":0,"w":300,"h":100},
+			{"selector":".card","x":0,"y":200,"w":300,"h":100}
+		]`
+		uniqueWeb := `[
+			{"selector":".card","x":0,"y":0,"w":300,"h":100},
+			{"selector":".card-2","x":0,"y":200,"w":300,"h":100}
+		]`
+
+		dup, err := CheckLayoutIntegrity(dupWeb, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unique, err := CheckLayoutIntegrity(uniqueWeb, 768, 1024, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(dup.DuplicateWebSelectors) != 1 || dup.DuplicateWebSelectors[0] != ".card" {
+			t.Errorf("Expected duplicate_web_selectors=[.card], got %v", dup.DuplicateWebSelectors)
+		}
+		if len(unique.DuplicateWebSelectors) != 0 {
+			t.Errorf("Expected no duplicate_web_selectors for unique selectors, got %v", unique.DuplicateWebSelectors)
+		}
+		if dup.Status != unique.Status || dup.IssueCount != unique.IssueCount {
+			t.Errorf("Expected status / issue_count unchanged (dup=%s/%d unique=%s/%d)",
+				dup.Status, dup.IssueCount, unique.Status, unique.IssueCount)
+		}
+	})
+
+	t.Run("duplicate_in_ignored_nodes_still_reported", func(t *testing.T) {
+		// 親参照インデックスと同じく ignore 前の元リストで数える。
+		web := `[
+			{"selector":".ad","x":0,"y":0,"w":100,"h":50},
+			{"selector":".ad","x":100,"y":0,"w":100,"h":50},
+			{"selector":"#ok","x":0,"y":100,"w":100,"h":50}
+		]`
+		res, err := CheckLayoutIntegrity(web, 768, 1024, []string{".ad"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "success" || res.IgnoredCount != 2 {
+			t.Fatalf("got %#v", res)
+		}
+		if len(res.DuplicateWebSelectors) != 1 || res.DuplicateWebSelectors[0] != ".ad" {
+			t.Errorf("Expected duplicate_web_selectors=[.ad] after ignore, got %v", res.DuplicateWebSelectors)
+		}
+	})
+}
+
 // TestLayoutIntegrity_UTF8BOMStripped verifies that a leading UTF-8 BOM (U+FEFF)
 // on the Web layout JSON is stripped before Unmarshal, matching layout_tree.
 func TestLayoutIntegrity_UTF8BOMStripped(t *testing.T) {

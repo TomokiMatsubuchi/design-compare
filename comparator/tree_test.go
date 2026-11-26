@@ -1102,6 +1102,12 @@ func TestLayoutTree_DuplicateIdentifiers(t *testing.T) {
 		if len(unique.DuplicateIdentifiers) != 0 {
 			t.Errorf("Expected no duplicate_node_identifiers for unique selectors, got %v", unique.DuplicateIdentifiers)
 		}
+		if len(dup.DuplicateWebSelectors) != 1 || dup.DuplicateWebSelectors[0] != "#header" {
+			t.Errorf("Expected duplicate_web_selectors=[#header], got %v", dup.DuplicateWebSelectors)
+		}
+		if len(unique.DuplicateWebSelectors) != 0 {
+			t.Errorf("Expected no duplicate_web_selectors for unique selectors, got %v", unique.DuplicateWebSelectors)
+		}
 		if dup.MatchRate != unique.MatchRate {
 			t.Errorf("Expected match_rate unchanged by duplicate warning (dup=%.2f unique=%.2f)", dup.MatchRate, unique.MatchRate)
 		}
@@ -1128,6 +1134,47 @@ func TestLayoutTree_DuplicateIdentifiers(t *testing.T) {
 			result.DuplicateIdentifiers[0] != "Figma: '1'" ||
 			result.DuplicateIdentifiers[1] != "Web: '.x'" {
 			t.Errorf("Expected [Figma: '1' Web: '.x'], got %v", result.DuplicateIdentifiers)
+		}
+		// 接頭辞なしの Web selector だけを 1 回ずつ返す（重複しても 1 件）。
+		if len(result.DuplicateWebSelectors) != 1 || result.DuplicateWebSelectors[0] != ".x" {
+			t.Errorf("Expected duplicate_web_selectors=[.x], got %v", result.DuplicateWebSelectors)
+		}
+	})
+
+	t.Run("duplicate_web_selectors_first_appearance_order", func(t *testing.T) {
+		// 初出順（.card -> .row）で列挙し、再出現では重複させない。
+		figmaJSON := `[{"id":"1","name":"a","x":0,"y":0,"w":50,"h":50}]`
+		webJSON := `[
+			{"selector":".card","x":0,"y":0,"w":50,"h":50},
+			{"selector":".row","x":0,"y":0,"w":50,"h":50},
+			{"selector":".card","x":0,"y":0,"w":50,"h":50},
+			{"selector":".row","x":0,"y":0,"w":50,"h":50}
+		]`
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, nil, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if len(result.DuplicateWebSelectors) != 2 ||
+			result.DuplicateWebSelectors[0] != ".card" ||
+			result.DuplicateWebSelectors[1] != ".row" {
+			t.Errorf("Expected duplicate_web_selectors=[.card .row], got %v", result.DuplicateWebSelectors)
+		}
+	})
+
+	t.Run("duplicate_in_ignored_nodes_still_reported", func(t *testing.T) {
+		// 親参照インデックスと同じく ignore 前の元リストで数えるため、
+		// 除外された selector の重複も報告する（曖昧な親解決は残るため）。
+		figmaJSON := `[{"id":"1","name":"a","x":0,"y":0,"w":50,"h":50}]`
+		webJSON := `[
+			{"selector":".ad","x":0,"y":0,"w":50,"h":50},
+			{"selector":".ad","x":10,"y":10,"w":50,"h":50}
+		]`
+		result, err := CompareLayoutTrees(figmaJSON, webJSON, tolerance, passRate, []string{".ad"}, false, nil)
+		if err != nil {
+			t.Fatalf("CompareLayoutTrees failed: %v", err)
+		}
+		if len(result.DuplicateWebSelectors) != 1 || result.DuplicateWebSelectors[0] != ".ad" {
+			t.Errorf("Expected duplicate_web_selectors=[.ad] after ignore, got %v", result.DuplicateWebSelectors)
 		}
 	})
 }
