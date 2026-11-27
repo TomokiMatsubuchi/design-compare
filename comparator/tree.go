@@ -297,7 +297,9 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 			}, nil
 		}
 		// 両側とも元から非空で、ignore により比較対象が無くなった場合のみ
-		// 実装不一致と区別して skipped にする。
+		// 実装不一致と区別して skipped にする。ノードを減らすのは ignore_nodes /
+		// ignore_region だけで、どちらも除外のたびに ignoredCount を加算するため、
+		// 元から両側が非空で比較対象が無くなった場合は必ず ignoredCount > 0 になる。
 		if ignoredCount > 0 {
 			side := "Figma and Web"
 			switch {
@@ -320,29 +322,6 @@ func CompareLayoutTrees(figmaJSON, webJSON string, tolerance float64, passRate f
 				DuplicateWebSelectors:  duplicateWebSelectors,
 			}, nil
 		}
-		// どちら側の入力が空かを明示する。
-		var emptyDetail string
-		switch {
-		case len(fNodes) == 0 && len(wNodes) == 0:
-			emptyDetail = "Both Figma and Web layout node data are empty"
-		case len(fNodes) == 0:
-			emptyDetail = "Figma layout node data is empty"
-		default:
-			emptyDetail = "Web layout node data is empty"
-		}
-		return &LayoutTreeResult{
-			MatchRate:              0,
-			Status:                 "mismatch",
-			Details:                []string{emptyDetail},
-			IgnoredCount:           ignoredCount,
-			IgnoredNodes:           ignoredNodes,
-			UnmatchedIgnores:       unmatchedIgnores,
-			UnmatchedIgnoreRegions: unmatchedIgnoreRegions,
-			ZeroGeometryWarning:    zeroGeometryWarning,
-			UnresolvedParentRefs:   unresolvedParentRefs,
-			DuplicateIdentifiers:   duplicateIdentifiers,
-			DuplicateWebSelectors:  duplicateWebSelectors,
-		}, nil
 	}
 
 	// 2. マッチング処理
