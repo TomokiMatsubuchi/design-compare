@@ -23,28 +23,29 @@ var errShowVersion = errors.New("show version")
 // ツールエラー本文が MCP 名のまま出るとき、stderr へ CLI 側の直し方を追記する。
 // mode は英語エラー文 ("… mode …") に誤マッチしやすいため載せない。
 var mcpParamToCLIFlag = map[string]string{
-	"image_path_a":      "--image-a",
-	"image_path_b":      "--image-b",
-	"image_a_base64":    "--image-a-base64",
-	"image_b_base64":    "--image-b-base64",
-	"figma_layout":      "--figma-layout",
-	"web_layout":        "--web-layout",
-	"figma_layout_path": "--figma-layout-file",
-	"web_layout_path":   "--web-layout-file",
-	"threshold":         "--threshold",
-	"min_match":         "--min-match",
-	"pass_rate":         "--pass-rate",
-	"max_diff_pixels":   "--max-diff-pixels",
-	"include_aa":        "--include-aa",
-	"ignore_region":     "--ignore-region",
-	"generate_diff":     "--generate-diff",
-	"viewport_preset":   "--viewport-preset",
-	"viewport_width":    "--viewport-width",
-	"viewport_height":   "--viewport-height",
-	"ignore_nodes":      "--ignore-nodes",
-	"count_extra_web":   "--count-extra-web",
-	"max_details":       "--max-details",
-	"diff_on_mismatch":  "--diff-on-mismatch",
+	"image_path_a":       "--image-a",
+	"image_path_b":       "--image-b",
+	"image_a_base64":     "--image-a-base64",
+	"image_b_base64":     "--image-b-base64",
+	"figma_layout":       "--figma-layout",
+	"web_layout":         "--web-layout",
+	"figma_layout_path":  "--figma-layout-file",
+	"web_layout_path":    "--web-layout-file",
+	"threshold":          "--threshold",
+	"min_match":          "--min-match",
+	"pass_rate":          "--pass-rate",
+	"max_diff_pixels":    "--max-diff-pixels",
+	"include_aa":         "--include-aa",
+	"ignore_region":      "--ignore-region",
+	"generate_diff":      "--generate-diff",
+	"viewport_preset":    "--viewport-preset",
+	"viewport_width":     "--viewport-width",
+	"viewport_height":    "--viewport-height",
+	"ignore_nodes":       "--ignore-nodes",
+	"count_extra_web":    "--count-extra-web",
+	"max_details":        "--max-details",
+	"diff_on_mismatch":   "--diff-on-mismatch",
+	"diff_image_content": "--diff-image-content",
 }
 
 const (
@@ -266,6 +267,10 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 	countExtraWeb := fs.Bool("count-extra-web", false, "Count unmatched Web nodes in layout_tree match rate (maps to count_extra_web)")
 	maxDetails := fs.Int("max-details", 0, "Max details lines for layout_tree and layout_integrity; 0 = unlimited (maps to max_details)")
 	diffOnMismatch := fs.Bool("diff-on-mismatch", false, "Only generate diff image on mismatch in perceptual/strict (maps to diff_on_mismatch)")
+	// MCP と同じ引数名を受け付けるための対称性フラグ。CLI の出力は JSON テキスト
+	// のみなので image コンテンツブロックは付かない（差分 PNG は応答 JSON の
+	// diff_image、または --diff-image-out で得る）。
+	diffImageContent := fs.Bool("diff-image-content", false, "Accepted for MCP parity; CLI output stays JSON-only (maps to diff_image_content)")
 	// CLI-only: must not enter toolArgs (validateModeParams would reject it).
 	diffImageOut := fs.String("diff-image-out", "", "Write decoded diff_image PNG to this path (CLI-only)")
 
@@ -338,6 +343,8 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 			toolArgs["max_details"] = *maxDetails
 		case "diff-on-mismatch":
 			toolArgs["diff_on_mismatch"] = *diffOnMismatch
+		case "diff-image-content":
+			toolArgs["diff_image_content"] = *diffImageContent
 		case "diff-image-out":
 			// CLI 専用: ツール引数には載せない (validateModeParams が弾く)。
 		}
