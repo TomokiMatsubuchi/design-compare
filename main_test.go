@@ -2268,6 +2268,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			if result["viewport_width"] != float64(768) || result["viewport_height"] != float64(1024) {
 				t.Errorf("default viewport got %v x %v", result["viewport_width"], result["viewport_height"])
 			}
+			// 未指定でも既定プリセット名をエコーする (Issue #825)。
+			if result["viewport_preset"] != "ipad_portrait" {
+				t.Errorf("default preset echo=%v, want ipad_portrait", result["viewport_preset"])
+			}
 			if result["issue_count"] != float64(0) {
 				t.Errorf("issue_count=%v", result["issue_count"])
 			}
@@ -2372,6 +2376,10 @@ func TestVRTUnifiedCompare(t *testing.T) {
 			json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &result)
 			if result["status"] != "mismatch" {
 				t.Fatalf("got %#v", result)
+			}
+			// 実寸を上書きしてもプリセット名は既定のまま (Issue #825)。
+			if result["viewport_preset"] != "ipad_portrait" {
+				t.Errorf("preset echo=%v, want ipad_portrait", result["viewport_preset"])
 			}
 		})
 
