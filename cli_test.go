@@ -36,6 +36,7 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 		"--ignore-region", "0,0,1,1",
 		"--generate-diff=false",
 		"--diff-image-out", "out.png",
+		"--diff-image-content",
 	}, io.Discard, &stderr)
 	if err != nil {
 		t.Fatalf("parseCLIArgs: %v", err)
@@ -72,6 +73,9 @@ func TestParseCLIArgsMapsFlags(t *testing.T) {
 	}
 	if got["generate_diff"] != false {
 		t.Errorf("generate_diff=%v", got["generate_diff"])
+	}
+	if got["diff_image_content"] != true {
+		t.Errorf("diff_image_content=%v", got["diff_image_content"])
 	}
 
 	figmaInline := `[{"id":"1","name":"card","x":0,"y":0,"w":400,"h":300}]`
@@ -172,7 +176,7 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 		"figma_layout", "web_layout",
 		"figma_layout_path", "web_layout_path",
 		"viewport_preset", "viewport_width", "viewport_height", "ignore_nodes",
-		"count_extra_web", "max_details", "diff_on_mismatch",
+		"count_extra_web", "max_details", "diff_on_mismatch", "diff_image_content",
 	} {
 		if _, ok := got[key]; ok {
 			t.Errorf("unset flag %s should not be in args: %v", key, got)
@@ -389,6 +393,44 @@ func TestRunCLIStrictMatchAndMismatch(t *testing.T) {
 	}
 	if result["status"] != "mismatch" {
 		t.Errorf("status=%v", result["status"])
+	}
+}
+
+// TestRunCLIDiffImageContent は --diff-image-content が CLI で受け付けられ
+// (未定義フラグの exit 1 にならない)、stdout が従来どおり応答 JSON テキストのみ
+// であることを固定する。CLI には image コンテンツブロックを置く場所がないため、
+// フラグ無しの出力と完全に一致する (差分 PNG は diff_image フィールドで得る)。
+func TestRunCLIDiffImageContent(t *testing.T) {
+	tmp := t.TempDir()
+	pathA := saveTempImage(t, tmp, "a.png", generateSolidImage(8, 8, color.White))
+	pathB := saveTempImage(t, tmp, "b.png", generateSolidImage(8, 8, color.Black))
+
+	run := func(extra ...string) (int, string) {
+		args := []string{"--mode", "strict", "--image-a", pathA, "--image-b", pathB}
+		var stdout, stderr bytes.Buffer
+		code := runCLIWithIO(append(args, extra...), &stdout, &stderr)
+		return code, stdout.String()
+	}
+	codePlain, plain := run()
+	codeContent, withContent := run("--diff-image-content")
+	if codeContent != codePlain {
+		t.Fatalf("exit=%d with --diff-image-content, want %d", codeContent, codePlain)
+	}
+	if withContent != plain {
+		t.Errorf("--diff-image-content must not change stdout:\nwith=%q\nwithout=%q", withContent, plain)
+	}
+
+	// stdout は単一の JSON 文書で、diff_image は従来どおり data URI のまま。
+	dec := json.NewDecoder(strings.NewReader(withContent))
+	var result map[string]any
+	if err := dec.Decode(&result); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, withContent)
+	}
+	if dec.More() {
+		t.Errorf("stdout must hold a single JSON document: %q", withContent)
+	}
+	if got, _ := result["diff_image"].(string); !strings.HasPrefix(got, "data:image/png;base64,") {
+		t.Errorf("diff_image=%q, want PNG data URI", got)
 	}
 }
 
