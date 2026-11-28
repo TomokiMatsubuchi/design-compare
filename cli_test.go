@@ -266,6 +266,83 @@ func TestParseCLIArgsMapsViewportAndLayoutFlags(t *testing.T) {
 	}
 }
 
+// TestParseCLIArgsIgnoreNodesJSONArray は --ignore-nodes が JSON 文字列配列でも
+// 受け付けられ、[]string として toolArgs に載ることを固定する (Issue #829)。
+// '[' で始まる値は JSON 配列として読む前提なので、壊れた JSON と非文字列要素は
+// 黙って文字列扱いにせずエラーにする。
+func TestParseCLIArgsIgnoreNodesJSONArray(t *testing.T) {
+	t.Run("json_array_becomes_string_slice", func(t *testing.T) {
+		var stderr bytes.Buffer
+		got, _, err := parseCLIArgs([]string{"--mode", "layout_tree", "--ignore-nodes", ` ["#ad", ".cookie"] `}, io.Discard, &stderr)
+		if err != nil {
+			t.Fatalf("parseCLIArgs: %v", err)
+		}
+		list, ok := got["ignore_nodes"].([]string)
+		if !ok {
+			t.Fatalf("ignore_nodes=%v, want []string", got["ignore_nodes"])
+		}
+		want := []string{"#ad", ".cookie"}
+		if len(list) != len(want) || list[0] != want[0] || list[1] != want[1] {
+			t.Errorf("ignore_nodes=%v, want %v", list, want)
+		}
+	})
+
+	t.Run("comma_string_stays_string", func(t *testing.T) {
+		var stderr bytes.Buffer
+		got, _, err := parseCLIArgs([]string{"--mode", "layout_tree", "--ignore-nodes", ".ad-*,nav"}, io.Discard, &stderr)
+		if err != nil {
+			t.Fatalf("parseCLIArgs: %v", err)
+		}
+		if got["ignore_nodes"] != ".ad-*,nav" {
+			t.Errorf("ignore_nodes=%v, want the comma-separated string", got["ignore_nodes"])
+		}
+	})
+
+	for name, value := range map[string]string{
+		"broken_json":     `["#ad"`,
+		"non_string_item": `["#ad",1]`,
+	} {
+		t.Run(name+"_is_rejected", func(t *testing.T) {
+			var stderr bytes.Buffer
+			if _, _, err := parseCLIArgs([]string{"--mode", "layout_tree", "--ignore-nodes", value}, io.Discard, &stderr); err == nil {
+				t.Fatalf("parseCLIArgs(%q) must fail", value)
+			} else if !strings.Contains(err.Error(), "--ignore-nodes") {
+				t.Errorf("error should name the flag, got %q", err)
+			}
+		})
+	}
+}
+
+// TestRunCLIIgnoreNodesJSONArray は --ignore-nodes の JSON 配列が layout_tree の
+// 比較まで届き、指定したノードが ignored_nodes として除外されることを固定する
+// (Issue #829)。
+func TestRunCLIIgnoreNodesJSONArray(t *testing.T) {
+	figma := `[{"id":"1","name":"a","x":0,"y":0,"w":10,"h":10},{"id":"2","name":"ad","x":100,"y":0,"w":10,"h":10}]`
+	web := `[{"selector":".a","x":0,"y":0,"w":10,"h":10},{"selector":".ad","x":50,"y":0,"w":10,"h":10}]`
+
+	var stdout, stderr bytes.Buffer
+	code := runCLIWithIO([]string{
+		"--mode", "layout_tree",
+		"--figma-layout", figma,
+		"--web-layout", web,
+		"--ignore-nodes", `["ad", ".ad"]`,
+	}, &stdout, &stderr)
+	if code != exitSuccess {
+		t.Fatalf("exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result["status"] != "success" {
+		t.Errorf("status=%v, want success", result["status"])
+	}
+	ignored, _ := result["ignored_nodes"].([]any)
+	if len(ignored) != 2 || ignored[0] != "figma:2" || ignored[1] != "web:.ad" {
+		t.Errorf("ignored_nodes=%v, want [figma:2 web:.ad]", result["ignored_nodes"])
+	}
+}
+
 func TestParseCLIArgsHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	_, _, err := parseCLIArgs([]string{"-h"}, &stdout, &stderr)
