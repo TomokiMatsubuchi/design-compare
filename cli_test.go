@@ -180,6 +180,43 @@ func TestParseCLIArgsOmitsUnsetFlags(t *testing.T) {
 	}
 }
 
+// TestParseCLIArgsMapsEveryToolFlag は mcpParamToCLIFlag に載る全パラメータが
+// fs.Visit の switch 経由で toolArgs に入ることを、両方向のキー集合一致で検証する。
+// フラグ定義と mapping を追加して Visit の case を忘れると欠落側で、case の
+// キー名を打ち間違えると余剰側で落ちる。全フラグに同じ値 "1" を渡しても、
+// parseCLIArgs は値の妥当性を見ないので型ごとの代表値は不要。
+func TestParseCLIArgsMapsEveryToolFlag(t *testing.T) {
+	if _, ok := mcpParamToCLIFlag["mode"]; ok {
+		t.Fatalf("mode is the CLI entry flag, not a tool flag in the mapping: %v", mcpParamToCLIFlag)
+	}
+	args := []string{"--mode=1"}
+	for _, flag := range mcpParamToCLIFlag {
+		args = append(args, flag+"=1")
+	}
+	var stderr bytes.Buffer
+	got, _, err := parseCLIArgs(args, io.Discard, &stderr)
+	if err != nil {
+		t.Fatalf("parseCLIArgs(%v): %v", args, err)
+	}
+	for param := range mcpParamToCLIFlag {
+		if _, ok := got[param]; !ok {
+			t.Errorf("param %s is missing from toolArgs; add a case for %s in the fs.Visit switch: %v", param, mcpParamToCLIFlag[param], got)
+		}
+	}
+	want := len(mcpParamToCLIFlag) + 1 // + mode
+	if len(got) != want {
+		t.Errorf("toolArgs has %d keys, want %d (+mode): %v", len(got), want, got)
+	}
+	for key := range got {
+		if key == "mode" {
+			continue
+		}
+		if _, ok := mcpParamToCLIFlag[key]; !ok {
+			t.Errorf("toolArgs key %s is not in mcpParamToCLIFlag: %v", key, got)
+		}
+	}
+}
+
 func TestParseCLIArgsMapsViewportAndLayoutFlags(t *testing.T) {
 	var stderr bytes.Buffer
 	got, _, err := parseCLIArgs([]string{

@@ -236,6 +236,12 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 	usageStderr := func() { writeUsage(fs, stderr) }
 	fs.Usage = usageStderr
 
+	// ここで定義するフラグは、下の fs.Visit の switch に必ず対応する case を
+	// 持たせる（case が無いフラグは指定しても黙ってツール引数に渡らない）。
+	// ツール引数にしない CLI 専用フラグは case を空にしてその旨を書く。
+	// --version だけは switch より前に処理して return する。
+	// toolArgs のキー集合は mcpParamToCLIFlag と一致させる
+	// （TestParseCLIArgsMapsEveryToolFlag が両者のずれを検出する）。
 	showVersion := fs.Bool("version", false, "Print version and exit")
 	mode := fs.String("mode", "", "Comparison mode: layout_tree, perceptual, strict, or layout_integrity")
 	imageA := fs.String("image-a", "", "Path to reference image A (maps to image_path_a)")
@@ -332,7 +338,8 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 			toolArgs["max_details"] = *maxDetails
 		case "diff-on-mismatch":
 			toolArgs["diff_on_mismatch"] = *diffOnMismatch
-			// diff-image-out is intentionally omitted: CLI-only, not a tool argument.
+		case "diff-image-out":
+			// CLI 専用: ツール引数には載せない (validateModeParams が弾く)。
 		}
 	})
 	opts := cliOptions{DiffImageOut: *diffImageOut}
