@@ -1302,9 +1302,15 @@ func compareDesignHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 			"details":              integrityResult.Details,
 			"ignored_count":        integrityResult.IgnoredCount,
 		}
-		if preset != "" {
-			responseMap["viewport_preset"] = preset
+		// 呼び出し側がどのプリセットで検査したかを応答だけで検証できるよう、
+		// 未指定時も既定名 ipad_portrait をエコーする (Issue #825)。
+		// viewport_width / viewport_height の明示上書きはプリセット名を変えない
+		// (実効サイズは viewport_width / viewport_height 側で確認する)。
+		resolvedPreset := preset
+		if resolvedPreset == "" {
+			resolvedPreset = comparator.ViewportPresetIPadPortrait
 		}
+		responseMap["viewport_preset"] = resolvedPreset
 		// ignore_nodes / ignore_region で実際に除外したノード（過剰一致の検証用）。
 		// layout_tree と同様、非空時のみ返す。
 		if len(integrityResult.IgnoredNodes) > 0 {
