@@ -263,7 +263,7 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 	viewportPreset := fs.String("viewport-preset", "", "Viewport preset for layout_integrity: ipad_portrait or ipad_landscape (maps to viewport_preset)")
 	viewportWidth := fs.Float64("viewport-width", 0, "CSS viewport width for layout_integrity (maps to viewport_width)")
 	viewportHeight := fs.Float64("viewport-height", 0, "CSS viewport height for layout_integrity (maps to viewport_height)")
-	ignoreNodes := fs.String("ignore-nodes", "", "Comma-separated node ids/names/selectors to exclude (maps to ignore_nodes)")
+	ignoreNodes := fs.String("ignore-nodes", "", "Comma-separated node ids/names/selectors to exclude, or a JSON array of strings (maps to ignore_nodes)")
 	countExtraWeb := fs.Bool("count-extra-web", false, "Count unmatched Web nodes in layout_tree match rate (maps to count_extra_web)")
 	maxDetails := fs.Int("max-details", 0, "Max details lines for layout_tree and layout_integrity; 0 = unlimited (maps to max_details)")
 	diffOnMismatch := fs.Bool("diff-on-mismatch", false, "Only generate diff image on mismatch in perceptual/strict (maps to diff_on_mismatch)")
@@ -295,6 +295,8 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 	}
 
 	toolArgs := make(map[string]any)
+	// fs.Visit のコールバックはエラーを返せないので、値の解釈エラーは変数に預けて後段で返す。
+	var ignoreNodesErr error
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "mode":
@@ -336,7 +338,12 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 		case "viewport-height":
 			toolArgs["viewport_height"] = *viewportHeight
 		case "ignore-nodes":
-			toolArgs["ignore_nodes"] = *ignoreNodes
+			val, err := ignoreNodesValue(*ignoreNodes)
+			if err != nil {
+				ignoreNodesErr = err
+				return
+			}
+			toolArgs["ignore_nodes"] = val
 		case "count-extra-web":
 			toolArgs["count_extra_web"] = *countExtraWeb
 		case "max-details":
@@ -349,6 +356,10 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 			// CLI 専用: ツール引数には載せない (validateModeParams が弾く)。
 		}
 	})
+	if ignoreNodesErr != nil {
+		fs.Usage()
+		return nil, cliOptions{}, ignoreNodesErr
+	}
 	opts := cliOptions{DiffImageOut: *diffImageOut}
 	// --mode は CLI の必須入口。未指定のまま handler へ渡すと MCP 向けの
 	// RequireString 文言だけが出て直し方が分からないため、ここで Usage と
@@ -358,6 +369,23 @@ func parseCLIArgs(args []string, stdout, stderr io.Writer) (map[string]any, cliO
 		return nil, opts, fmt.Errorf("--mode is required (valid modes: layout_tree, perceptual, strict, layout_integrity); see --help")
 	}
 	return toolArgs, opts, nil
+}
+
+// ignoreNodesValue は --ignore-nodes の値をツール引数向けに解釈する。
+// カンマ区切り文字列はそのまま返し、'[' で始まる値は JSON 文字列配列として
+// []string にする（compare_design の ignore_nodes と同じ入力互換, Issue #829）。
+// '[' で始まる以上は JSON 配列として読めるべきなので、壊れた JSON や
+// 非文字列要素は黙って文字列扱いにせず明示エラーにする。
+func ignoreNodesValue(raw string) (any, error) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "[") {
+		return raw, nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(trimmed), &list); err != nil {
+		return nil, fmt.Errorf("--ignore-nodes: value starting with '[' must be a JSON array of strings: %v", err)
+	}
+	return list, nil
 }
 
 func toolResultText(res *mcp.CallToolResult) string {
